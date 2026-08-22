@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { loginProviderLabel, normalizeLoginProvider } from "@/lib/login-provider"
 
 export function AccountTable({
   accounts,
@@ -31,6 +32,7 @@ export function AccountTable({
         <TableHeader>
           <TableRow>
             <TableHead>邮箱</TableHead>
+            <TableHead>登录</TableHead>
             <TableHead>状态</TableHead>
             <TableHead>支付链接</TableHead>
             <TableHead className="w-12" />
@@ -39,7 +41,7 @@ export function AccountTable({
         <TableBody>
           {accounts.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+              <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
                 这批还没有账号。
               </TableCell>
             </TableRow>
@@ -56,6 +58,11 @@ export function AccountTable({
                       </div>
                     ) : null}
                   </button>
+                </TableCell>
+                <TableCell>
+                  <Badge variant={normalizeLoginProvider(a.login_provider) === "microsoft" ? "secondary" : "outline"}>
+                    {loginProviderLabel(a.login_provider)}
+                  </Badge>
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-wrap items-center gap-1">

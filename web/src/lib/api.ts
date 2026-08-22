@@ -10,6 +10,8 @@ export type AccountBackup = {
     auth: string
     apiKey?: string
     userID?: string
+    loginType?: string
+    login_provider?: string
   }>
 }
 
@@ -44,7 +46,7 @@ export const api = {
   jobs: () => fetch("/api/jobs").then((r) => json<Job[]>(r)),
   batches: (page = 1, pageSize = 30) =>
     fetch(`/api/batches?page=${page}&page_size=${pageSize}`).then((r) => json<BatchPage>(r)),
-  createBatch: async (body: { name: string; text: string }) => {
+  createBatch: async (body: { name: string; text: string; login_provider?: string }) => {
     const res = await fetch("/api/batches", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -90,6 +92,7 @@ export const api = {
     password?: string
     recovery_email?: string
     user_id?: string
+    login_provider?: string
   }) =>
     fetch("/api/accounts", {
       method: "POST",

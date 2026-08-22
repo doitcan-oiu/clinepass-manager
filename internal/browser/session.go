@@ -66,6 +66,7 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 	}
 	args := DefaultStealthArgs(opt.Seed)
 	args = append(args, "--disable-setuid-sandbox", "--disable-dev-shm-usage")
+	logf("CloakBrowser 走二进制指纹，不用 Playwright 改时区/语言；点击和输入按真人轨迹")
 	if opt.Headless {
 		args = append(args, "--ozone-platform=headless", "--disable-gpu")
 	} else if strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != "" {
@@ -80,9 +81,6 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 		Headless:          playwright.Bool(opt.Headless),
 		Args:              args,
 		IgnoreDefaultArgs: IgnoreDefaultArgs(),
-		Locale:            playwright.String(firstNonEmpty(opt.Locale, "en-US")),
-		TimezoneId:        playwright.String(firstNonEmpty(opt.Timezone, "America/New_York")),
-		ColorScheme:       playwright.ColorSchemeLight,
 		AcceptDownloads:   playwright.Bool(true),
 		Env:               browserLaunchEnv(cfg.LicenseKey),
 	}

@@ -6,6 +6,7 @@ import { downloadJSON } from "@/lib/download"
 import type { Batch, ModelSpend, PoolAccount, PoolStats, UsageSyncStatus } from "@/lib/types"
 import { barClass, formatTime, health, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, usageRows } from "@/lib/quota"
 import { AddPaidDialog } from "@/components/accounts/add-paid-dialog"
+import { loginProviderLabel, normalizeLoginProvider } from "@/lib/login-provider"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -263,6 +264,9 @@ export function AccountsPage() {
                 </div>
                 <div className="mb-3 flex flex-wrap items-center gap-1">
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${h.className}`}>{h.label}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${normalizeLoginProvider(a.login_provider) === "microsoft" ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200" : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200"}`}>
+                    {loginProviderLabel(a.login_provider)}
+                  </span>
                   {a.batch_name ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{a.batch_name}</span> : null}
                   {expire ? (
                     <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">

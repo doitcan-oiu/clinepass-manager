@@ -93,6 +93,15 @@ func TestLeftGoogleURL(t *testing.T) {
 	if leftGoogleURL(chooser) {
 		t.Fatal("accountchooser is still google")
 	}
+	if leftGoogleURL("https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x") {
+		t.Fatal("microsoft oauth should stay in login")
+	}
+	if leftGoogleURL("https://login.live.com/oauth20_authorize.srf?client_id=x") {
+		t.Fatal("live login should stay in login")
+	}
+	if cookieExpired("https://login.microsoftonline.com/common/oauth2/v2.0/authorize") != true {
+		t.Fatal("microsoft login url is not a finished cline session")
+	}
 	if classifyGoogle(chooser) != "chooser" {
 		t.Fatal("accountchooser step")
 	}
@@ -154,6 +163,25 @@ func TestIsAuthkitFailure(t *testing.T) {
 	}
 	if IsAuthkitFailure(ErrPhoneTimeout) {
 		t.Fatal("phone timeout")
+	}
+	if IsAuthkitFailure(ErrAccountBanned) {
+		t.Fatal("banned account should skip, not retry as AuthKit failure")
+	}
+}
+
+func TestAuthkitBannedAfterWait(t *testing.T) {
+	login := "https://authkit.cline.bot/?redirect_uri=https%3A%2F%2Fapi.cline.bot%2Fapi%2Fv1%2Fauth%2Fcallback&authorization_session_id=01ABC"
+	if !authkitBannedAfterWait(login) {
+		t.Fatal("session id on AuthKit login is banned")
+	}
+	if authkitBannedAfterWait("https://authkit.cline.bot/radar-challenge/send?authorization_session_id=01ABC") {
+		t.Fatal("radar is not banned")
+	}
+	if authkitBannedAfterWait("https://authkit.cline.bot/sign-up") {
+		t.Fatal("first login page without session is not banned")
+	}
+	if authkitBannedAfterWait("https://app.cline.bot/dashboard") {
+		t.Fatal("app is not banned")
 	}
 }
 

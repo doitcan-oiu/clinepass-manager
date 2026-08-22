@@ -21,6 +21,7 @@ type Account struct {
 	PaidAt          int64  `json:"paid_at"`
 	BatchID         string `json:"batch_id"`
 	BatchName       string `json:"batch_name,omitempty"`
+	LoginProvider   string `json:"login_provider"`
 }
 
 type AccountPublic struct {
@@ -44,6 +45,7 @@ type AccountPublic struct {
 	PaidAt          int64  `json:"paid_at"`
 	BatchID         string `json:"batch_id"`
 	BatchName       string `json:"batch_name,omitempty"`
+	LoginProvider   string `json:"login_provider"`
 }
 
 func (a Account) Public() AccountPublic {
@@ -68,6 +70,7 @@ func (a Account) Public() AccountPublic {
 		PaidAt:          a.PaidAt,
 		BatchID:         a.BatchID,
 		BatchName:       a.BatchName,
+		LoginProvider:   NormalizeLoginProvider(a.LoginProvider),
 	}
 }
 
@@ -78,6 +81,7 @@ type CreateAccountInput struct {
 	Proxy         string `json:"proxy"`
 	Raw           string `json:"raw"`
 	BatchID       string `json:"batch_id"`
+	LoginProvider string `json:"login_provider"`
 }
 
 type JobEvent struct {

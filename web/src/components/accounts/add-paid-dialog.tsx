@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { type LoginProvider, loginProviderLabel } from "@/lib/login-provider"
 
 export function AddPaidDialog({ onSaved }: { onSaved: () => void }) {
   const [open, setOpen] = useState(false)
@@ -23,6 +24,7 @@ export function AddPaidDialog({ onSaved }: { onSaved: () => void }) {
   const [cookie, setCookie] = useState("")
   const [password, setPassword] = useState("")
   const [recovery, setRecovery] = useState("")
+  const [loginProvider, setLoginProvider] = useState<LoginProvider>("google")
 
   function openChange(v: boolean) {
     setOpen(v)
@@ -33,6 +35,7 @@ export function AddPaidDialog({ onSaved }: { onSaved: () => void }) {
       setCookie("")
       setPassword("")
       setRecovery("")
+      setLoginProvider("google")
     }
   }
 
@@ -47,6 +50,7 @@ export function AddPaidDialog({ onSaved }: { onSaved: () => void }) {
         password: password || undefined,
         recovery_email: recovery || undefined,
         user_id: workspaceId || undefined,
+        login_provider: loginProvider,
       })
       toast.success("已添加，正在拉用量")
       setOpen(false)
@@ -70,6 +74,18 @@ export function AddPaidDialog({ onSaved }: { onSaved: () => void }) {
           <DialogTitle>添加已付账号</DialogTitle>
         </DialogHeader>
         <div className="grid min-h-0 gap-3 overflow-y-auto">
+          <div className="grid gap-2">
+            <Label>登录方式</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant={loginProvider === "google" ? "default" : "outline"} onClick={() => setLoginProvider("google")}>
+                谷歌
+              </Button>
+              <Button type="button" variant={loginProvider === "microsoft" ? "default" : "outline"} onClick={() => setLoginProvider("microsoft")}>
+                微软
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">标记为「{loginProviderLabel(loginProvider)}」，重登时按这个方式走。</p>
+          </div>
           <Field label="邮箱" value={email} onChange={setEmail} />
           <Field label="用户 ID（可选）" value={workspaceId} onChange={setWorkspaceId} placeholder="usr-..." />
           <Field label="API Key（可选）" value={apiKey} onChange={setApiKey} />

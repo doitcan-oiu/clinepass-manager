@@ -80,6 +80,7 @@ type CreatePaidAccountInput struct {
 	CookieHeader  string `json:"cookie_header"`
 	CookiesJSON   string `json:"cookies_json"`
 	Proxy         string `json:"proxy"`
+	LoginProvider string `json:"login_provider"`
 }
 
 type UsageSyncStatus struct {

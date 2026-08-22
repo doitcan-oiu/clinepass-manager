@@ -186,11 +186,10 @@ func fillOTP(page playwright.Page, code string) error {
 	}
 	for i := 0; i < n && i < len(code); i++ {
 		loc := inputs.Nth(i)
-		_ = loc.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(3000)})
-		if err := loc.Fill(string(code[i]), playwright.LocatorFillOptions{Timeout: playwright.Float(3000)}); err != nil {
+		if err := humanType(page, loc, string(code[i])); err != nil {
 			_ = loc.Press(string(code[i]), playwright.LocatorPressOptions{Timeout: playwright.Float(2000)})
 		}
-		sleep(150)
+		sleep(80 + i*20)
 	}
 	return nil
 }
@@ -285,34 +284,19 @@ func fillAuthkitField(page playwright.Page, selector, value string) error {
 	}
 	loc := page.Locator(selector).First()
 	waitOverlayGone(page)
-	_ = loc.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(5000)})
-	_ = loc.Clear()
-	setValue := `(el, v) => {
-		const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
-		if (desc && desc.set) desc.set.call(el, v);
-		else el.value = v;
-		el.dispatchEvent(new Event("input", { bubbles: true }));
-		el.dispatchEvent(new Event("change", { bubbles: true }));
-	}`
-	if _, err := loc.Evaluate(setValue, value); err != nil {
-		if ferr := loc.Fill(value, playwright.LocatorFillOptions{Timeout: playwright.Float(8000)}); ferr != nil {
-			return CompactError(ferr)
-		}
+	if err := humanType(page, loc, value); err != nil {
+		return CompactError(err)
 	}
 	if authkitInputMatch(loc, value) {
 		return nil
-	}
-	_ = loc.Clear()
-	for i := 0; i < 8; i++ {
-		_ = loc.Press("Backspace")
 	}
 	current, _ := loc.InputValue()
 	typed := value
 	if strings.HasPrefix(strings.TrimSpace(current), "+") && strings.HasPrefix(value, "+") {
 		typed = strings.TrimPrefix(value, "+")
 	}
-	if err := loc.Type(typed, playwright.LocatorTypeOptions{Timeout: playwright.Float(8000), Delay: playwright.Float(30)}); err != nil {
-		_ = loc.Fill(value, playwright.LocatorFillOptions{Timeout: playwright.Float(5000)})
+	if err := humanType(page, loc, typed); err != nil {
+		return CompactError(err)
 	}
 	if !authkitInputMatch(loc, value) {
 		got, _ := loc.InputValue()

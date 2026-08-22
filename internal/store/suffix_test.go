@@ -31,15 +31,3 @@ func TestDecodeSuffixListPlain(t *testing.T) {
 		t.Fatal(got)
 	}
 }
-
-func TestSuffixCanStart(t *testing.T) {
-	if blocked, busy := SuffixCanStart(3, 0); !blocked || busy {
-		t.Fatal("3 fails should block")
-	}
-	if blocked, busy := SuffixCanStart(2, 1); blocked || !busy {
-		t.Fatal("2 fail + 1 running should be busy")
-	}
-	if blocked, busy := SuffixCanStart(1, 0); blocked || busy {
-		t.Fatal("can start")
-	}
-}

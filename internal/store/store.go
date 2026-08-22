@@ -120,6 +120,9 @@ CREATE TABLE IF NOT EXISTS batches (
 	if err := s.ensureColumn("settings", "email_suffix_blacklist", `ALTER TABLE settings ADD COLUMN email_suffix_blacklist TEXT NOT NULL DEFAULT '[]'`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("accounts", "login_provider", `ALTER TABLE accounts ADD COLUMN login_provider TEXT NOT NULL DEFAULT 'google'`); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`UPDATE settings SET invite_url = 'https://authkit.cline.bot' WHERE invite_url = '' OR invite_url LIKE '%opencode.ai%'`); err != nil {
 		return err
 	}
@@ -353,15 +356,17 @@ type rowScanner interface {
 
 const accountSelect = `SELECT a.id, a.email, a.password, a.recovery_email, a.proxy, a.fingerprint_seed, a.status,
 	a.workspace_id, a.api_key, a.user_id, a.cookies_json, a.cookie_header, a.payment_url,
-	a.last_error, a.last_login_at, a.created_at, a.updated_at, a.batch_id, IFNULL(b.name, ''), IFNULL(a.paid_at, 0)`
+	a.last_error, a.last_login_at, a.created_at, a.updated_at, a.batch_id, IFNULL(b.name, ''), IFNULL(a.paid_at, 0),
+	IFNULL(NULLIF(a.login_provider, ''), 'google')`
 
 func scanAccount(sc rowScanner) (model.Account, error) {
 	var a model.Account
 	err := sc.Scan(
 		&a.ID, &a.Email, &a.Password, &a.RecoveryEmail, &a.Proxy, &a.FingerprintSeed, &a.Status,
 		&a.WorkspaceID, &a.APIKey, &a.UserID, &a.CookiesJSON, &a.CookieHeader, &a.PaymentURL,
-		&a.LastError, &a.LastLoginAt, &a.CreatedAt, &a.UpdatedAt, &a.BatchID, &a.BatchName, &a.PaidAt,
+		&a.LastError, &a.LastLoginAt, &a.CreatedAt, &a.UpdatedAt, &a.BatchID, &a.BatchName, &a.PaidAt, &a.LoginProvider,
 	)
+	a.LoginProvider = model.NormalizeLoginProvider(a.LoginProvider)
 	return a, err
 }
 

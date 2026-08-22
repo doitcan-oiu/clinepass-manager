@@ -59,6 +59,17 @@ func TestMarkPaidAndManualAccount(t *testing.T) {
 	if a.PaidAt == 0 || a.BatchName != "手动账号" {
 		t.Fatalf("%+v", a)
 	}
+	if a.LoginProvider != model.LoginGoogle {
+		t.Fatalf("default paid provider %q", a.LoginProvider)
+	}
+	ms, err := s.CreatePaidAccount(model.CreatePaidAccountInput{
+		Email:         "ms@x.com",
+		CookieHeader:  "auth=ms",
+		LoginProvider: "microsoft",
+	})
+	if err != nil || ms.LoginProvider != model.LoginMicrosoft {
+		t.Fatalf("ms paid %+v %v", ms, err)
+	}
 
 	cookieOnly, err := s.CreatePaidAccount(model.CreatePaidAccountInput{
 		Email:        "cookie@x.com",
@@ -90,7 +101,7 @@ func TestMarkPaidAndManualAccount(t *testing.T) {
 		}
 	}
 	n, err = s.CountPoolAccounts("")
-	if err != nil || n != 3 {
+	if err != nil || n != 4 {
 		t.Fatalf("pool count after manual %d %v", n, err)
 	}
 	if err := s.SaveAccountUsage(a.ID, model.AccountUsage{

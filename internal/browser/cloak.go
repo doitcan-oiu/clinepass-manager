@@ -87,6 +87,11 @@ func DefaultStealthArgs(seed int) []string {
 	args := []string{
 		"--no-sandbox",
 		fmt.Sprintf("--fingerprint=%d", seed),
+		"--fingerprint-timezone=America/New_York",
+		"--fingerprint-locale=en-US",
+		"--lang=en-US",
+		"--fingerprint-storage-quota=5000",
+		"--ignore-gpu-blocklist",
 	}
 	if runtime.GOOS == "darwin" {
 		args = append(args, "--fingerprint-platform=macos")

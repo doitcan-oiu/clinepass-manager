@@ -39,6 +39,7 @@ export type Account = {
   paid_at: number
   batch_id: string
   batch_name?: string
+  login_provider?: string
 }
 
 export type PoolAccount = Account & {
@@ -85,7 +86,6 @@ export type AppConfig = {
   hero_sms_service: string
   hero_sms_country: number
   hero_sms_max_price: number
-  email_suffix_blacklist: string[]
 }
 
 export type Job = {

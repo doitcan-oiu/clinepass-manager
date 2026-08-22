@@ -15,13 +15,15 @@ type File struct {
 }
 
 type Account struct {
-	Account     string `json:"account"`
-	Password    string `json:"password,omitempty"`
-	AuxEmail    string `json:"auxEmail,omitempty"`
-	WorkspaceID string `json:"workspaceID,omitempty"`
-	Auth        string `json:"auth"`
-	APIKey      string `json:"apiKey,omitempty"`
-	UserID      string `json:"userID,omitempty"`
+	Account       string `json:"account"`
+	Password      string `json:"password,omitempty"`
+	AuxEmail      string `json:"auxEmail,omitempty"`
+	WorkspaceID   string `json:"workspaceID,omitempty"`
+	Auth          string `json:"auth"`
+	APIKey        string `json:"apiKey,omitempty"`
+	UserID        string `json:"userID,omitempty"`
+	LoginType     string `json:"loginType,omitempty"`
+	LoginProvider string `json:"login_provider,omitempty"`
 }
 
 type ParseResult struct {
@@ -95,7 +97,17 @@ func (a Account) toInput() (model.CreatePaidAccountInput, error) {
 		WorkspaceID:   strings.TrimSpace(a.WorkspaceID),
 		UserID:        strings.TrimSpace(a.UserID),
 		CookieHeader:  cookie,
+		LoginProvider: model.NormalizeLoginProvider(firstNonEmpty(a.LoginType, a.LoginProvider)),
 	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func NormalizeCookie(raw string) string {
@@ -148,6 +160,7 @@ func Export(accounts []model.Account) File {
 			Auth:        cookie,
 			APIKey:      a.APIKey,
 			UserID:      a.UserID,
+			LoginType:   model.NormalizeLoginProvider(a.LoginProvider),
 		})
 	}
 	return out

@@ -10,10 +10,11 @@ var (
 	ErrSMSNeedRelogin = errors.New("两次未收到验证码，需要重新登录")
 	ErrPhoneTimeout   = errors.New("手机号超时")
 	ErrAuthkitStuck   = errors.New("AuthKit 页面异常")
+	ErrAccountBanned  = errors.New("账号已被封禁，已跳过")
 )
 
 func IsAuthkitFailure(err error) bool {
-	if err == nil {
+	if err == nil || errors.Is(err, ErrAccountBanned) {
 		return false
 	}
 	if errors.Is(err, ErrAuthkitStuck) {

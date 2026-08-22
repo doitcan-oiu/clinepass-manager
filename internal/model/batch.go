@@ -29,6 +29,7 @@ type PayLink struct {
 }
 
 type CreateBatchInput struct {
-	Name string `json:"name"`
-	Text string `json:"text"`
+	Name          string `json:"name"`
+	Text          string `json:"text"`
+	LoginProvider string `json:"login_provider"`
 }

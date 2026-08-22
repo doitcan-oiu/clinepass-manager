@@ -77,15 +77,20 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 		}
 	}()
 
+	provider := model.NormalizeLoginProvider(acc.LoginProvider)
 	invite := cfg.InviteURL
 	if invite == "" {
 		invite = cline.AuthURL
+	}
+	if provider == model.LoginMicrosoft {
+		invite = microsoftInvite(invite)
 	}
 
 	log("无头模式=%v", cfg.Headless)
 	if cfg.Proxy != "" {
 		log("使用全局代理")
 	}
+	log("登录方式=%s", provider)
 	log("打开邀请链接 %s", invite)
 	if _, err := page.Goto(invite, playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
@@ -96,27 +101,13 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 	sleep(2000)
 
 	if onClineApp(page.URL()) && !strings.Contains(page.URL(), "radar-challenge") {
-		log("当前已在 Cline，跳过谷歌登录")
+		log("当前已在 Cline，跳过身份登录")
 	} else {
-		if !strings.Contains(page.URL(), "accounts.google.com") {
-			if err := clickOneOf(page, googleAuthSelectors(), 20000, log, "选择 Google 登录"); err != nil {
-				if !strings.Contains(page.URL(), "accounts.google.com") && !onCline(page.URL()) {
-					return Result{}, err
-				}
-				log("已在授权相关页面，继续")
-			}
-			sleep(800)
-		}
-		if err := waitAnyURL(page, []string{"accounts.google.com", "radar-challenge", "app.cline.bot"}, 45000); err != nil {
-			log("等待授权页超时，当前 URL=%s", page.URL())
-		}
-		if strings.Contains(page.URL(), "accounts.google.com") || visible(page, `input#identifierId, input[name="identifier"], input[name="Passwd"]`) {
-			if err := googleLogin(page, acc, log); err != nil {
-				return Result{}, wrapIfAuthkit(err, page.URL())
-			}
+		if err := startIdentityLogin(page, acc, provider, log); err != nil {
+			return Result{}, wrapIfAuthkit(err, page.URL())
 		}
 		log("等待进入 Cline")
-		if err := waitCline(page, 180000, log); err != nil {
+		if err := waitCline(page, 180000, log, provider); err != nil {
 			return Result{}, wrapIfAuthkit(err, page.URL())
 		}
 		if err := handleRadar(page, cfg, log); err != nil {
@@ -125,7 +116,7 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 		if err := handleTerms(page, log); err != nil {
 			return Result{}, CompactError(err)
 		}
-		if err := waitCline(page, 60000, log); err != nil {
+		if err := waitCline(page, 60000, log, provider); err != nil {
 			return Result{}, wrapIfAuthkit(err, page.URL())
 		}
 	}
@@ -249,7 +240,11 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 		}
 
 		if urlHost(rawURL) == "authkit.cline.bot" {
-			if handleAuthkitWait(page, log, &lastAuthkitClick) {
+			done, err := handleAuthkitWait(page, log, &lastAuthkitClick, model.LoginGoogle)
+			if err != nil {
+				return err
+			}
+			if done {
 				return nil
 			}
 			continue
@@ -462,18 +457,7 @@ func googleContinueURL(raw string) string {
 }
 
 func scrollTos(page playwright.Page) {
-	_, _ = page.Evaluate(`() => {
-		const nodes = Array.from(document.querySelectorAll('*'));
-		for (const el of nodes) {
-			if (!(el instanceof HTMLElement)) continue;
-			const st = getComputedStyle(el);
-			const oy = st.overflowY;
-			if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && el.scrollHeight > el.clientHeight + 8) {
-				el.scrollTop = el.scrollHeight;
-			}
-		}
-		window.scrollTo(0, document.documentElement.scrollHeight);
-	}`)
+	humanScroll(page)
 }
 
 func checkTosBoxes(page playwright.Page) {
@@ -503,16 +487,7 @@ func clickTosButton(page playwright.Page) error {
 		return fmt.Errorf("未找到同意按钮")
 	}
 	_ = loc.ScrollIntoViewIfNeeded()
-	if err := loc.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(5000)}); err == nil {
-		return nil
-	}
-	if err := loc.Click(playwright.LocatorClickOptions{
-		Force:   playwright.Bool(true),
-		Timeout: playwright.Float(4000),
-	}); err == nil {
-		return nil
-	}
-	if _, err := loc.Evaluate(`el => { el.click(); }`, nil); err == nil {
+	if err := humanClick(page, loc); err == nil {
 		return nil
 	}
 	_ = loc.Focus()
@@ -530,7 +505,44 @@ func consentSelectors() []string {
 	}
 }
 
-func waitCline(page playwright.Page, timeout float64, log Logger) error {
+func startIdentityLogin(page playwright.Page, acc model.Account, provider string, log Logger) error {
+	if provider == model.LoginMicrosoft {
+		if !onMicrosoftURL(page.URL()) {
+			if err := clickOneOf(page, microsoftAuthSelectors(), 20000, log, "选择 Microsoft 登录"); err != nil {
+				if !onMicrosoftURL(page.URL()) && !onCline(page.URL()) {
+					return err
+				}
+				log("已在授权相关页面，继续")
+			}
+			sleep(800)
+		}
+		if err := waitAnyURL(page, []string{"microsoftonline.com", "login.live.com", "radar-challenge", "app.cline.bot"}, 45000); err != nil {
+			log("等待微软授权页超时，当前 URL=%s", page.URL())
+		}
+		if onMicrosoftURL(page.URL()) || visible(page, `input[name="loginfmt"], input#i0116, input[name="passwd"], input#passwordEntry`) {
+			return microsoftLogin(page, acc, log)
+		}
+		return nil
+	}
+	if !strings.Contains(page.URL(), "accounts.google.com") {
+		if err := clickOneOf(page, googleAuthSelectors(), 20000, log, "选择 Google 登录"); err != nil {
+			if !strings.Contains(page.URL(), "accounts.google.com") && !onCline(page.URL()) {
+				return err
+			}
+			log("已在授权相关页面，继续")
+		}
+		sleep(800)
+	}
+	if err := waitAnyURL(page, []string{"accounts.google.com", "radar-challenge", "app.cline.bot"}, 45000); err != nil {
+		log("等待授权页超时，当前 URL=%s", page.URL())
+	}
+	if strings.Contains(page.URL(), "accounts.google.com") || visible(page, `input#identifierId, input[name="identifier"], input[name="Passwd"]`) {
+		return googleLogin(page, acc, log)
+	}
+	return nil
+}
+
+func waitCline(page playwright.Page, timeout float64, log Logger, provider string) error {
 	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
 	last := time.Time{}
 	lastAuthkitClick := time.Time{}
@@ -548,7 +560,11 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 			_ = clickOneOf(page, consentSelectors(), 8000, log, "同意授权")
 		}
 		if urlHost(page.URL()) == "authkit.cline.bot" && !onRadarFlow(page) {
-			if handleAuthkitWait(page, log, &lastAuthkitClick) {
+			done, err := handleAuthkitWait(page, log, &lastAuthkitClick, provider)
+			if err != nil {
+				return err
+			}
+			if done {
 				return nil
 			}
 			continue
@@ -594,7 +610,7 @@ func clickOneOf(page playwright.Page, selectors []string, timeout float64, log L
 			if err != nil || !ok {
 				continue
 			}
-			if err := loc.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(8000)}); err != nil {
+			if err := humanClick(page, loc); err != nil {
 				lastErr = err
 				continue
 			}
@@ -624,17 +640,11 @@ func fillFieldOpt(page playwright.Page, selector, value string, stopIfCline bool
 	}
 	loc := page.Locator(selector).First()
 	waitOverlayGone(page)
-	if err := loc.Fill(value, playwright.LocatorFillOptions{Timeout: playwright.Float(10000)}); err != nil {
+	if err := humanType(page, loc, value); err != nil {
 		if stopIfCline && loggedIn(page) {
 			return errLoggedIn
 		}
-		_ = loc.Focus()
-		if ferr := loc.Fill(value, playwright.LocatorFillOptions{
-			Force:   playwright.Bool(true),
-			Timeout: playwright.Float(8000),
-		}); ferr != nil {
-			return CompactError(err)
-		}
+		return CompactError(err)
 	}
 	return nil
 }
@@ -733,36 +743,53 @@ func onRadarFlow(page playwright.Page) bool {
 		visible(page, `.ak-Otp`)
 }
 
-func handleAuthkitWait(page playwright.Page, log Logger, lastClick *time.Time) bool {
+func handleAuthkitWait(page playwright.Page, log Logger, lastClick *time.Time, provider string) (bool, error) {
 	rawURL := page.URL()
 	if onRadarFlow(page) || onCline(rawURL) {
 		log("已进入手机验证或 Cline，当前 URL=%s", rawURL)
-		return true
+		return true, nil
 	}
 	sid := authkitSessionID(rawURL)
-	log("到达 AuthKit，当前 URL=%s title=%q session=%s google按钮=%v", rawURL, pageTitle(page), sid, visibleGoogleAuth(page))
+	authVisible := visibleAuthButton(page, provider)
+	log("到达 AuthKit，当前 URL=%s title=%q session=%s 登录按钮=%v 方式=%s", rawURL, pageTitle(page), sid, authVisible, provider)
 	waitMS := 8000.0
 	if sid != "" {
-		waitMS = 45000
-		log("OAuth 已回到 AuthKit（有 authorization_session_id），先等跳到接码页，不点 Google")
+		waitMS = 10000
+		log("OAuth 已回到 AuthKit（有 authorization_session_id），先确认是否跳到接码页")
 	}
 	if waitAuthkitAdvance(page, waitMS) {
-		return onRadarFlow(page) || onCline(page.URL())
+		return onRadarFlow(page) || onCline(page.URL()), nil
 	}
 	after := page.URL()
-	log("AuthKit 等待后仍未进入接码，当前 URL=%s title=%q google按钮=%v", after, pageTitle(page), visibleGoogleAuth(page))
-	if authkitSessionID(after) != "" {
-		log("仍有 authorization_session_id，继续等，避免再点 Google 打断跳转")
-		sleep(500)
-		return false
+	log("AuthKit 等待后仍未进入接码，当前 URL=%s title=%q 登录按钮=%v", after, pageTitle(page), visibleAuthButton(page, provider))
+	if authkitBannedAfterWait(after) {
+		log("仍停在 AuthKit，账号已被封禁，跳过")
+		return false, ErrAccountBanned
 	}
-	if onAuthkitLogin(after) && visibleGoogleAuth(page) && time.Since(*lastClick) > 12*time.Second {
-		log("AuthKit 仍是登录页，再次选择 Google")
-		_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
+	if onAuthkitLogin(after) && visibleAuthButton(page, provider) && time.Since(*lastClick) > 12*time.Second {
+		label := "再次选择 Google 登录"
+		sels := googleAuthSelectors()
+		if provider == model.LoginMicrosoft {
+			label = "再次选择 Microsoft 登录"
+			sels = microsoftAuthSelectors()
+		}
+		log("AuthKit 仍是登录页，%s", label)
+		_ = clickOneOf(page, sels, 8000, log, label)
 		*lastClick = time.Now()
 	}
 	sleep(500)
-	return false
+	return false, nil
+}
+
+func authkitBannedAfterWait(u string) bool {
+	return authkitSessionID(u) != "" && urlHost(u) == "authkit.cline.bot" && !onRadarURL(u) && !onCline(u)
+}
+
+func visibleAuthButton(page playwright.Page, provider string) bool {
+	if provider == model.LoginMicrosoft {
+		return visibleMicrosoftAuth(page)
+	}
+	return visibleGoogleAuth(page)
 }
 
 func pageTitle(page playwright.Page) string {
@@ -808,6 +835,9 @@ func wrapIfAuthkit(err error, pageURL string) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, ErrAccountBanned) {
+		return err
+	}
 	if errors.Is(err, ErrAuthkitStuck) || isAuthkitProblemURL(pageURL) || IsAuthkitFailure(err) {
 		if errors.Is(err, ErrAuthkitStuck) {
 			return CompactError(err)
@@ -840,7 +870,7 @@ func leftGoogleURL(u string) bool {
 		return false
 	}
 	host := urlHost(u)
-	if host == "" || strings.HasSuffix(host, "google.com") || strings.HasSuffix(host, "google.com.hk") {
+	if host == "" || strings.HasSuffix(host, "google.com") || strings.HasSuffix(host, "google.com.hk") || onMicrosoftURL(u) {
 		return false
 	}
 	if onAuthkitLogin(u) {
@@ -875,7 +905,7 @@ func onClineApp(u string) bool {
 
 func cookieExpired(u string) bool {
 	host := urlHost(u)
-	if strings.HasSuffix(host, "google.com") || strings.HasSuffix(host, "google.com.hk") {
+	if strings.HasSuffix(host, "google.com") || strings.HasSuffix(host, "google.com.hk") || onMicrosoftURL(u) {
 		return true
 	}
 	return host == "authkit.cline.bot" && !onRadarURL(u)

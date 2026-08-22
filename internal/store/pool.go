@@ -219,13 +219,18 @@ func (s *Store) UpsertPaidAccount(in model.CreatePaidAccountInput) (model.Accoun
 			old.BatchID = b.ID
 			old.BatchName = b.Name
 		}
+		if strings.TrimSpace(in.LoginProvider) != "" {
+			old.LoginProvider = model.NormalizeLoginProvider(in.LoginProvider)
+		} else {
+			old.LoginProvider = model.NormalizeLoginProvider(old.LoginProvider)
+		}
 		_, err = s.db.Exec(`
 UPDATE accounts SET
 	password = ?, recovery_email = ?, status = ?, workspace_id = ?, api_key = ?, user_id = ?,
-	cookies_json = ?, cookie_header = ?, paid_at = ?, updated_at = ?, batch_id = ?
+	cookies_json = ?, cookie_header = ?, paid_at = ?, updated_at = ?, batch_id = ?, login_provider = ?
 WHERE id = ?`,
 			old.Password, old.RecoveryEmail, old.Status, old.WorkspaceID, old.APIKey, old.UserID,
-			old.CookiesJSON, old.CookieHeader, now, now, old.BatchID, old.ID)
+			old.CookiesJSON, old.CookieHeader, now, now, old.BatchID, old.LoginProvider, old.ID)
 		if err != nil {
 			return model.Account{}, false, err
 		}
@@ -248,6 +253,7 @@ WHERE id = ?`,
 		PaidAt:          now,
 		BatchID:         b.ID,
 		BatchName:       b.Name,
+		LoginProvider:   model.NormalizeLoginProvider(in.LoginProvider),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -255,11 +261,11 @@ WHERE id = ?`,
 INSERT INTO accounts (
 	id, email, password, recovery_email, proxy, fingerprint_seed, status,
 	workspace_id, api_key, user_id, cookies_json, cookie_header, payment_url,
-	last_error, last_login_at, created_at, updated_at, batch_id, paid_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 0, ?, ?, ?, ?)`,
+	last_error, last_login_at, created_at, updated_at, batch_id, paid_at, login_provider
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 0, ?, ?, ?, ?, ?)`,
 		a.ID, a.Email, a.Password, a.RecoveryEmail, a.Proxy, a.FingerprintSeed, a.Status,
 		a.WorkspaceID, a.APIKey, a.UserID, a.CookiesJSON, a.CookieHeader,
-		now, now, a.BatchID, now)
+		now, now, a.BatchID, now, a.LoginProvider)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return model.Account{}, false, fmt.Errorf("账号已存在")
@@ -287,9 +293,10 @@ func scanAccountUsage(sc rowScanner) (model.Account, string, int64, string, erro
 	err := sc.Scan(
 		&a.ID, &a.Email, &a.Password, &a.RecoveryEmail, &a.Proxy, &a.FingerprintSeed, &a.Status,
 		&a.WorkspaceID, &a.APIKey, &a.UserID, &a.CookiesJSON, &a.CookieHeader, &a.PaymentURL,
-		&a.LastError, &a.LastLoginAt, &a.CreatedAt, &a.UpdatedAt, &a.BatchID, &a.BatchName, &a.PaidAt,
+		&a.LastError, &a.LastLoginAt, &a.CreatedAt, &a.UpdatedAt, &a.BatchID, &a.BatchName, &a.PaidAt, &a.LoginProvider,
 		&raw, &synced, &usageErr,
 	)
+	a.LoginProvider = model.NormalizeLoginProvider(a.LoginProvider)
 	return a, raw, synced, usageErr, err
 }
 

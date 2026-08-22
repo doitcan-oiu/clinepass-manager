@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import { loginProviderLabel } from "@/lib/login-provider"
 
 async function copy(value?: string) {
   if (!value) return
@@ -56,6 +57,7 @@ export function DetailDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          <Field label="登录方式" value={loginProviderLabel(account.login_provider)} />
           <Field label="userID" value={account.user_id || account.workspace_id} />
           <Field label="key" value={account.api_key} />
           <Field label="pay" value={account.payment_url} />

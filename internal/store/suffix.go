@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-const AuthkitSuffixFailLimit = 3
-
 func EmailSuffix(email string) string {
 	email = strings.ToLower(strings.TrimSpace(email))
 	i := strings.LastIndex(email, "@")
@@ -50,10 +48,6 @@ func SuffixBlacklisted(list []string, suffix string) bool {
 	return false
 }
 
-func AddSuffix(list []string, suffix string) []string {
-	return NormalizeSuffixList(append(append([]string{}, list...), suffix))
-}
-
 func EncodeSuffixList(list []string) string {
 	list = NormalizeSuffixList(list)
 	if len(list) == 0 {
@@ -84,14 +78,4 @@ func DecodeSuffixList(raw string) []string {
 		list = append(list, part)
 	}
 	return NormalizeSuffixList(list)
-}
-
-func SuffixCanStart(fails, running int) (blocked, busy bool) {
-	if fails >= AuthkitSuffixFailLimit {
-		return true, false
-	}
-	if fails+running >= AuthkitSuffixFailLimit {
-		return false, true
-	}
-	return false, false
 }
