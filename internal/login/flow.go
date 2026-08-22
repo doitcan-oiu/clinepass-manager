@@ -266,6 +266,15 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			}
 			continue
 		}
+		if step == "unknownerror" {
+			if err := recoverGoogleUnknownError(page, log); err != nil {
+				if loggedIn(page) {
+					return nil
+				}
+				return stepErr(err)
+			}
+			continue
+		}
 		if step == "consent" {
 			log("检测到授权页，点击同意授权")
 			if err := clickOneOf(page, consentSelectors(), 25000, log, "同意授权"); err != nil {
@@ -373,6 +382,8 @@ func classifyGoogle(raw string) string {
 		return "email"
 	case strings.Contains(p, "/signin/oauth"):
 		return "consent"
+	case strings.Contains(p, "unknownerror"):
+		return "unknownerror"
 	default:
 		return ""
 	}
@@ -387,7 +398,7 @@ func acceptWorkspaceTos(page playwright.Page, log Logger) error {
 		return err
 	}
 	log("检测到服务条款页，准备同意")
-	for i := 1; i <= 4; i++ {
+	for i := 1; i <= 3; i++ {
 		if classifyGoogle(page.URL()) != "tos" || loggedIn(page) {
 			return nil
 		}
@@ -395,17 +406,56 @@ func acceptWorkspaceTos(page playwright.Page, log Logger) error {
 		checkTosBoxes(page)
 		log("点击同意服务条款（第 %d 次）", i)
 		if err := clickTosButton(page); err != nil {
+			if classifyGoogle(page.URL()) != "tos" || loggedIn(page) {
+				return nil
+			}
 			log("第 %d 次点击未生效: %v", i, err)
 		} else {
 			log("同意服务条款 成功")
 		}
-		sleep(1500)
-		if classifyGoogle(page.URL()) != "tos" || loggedIn(page) {
+		if err := waitLeaveLogged(page, "workspacetermsofservice", 12000, log, "服务条款页"); err == nil {
 			return nil
 		}
 	}
 	log("服务条款仍在，当前 URL=%s", page.URL())
 	return nil
+}
+
+func recoverGoogleUnknownError(page playwright.Page, log Logger) error {
+	log("谷歌返回 unknownerror，尝试恢复")
+	_ = clickOneOf(page, []string{
+		`#next button`,
+		`div[id$="Next"] button`,
+		`button[type="submit"]`,
+	}, 2500, log, "错误页下一步")
+	sleep(800)
+	if classifyGoogle(page.URL()) != "unknownerror" {
+		return nil
+	}
+	next := googleContinueURL(page.URL())
+	if next == "" {
+		return fmt.Errorf("谷歌 unknownerror，没有 continue 可跳转")
+	}
+	log("打开 continue 继续授权")
+	if _, err := page.Goto(next, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		Timeout:   playwright.Float(30000),
+	}); err != nil {
+		return fmt.Errorf("打开 continue 失败: %w", err)
+	}
+	sleep(800)
+	if classifyGoogle(page.URL()) == "unknownerror" {
+		return fmt.Errorf("谷歌 unknownerror 恢复失败，当前 URL=%s", page.URL())
+	}
+	return nil
+}
+
+func googleContinueURL(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(u.Query().Get("continue"))
 }
 
 func scrollTos(page playwright.Page) {
@@ -487,6 +537,9 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 		}
 		if classifyGoogle(page.URL()) == "tos" && visible(page, `#gaplustosNext button`) {
 			_ = acceptWorkspaceTos(page, log)
+		}
+		if classifyGoogle(page.URL()) == "unknownerror" {
+			_ = recoverGoogleUnknownError(page, log)
 		}
 		if classifyGoogle(page.URL()) == "consent" && (visible(page, `div[jsname="uRHG6"] button`) || visible(page, `#submit_approve_access`)) {
 			_ = clickOneOf(page, consentSelectors(), 8000, log, "同意授权")

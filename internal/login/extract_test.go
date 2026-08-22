@@ -50,6 +50,13 @@ func TestClassifyGooglePasswordPageNotConsent(t *testing.T) {
 	if got := classifyGoogle(consent); got != "consent" {
 		t.Fatalf("consent classified as %q", got)
 	}
+	errURL := "https://accounts.google.com/v3/signin/unknownerror?continue=https%3A%2F%2Faccounts.google.com%2Fsignin%2Foauth%2Fconsent%3Fx%3D1"
+	if got := classifyGoogle(errURL); got != "unknownerror" {
+		t.Fatalf("unknownerror classified as %q", got)
+	}
+	if got := googleContinueURL(errURL); got != "https://accounts.google.com/signin/oauth/consent?x=1" {
+		t.Fatalf("continue=%q", got)
+	}
 }
 
 func TestLeftGoogleURL(t *testing.T) {
