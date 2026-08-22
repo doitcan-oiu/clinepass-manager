@@ -99,33 +99,11 @@ func (b *balancer) reserve(accounts []model.PoolAccount, modelID string, skip ma
 	return a, true
 }
 
-func cooldownFor(a model.PoolAccount, status int, hdr http.Header) time.Duration {
-	switch status {
-	case 401:
+func cooldownFor(_ model.PoolAccount, status int, _ http.Header) time.Duration {
+	if status == http.StatusUnauthorized {
 		return time.Hour
-	case 402:
-		if a.Usage.Monthly.ResetInSec > 0 {
-			return time.Duration(a.Usage.Monthly.ResetInSec) * time.Second
-		}
-		return time.Hour
-	case 429:
-		if d := parseRetryAfter(hdr); d > 0 {
-			return d
-		}
-		if a.Usage.Rolling.ResetInSec > 0 {
-			d := time.Duration(a.Usage.Rolling.ResetInSec) * time.Second
-			if d > 15*time.Minute {
-				return 15 * time.Minute
-			}
-			if d < 30*time.Second {
-				return 30 * time.Second
-			}
-			return d
-		}
-		return 2 * time.Minute
-	default:
-		return 15 * time.Second
 	}
+	return 0
 }
 
 func parseRetryAfter(h http.Header) time.Duration {
@@ -160,14 +138,6 @@ func parseRetryAfter(h http.Header) time.Duration {
 	return d
 }
 
-func totalSpend(u model.AccountUsage) float64 {
-	var n float64
-	for _, m := range u.Models {
-		n += m.USD
-	}
-	return n
-}
-
 func modelSpend(u model.AccountUsage, modelID string) float64 {
 	id := gomodel.Normalize(modelID)
 	for _, m := range u.Models {
@@ -185,15 +155,44 @@ func canServeQuota(a model.PoolAccount, modelID string, now time.Time) bool {
 	if a.Usage.MonthlyExpired(now.Unix()) {
 		return false
 	}
-	u := a.Usage
-	if u.QuotaExhausted() {
-		return false
+	return !a.Usage.QuotaExhausted()
+}
+
+func unavailableReason(accounts []model.PoolAccount, now time.Time) string {
+	if len(accounts) == 0 {
+		return "没有可用账号"
 	}
-	poolLeft := gomodel.MonthlyUSD - totalSpend(u)
-	if poolLeft <= 0 {
-		return false
+	var noKey, expired, exhausted, cooling int
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	for _, a := range accounts {
+		if strings.TrimSpace(a.APIKey) == "" {
+			noKey++
+			continue
+		}
+		if a.Usage.MonthlyExpired(now.Unix()) {
+			expired++
+			continue
+		}
+		if a.Usage.QuotaExhausted() {
+			exhausted++
+			continue
+		}
+		if lb.cooling(accountID(a), now) {
+			cooling++
+			continue
+		}
 	}
-	return true
+	switch {
+	case exhausted == len(accounts)-noKey && exhausted > 0:
+		return "没有可用账号：滚动/周/月配额已用尽"
+	case cooling > 0 && exhausted+cooling+noKey+expired == len(accounts):
+		return "没有可用账号：密钥暂时不可用（401）"
+	case noKey == len(accounts):
+		return "没有可用账号：缺少 API Key"
+	default:
+		return "没有可用账号"
+	}
 }
 
 func (b *balancer) rankLocked(accounts []model.PoolAccount, modelID string, skip map[string]bool, now time.Time) []model.PoolAccount {
@@ -272,31 +271,3 @@ func maxAttemptsFromSettings(retries int) int {
 	return retries + 1
 }
 
-func markQuotaFromStatus(u *model.AccountUsage, status int) bool {
-	if u == nil {
-		return false
-	}
-	switch status {
-	case http.StatusPaymentRequired:
-		if u.Monthly.Exhausted() {
-			return false
-		}
-		markWindowFull(&u.Monthly)
-		return true
-	case http.StatusTooManyRequests:
-		if u.Rolling.Exhausted() {
-			return false
-		}
-		markWindowFull(&u.Rolling)
-		return true
-	default:
-		return false
-	}
-}
-
-func markWindowFull(w *model.UsageWindow) {
-	w.Status = "rate-limited"
-	if w.UsagePercent < 100 {
-		w.UsagePercent = 100
-	}
-}

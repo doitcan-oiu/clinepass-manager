@@ -2,7 +2,6 @@ package browser
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 
@@ -18,6 +17,7 @@ type Session struct {
 	Binary      BinaryInfo
 	userDataDir string
 	ephemeral   bool
+	relay       *Relay
 }
 
 type LaunchOptions struct {
@@ -71,30 +71,48 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 	} else {
 		launch.NoViewport = playwright.Bool(true)
 	}
-	if proxy := parseProxy(opt.Proxy); proxy != nil {
+	browserProxy := strings.TrimSpace(opt.Proxy)
+	var relay *Relay
+	if needsSOCKSAuthRelay(browserProxy) {
+		r, err := StartSOCKSRelay(browserProxy, logf)
+		if err != nil {
+			_ = pw.Stop()
+			return nil, fmt.Errorf("启动本地代理中继失败: %w", err)
+		}
+		relay = r
+		browserProxy = r.BrowserURL()
+		logf("Chrome 不支持带账密的 SOCKS5，已走本地中继 %s", browserProxy)
+	}
+	if proxy := parseProxy(browserProxy); proxy != nil {
 		launch.Proxy = proxy
+	}
+	cleanup := func() {
+		if relay != nil {
+			_ = relay.Close()
+		}
+		_ = pw.Stop()
 	}
 	ephemeral := false
 	if strings.TrimSpace(opt.UserDataDir) == "" {
 		dir, err := os.MkdirTemp("", "cloak-guest-*")
 		if err != nil {
-			_ = pw.Stop()
+			cleanup()
 			return nil, fmt.Errorf("创建访客目录失败: %w", err)
 		}
 		opt.UserDataDir = dir
 		ephemeral = true
 		logf("访客模式，独立配置目录")
 	} else if err := os.MkdirAll(opt.UserDataDir, 0o755); err != nil {
-		_ = pw.Stop()
+		cleanup()
 		return nil, err
 	}
 
 	ctx, err := pw.Chromium.LaunchPersistentContext(opt.UserDataDir, launch)
 	if err != nil {
-		_ = pw.Stop()
 		if ephemeral {
 			_ = os.RemoveAll(opt.UserDataDir)
 		}
+		cleanup()
 		return nil, fmt.Errorf("启动 CloakBrowser 失败: %w", err)
 	}
 	pages := ctx.Pages()
@@ -105,14 +123,14 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 		page, err = ctx.NewPage()
 		if err != nil {
 			_ = ctx.Close()
-			_ = pw.Stop()
 			if ephemeral {
 				_ = os.RemoveAll(opt.UserDataDir)
 			}
+			cleanup()
 			return nil, err
 		}
 	}
-	return &Session{PW: pw, Context: ctx, Page: page, Binary: info, userDataDir: opt.UserDataDir, ephemeral: ephemeral}, nil
+	return &Session{PW: pw, Context: ctx, Page: page, Binary: info, userDataDir: opt.UserDataDir, ephemeral: ephemeral, relay: relay}, nil
 }
 
 func (s *Session) Close() {
@@ -125,22 +143,21 @@ func (s *Session) Close() {
 	if s.PW != nil {
 		_ = s.PW.Stop()
 	}
+	if s.relay != nil {
+		_ = s.relay.Close()
+	}
 	if s.ephemeral && s.userDataDir != "" {
 		_ = os.RemoveAll(s.userDataDir)
 	}
 }
 
 func parseProxy(raw string) *playwright.Proxy {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	if !strings.Contains(raw, "://") {
-		raw = "http://" + raw
-	}
-	u, err := url.Parse(raw)
+	u, err := parseProxyURL(raw)
 	if err != nil {
-		return &playwright.Proxy{Server: raw}
+		return &playwright.Proxy{Server: strings.TrimSpace(raw)}
+	}
+	if u == nil {
+		return nil
 	}
 	p := &playwright.Proxy{Server: u.Scheme + "://" + u.Host}
 	if u.User != nil {

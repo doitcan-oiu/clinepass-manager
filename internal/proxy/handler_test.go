@@ -80,8 +80,8 @@ func TestFailoverOn429ThenSucceeds(t *testing.T) {
 	mu.Lock()
 	second := append([]string{}, seen...)
 	mu.Unlock()
-	if len(second) != 3 || second[2] != "Bearer sk-b" {
-		t.Fatalf("cooled key a should be skipped, seen %v", second)
+	if len(second) != 4 || second[2] != "Bearer sk-a" || second[3] != "Bearer sk-b" {
+		t.Fatalf("429 must not cool the same key, seen %v", second)
 	}
 
 	logs, err := st.ListRequestLogs(model.RequestLogFilter{}, 10, 0)
@@ -91,7 +91,7 @@ func TestFailoverOn429ThenSucceeds(t *testing.T) {
 	if logs[1].Retries != 1 || logs[1].AccountEmail != "b@x.com" || logs[1].Status != "completed" {
 		t.Fatalf("first log %+v", logs[1])
 	}
-	if logs[0].Retries != 0 || logs[0].AccountEmail != "b@x.com" {
+	if logs[0].Retries != 1 || logs[0].AccountEmail != "b@x.com" {
 		t.Fatalf("second log %+v", logs[0])
 	}
 }
@@ -181,7 +181,7 @@ func TestFailoverRespectsMaxRetries(t *testing.T) {
 	}
 }
 
-func Test429MarksRollingExhausted(t *testing.T) {
+func Test429DoesNotExcludeSameAccount(t *testing.T) {
 	resetBalancer()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -210,15 +210,15 @@ func Test429MarksRollingExhausted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !u.Rolling.Exhausted() {
-		t.Fatalf("rolling should be marked full after 429: %+v", u.Rolling)
+	if u.Rolling.Exhausted() {
+		t.Fatalf("429 must not mark rolling full: %+v", u.Rolling)
 	}
 	p, err := st.GetPoolAccount(a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(Rank([]model.PoolAccount{p}, "glm-5.3")) != 0 {
-		t.Fatal("exhausted key should be excluded from later picks")
+	if len(Rank([]model.PoolAccount{p}, "glm-5.3")) != 1 {
+		t.Fatal("same account should still be pickable after 429")
 	}
 }
 

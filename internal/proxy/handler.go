@@ -73,7 +73,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rec.ID = id
 	}
 	started := time.Now()
-	state := logResult{status: "error", httpStatus: http.StatusServiceUnavailable, err: "没有可用账号：滚动/周/月配额已用尽"}
+	state := logResult{status: "error", httpStatus: http.StatusServiceUnavailable, err: "没有可用账号"}
 	defer func() {
 		h.finishLog(&rec, started, state)
 	}()
@@ -105,7 +105,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		resp, ferr := h.do(r, path, a.APIKey, body)
 		if ferr != nil {
 			lb.end(keyID)
-			lb.cooldown(keyID, 15*time.Second)
 			lastStatus = http.StatusBadGateway
 			lastBody, _ = json.Marshal(map[string]any{"error": ferr.Error()})
 			state.httpStatus = lastStatus
@@ -116,11 +115,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
 			lb.end(keyID)
-			lb.cooldown(keyID, cooldownFor(a, resp.StatusCode, resp.Header))
+			if d := cooldownFor(a, resp.StatusCode, resp.Header); d > 0 {
+				lb.cooldown(keyID, d)
+			}
 			lastStatus, lastBody = resp.StatusCode, b
 			state.httpStatus = lastStatus
 			state.err = formatLogError(resp.StatusCode, b)
-			h.rememberQuota(a, resp.StatusCode)
 			continue
 		}
 		if resp.StatusCode >= 400 {
@@ -157,6 +157,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if lastStatus == 0 {
+		state.err = unavailableReason(list, time.Now())
 		writeProxyErr(w, http.StatusServiceUnavailable, state.err)
 		return
 	}
@@ -176,17 +177,6 @@ func (h *Handler) maxAttempts() int {
 		retries = st.MaxRetries
 	}
 	return maxAttemptsFromSettings(retries)
-}
-
-func (h *Handler) rememberQuota(a model.PoolAccount, status int) {
-	if strings.TrimSpace(a.ID) == "" {
-		return
-	}
-	u := a.Usage
-	if !markQuotaFromStatus(&u, status) {
-		return
-	}
-	_ = h.store.SaveAccountUsage(a.ID, u)
 }
 
 func (h *Handler) pool() ([]model.PoolAccount, error) {

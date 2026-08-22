@@ -19,10 +19,10 @@ func TestRankSkipsLimitedAndPicksLeastUsed(t *testing.T) {
 	noKey := acc("e@x.com", "", win("ok", 0), win("ok", 0), win("ok", 0), "glm-5.3", 0)
 
 	got := Rank([]model.PoolAccount{limited, fullPct, overModel, overPool, busy, best, noKey}, "glm-5.3")
-	if len(got) != 3 {
+	if len(got) != 4 {
 		t.Fatalf("len=%d emails=%v", len(got), emails(got))
 	}
-	if got[0].Email != "b@x.com" || got[1].Email != "c@x.com" || got[2].Email != "d@x.com" {
+	if got[0].Email != "g@x.com" || got[1].Email != "b@x.com" || got[2].Email != "c@x.com" || got[3].Email != "d@x.com" {
 		t.Fatalf("order %v", emails(got))
 	}
 }
@@ -49,7 +49,7 @@ func TestRankUnknownModelUsesPackageOnly(t *testing.T) {
 	}
 }
 
-func TestRankSkipsWhenMonthlyPoolGone(t *testing.T) {
+func TestRankKeepsKeyWhenWindowsHaveRoom(t *testing.T) {
 	resetBalancer()
 	a := model.PoolAccount{
 		AccountPublic: model.AccountPublic{ID: "a", Email: "a@x.com", APIKey: "k"},
@@ -65,8 +65,8 @@ func TestRankSkipsWhenMonthlyPoolGone(t *testing.T) {
 		},
 	}
 	got := Rank([]model.PoolAccount{a}, "glm-5.3")
-	if len(got) != 0 {
-		t.Fatalf("pool exhausted should skip glm, got %v", emails(got))
+	if len(got) != 1 {
+		t.Fatalf("windows not full should keep key, got %v", emails(got))
 	}
 }
 
@@ -108,6 +108,24 @@ func TestCooldownSkipsKey(t *testing.T) {
 	got := Rank([]model.PoolAccount{a, b}, "glm-5.3")
 	if len(got) != 1 || got[0].Email != "b@x.com" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestReserveAllowsConcurrentSameAccount(t *testing.T) {
+	resetBalancer()
+	a := acc("a@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	first, ok := lb.reserve([]model.PoolAccount{a}, "glm-5.3", nil)
+	if !ok {
+		t.Fatal("first reserve")
+	}
+	second, ok := lb.reserve([]model.PoolAccount{a}, "glm-5.3", nil)
+	if !ok {
+		t.Fatal("same account must allow concurrent reserve")
+	}
+	lb.end(accountID(first))
+	lb.end(accountID(second))
+	if first.Email != "a@x.com" || second.Email != "a@x.com" {
+		t.Fatalf("%s %s", first.Email, second.Email)
 	}
 }
 

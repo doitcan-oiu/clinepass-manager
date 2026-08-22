@@ -173,7 +173,9 @@ export function SettingsPage() {
                     value={proxy}
                     onChange={(e) => setProxy(e.target.value)}
                   />
-                  <p className="text-xs text-muted-foreground">留空则直连。</p>
+                  <p className="text-xs text-muted-foreground">
+                    留空则直连。带账密的 SOCKS5（例如 1024proxy）Chrome 不支持，会自动起本地中继再出去。
+                  </p>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border p-3">
                   <div>
