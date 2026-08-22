@@ -109,6 +109,7 @@ type Settings struct {
 	HeroSMSService  string  `json:"hero_sms_service,omitempty"`
 	HeroSMSCountry  int     `json:"hero_sms_country,omitempty"`
 	HeroSMSMaxPrice float64 `json:"hero_sms_max_price,omitempty"`
-	MaxConcurrent   int     `json:"max_concurrent,omitempty"`
-	MaxRetries      int     `json:"max_retries"`
+	MaxConcurrent        int      `json:"max_concurrent,omitempty"`
+	MaxRetries           int      `json:"max_retries"`
+	EmailSuffixBlacklist []string `json:"email_suffix_blacklist,omitempty"`
 }

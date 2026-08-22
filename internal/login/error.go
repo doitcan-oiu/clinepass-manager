@@ -9,7 +9,25 @@ import (
 var (
 	ErrSMSNeedRelogin = errors.New("两次未收到验证码，需要重新登录")
 	ErrPhoneTimeout   = errors.New("手机号超时")
+	ErrAuthkitStuck   = errors.New("AuthKit 页面异常")
 )
+
+func IsAuthkitFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrAuthkitStuck) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "chrome-error") || strings.Contains(msg, "chromewebdata") {
+		return true
+	}
+	if strings.Contains(msg, "authkit.cline.bot") && !strings.Contains(msg, "radar-challenge") {
+		return true
+	}
+	return false
+}
 
 func CompactMessage(msg string) string {
 	msg = strings.TrimSpace(msg)

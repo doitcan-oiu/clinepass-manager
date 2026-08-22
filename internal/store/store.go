@@ -117,6 +117,9 @@ CREATE TABLE IF NOT EXISTS batches (
 	if err := s.ensureColumn("settings", "max_retries", `ALTER TABLE settings ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 3`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("settings", "email_suffix_blacklist", `ALTER TABLE settings ADD COLUMN email_suffix_blacklist TEXT NOT NULL DEFAULT '[]'`); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`UPDATE settings SET invite_url = 'https://authkit.cline.bot' WHERE invite_url = '' OR invite_url LIKE '%opencode.ai%'`); err != nil {
 		return err
 	}
@@ -365,12 +368,13 @@ func scanAccount(sc rowScanner) (model.Account, error) {
 func (s *Store) GetSettings() (model.Settings, error) {
 	row := s.db.QueryRow(`SELECT proxy, headless, invite_url, usage_js_url,
 		IFNULL(hero_sms_api_key, ''), IFNULL(hero_sms_service, ''), IFNULL(hero_sms_country, 0), IFNULL(hero_sms_max_price, 0),
-		IFNULL(max_concurrent, 1), IFNULL(max_retries, 3)
+		IFNULL(max_concurrent, 1), IFNULL(max_retries, 3), IFNULL(email_suffix_blacklist, '')
 		FROM settings WHERE id = 1`)
 	var out model.Settings
 	var headless int
+	var blacklist string
 	if err := row.Scan(&out.Proxy, &headless, &out.InviteURL, &out.UsageJSURL,
-		&out.HeroSMSAPIKey, &out.HeroSMSService, &out.HeroSMSCountry, &out.HeroSMSMaxPrice, &out.MaxConcurrent, &out.MaxRetries); err != nil {
+		&out.HeroSMSAPIKey, &out.HeroSMSService, &out.HeroSMSCountry, &out.HeroSMSMaxPrice, &out.MaxConcurrent, &out.MaxRetries, &blacklist); err != nil {
 		return model.Settings{Headless: true, MaxRetries: 3}, err
 	}
 	out.Headless = headless != 0
@@ -378,6 +382,7 @@ func (s *Store) GetSettings() (model.Settings, error) {
 		out.MaxConcurrent = 1
 	}
 	out.MaxRetries = clampMaxRetries(out.MaxRetries)
+	out.EmailSuffixBlacklist = DecodeSuffixList(blacklist)
 	return out, nil
 }
 
@@ -395,9 +400,10 @@ func (s *Store) SaveSettings(in model.Settings) error {
 		conc = 1
 	}
 	retries := clampMaxRetries(in.MaxRetries)
+	blacklist := EncodeSuffixList(in.EmailSuffixBlacklist)
 	_, err := s.db.Exec(`
-INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, updated_at)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	proxy = excluded.proxy,
 	headless = excluded.headless,
@@ -409,9 +415,10 @@ ON CONFLICT(id) DO UPDATE SET
 	hero_sms_max_price = excluded.hero_sms_max_price,
 	max_concurrent = excluded.max_concurrent,
 	max_retries = excluded.max_retries,
+	email_suffix_blacklist = excluded.email_suffix_blacklist,
 	updated_at = excluded.updated_at`,
 		strings.TrimSpace(in.Proxy), headless, strings.TrimSpace(in.InviteURL), strings.TrimSpace(in.UsageJSURL),
-		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, retries, time.Now().Unix())
+		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, retries, blacklist, time.Now().Unix())
 	return err
 }
 

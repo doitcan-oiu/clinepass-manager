@@ -19,12 +19,14 @@ type Manager struct {
 	cfg   config.Config
 	store *store.Store
 
-	mu      sync.Mutex
-	jobs    map[string]*model.Job
-	subs    map[string][]chan model.JobEvent
-	active  int
-	queue   []string
-	running map[string]string
+	mu            sync.Mutex
+	jobs          map[string]*model.Job
+	subs          map[string][]chan model.JobEvent
+	active        int
+	queue         []string
+	running       map[string]string
+	suffixFails   map[string]int
+	suffixRunning map[string]int
 }
 
 func New(cfg config.Config, st *store.Store) *Manager {
@@ -34,9 +36,11 @@ func New(cfg config.Config, st *store.Store) *Manager {
 	return &Manager{
 		cfg:     cfg,
 		store:   st,
-		jobs:    map[string]*model.Job{},
-		subs:    map[string][]chan model.JobEvent{},
-		running: map[string]string{},
+		jobs:          map[string]*model.Job{},
+		subs:          map[string][]chan model.JobEvent{},
+		running:       map[string]string{},
+		suffixFails:   map[string]int{},
+		suffixRunning: map[string]int{},
 	}
 }
 
@@ -150,22 +154,67 @@ func (m *Manager) maxConcurrentLocked() int {
 func (m *Manager) pump() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	blacklist := m.suffixBlacklistLocked()
+	rotated := 0
 	for m.active < m.maxConcurrentLocked() && len(m.queue) > 0 {
+		if rotated >= len(m.queue) {
+			break
+		}
 		id := m.queue[0]
 		m.queue = m.queue[1:]
 		job := m.jobs[id]
 		if job == nil {
 			continue
 		}
+		if job.Kind == "login" {
+			suffix := store.EmailSuffix(job.Email)
+			if store.SuffixBlacklisted(blacklist, suffix) || m.suffixFails[suffix] >= store.AuthkitSuffixFailLimit {
+				m.active++
+				m.running[job.AccountID] = job.ID
+				go m.failSuffixBlocked(job, suffix)
+				continue
+			}
+			if blocked, busy := store.SuffixCanStart(m.suffixFails[suffix], m.suffixRunning[suffix]); blocked || busy {
+				m.queue = append(m.queue, id)
+				rotated++
+				continue
+			}
+			m.suffixRunning[suffix]++
+		}
+		rotated = 0
 		m.active++
 		m.running[job.AccountID] = job.ID
 		go m.run(job)
 	}
 }
 
-func (m *Manager) run(job *model.Job) {
+func (m *Manager) suffixBlacklistLocked() []string {
+	st, err := m.store.GetSettings()
+	if err != nil {
+		return nil
+	}
+	return st.EmailSuffixBlacklist
+}
+
+func (m *Manager) failSuffixBlocked(job *model.Job, suffix string) {
 	defer func() {
 		m.mu.Lock()
+		m.active--
+		delete(m.running, job.AccountID)
+		m.mu.Unlock()
+		m.pump()
+	}()
+	msg := fmt.Sprintf("邮箱后缀 %s 已在黑名单，已跳过", suffix)
+	m.fail(job, msg)
+}
+
+func (m *Manager) run(job *model.Job) {
+	suffix := store.EmailSuffix(job.Email)
+	defer func() {
+		m.mu.Lock()
+		if job.Kind == "login" && suffix != "" && m.suffixRunning[suffix] > 0 {
+			m.suffixRunning[suffix]--
+		}
 		m.active--
 		delete(m.running, job.AccountID)
 		m.mu.Unlock()
@@ -196,13 +245,14 @@ func (m *Manager) run(job *model.Job) {
 			m.logf(job, "info", format, args...)
 		})
 	} else {
-		res, err = login.Run(cfg, acc, func(format string, args ...any) {
-			m.logf(job, "info", format, args...)
-		})
+		res, err = m.runLoginWithAuthkitRetry(cfg, acc, job)
 	}
 	if err != nil {
 		if errors.Is(err, login.ErrPhoneTimeout) {
 			m.logf(job, "info", "手机号超时，跳过")
+		}
+		if job.Kind == "login" && login.IsAuthkitFailure(err) {
+			m.noteAuthkitSuffixFail(job, suffix)
 		}
 		msg := login.CompactMessage(err.Error())
 		m.fail(job, msg)
@@ -210,6 +260,11 @@ func (m *Manager) run(job *model.Job) {
 		acc.LastError = msg
 		_ = m.store.SaveLoginResult(acc)
 		return
+	}
+	if job.Kind == "login" && suffix != "" {
+		m.mu.Lock()
+		m.suffixFails[suffix] = 0
+		m.mu.Unlock()
 	}
 	acc.Status = "ready"
 	acc.LastError = ""
@@ -233,6 +288,50 @@ func (m *Manager) run(job *model.Job) {
 		m.logf(job, "info", "登录完成")
 	}
 	m.setStatus(job, "success", "")
+}
+
+const authkitAccountRetries = 2
+
+func (m *Manager) runLoginWithAuthkitRetry(cfg config.Config, acc model.Account, job *model.Job) (login.Result, error) {
+	var last error
+	for attempt := 0; attempt <= authkitAccountRetries; attempt++ {
+		if attempt > 0 {
+			m.logf(job, "info", "AuthKit 页面异常，同一账号第 %d 次重试", attempt)
+		}
+		res, err := login.Run(cfg, acc, func(format string, args ...any) {
+			m.logf(job, "info", format, args...)
+		})
+		if err == nil {
+			return res, nil
+		}
+		last = err
+		if !login.IsAuthkitFailure(err) {
+			return login.Result{}, err
+		}
+	}
+	return login.Result{}, last
+}
+
+func (m *Manager) noteAuthkitSuffixFail(job *model.Job, suffix string) {
+	if suffix == "" {
+		return
+	}
+	m.mu.Lock()
+	m.suffixFails[suffix]++
+	n := m.suffixFails[suffix]
+	m.mu.Unlock()
+	if n < store.AuthkitSuffixFailLimit {
+		m.logf(job, "info", "后缀 %s 已有 %d/%d 个账号 AuthKit 失败", suffix, n, store.AuthkitSuffixFailLimit)
+		return
+	}
+	added, err := m.store.AddEmailSuffixBlacklist(suffix)
+	if err != nil {
+		m.logf(job, "error", "写入后缀黑名单失败: %v", err)
+		return
+	}
+	if added {
+		m.logf(job, "info", "同一后缀 %s 已有 %d 个账号 AuthKit 失败，已加入黑名单，其余同后缀账号将跳过", suffix, n)
+	}
 }
 
 func (m *Manager) fail(job *model.Job, msg string) {

@@ -133,4 +133,12 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if err != nil || again.MaxRetries != 5 {
 		t.Fatalf("retries %+v %v", again, err)
 	}
+	got.EmailSuffixBlacklist = []string{"foxcroftp.us", "@Mail.com"}
+	if err := s.SaveSettings(got); err != nil {
+		t.Fatal(err)
+	}
+	again, err = s.GetSettings()
+	if err != nil || len(again.EmailSuffixBlacklist) != 2 || again.EmailSuffixBlacklist[0] != "foxcroftp.us" || again.EmailSuffixBlacklist[1] != "mail.com" {
+		t.Fatalf("blacklist %+v %v", again.EmailSuffixBlacklist, err)
+	}
 }

@@ -1,6 +1,7 @@
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
+import { blacklistHits, stripBlacklistedLines } from "@/lib/email-suffix"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -26,16 +27,28 @@ export function AddBatchDialog({ onSaved }: { onSaved: () => void }) {
   const [name, setName] = useState(nextBatchName)
   const [text, setText] = useState("")
   const [pending, setPending] = useState(false)
+  const [blacklist, setBlacklist] = useState<string[]>([])
 
   function openChange(v: boolean) {
     setOpen(v)
     if (v) {
       setName(nextBatchName())
       setText("")
+      api
+        .config()
+        .then((cfg) => setBlacklist(cfg.email_suffix_blacklist || []))
+        .catch(() => setBlacklist([]))
     }
   }
 
+  const hits = useMemo(() => blacklistHits(text, blacklist), [text, blacklist])
+  const blockedEmails = useMemo(() => [...new Set(hits.map((row) => row.email))], [hits])
+
   async function onSubmit() {
+    if (blockedEmails.length) {
+      toast.error(`请先剔除黑名单后缀账号：${blockedEmails.join("、")}`)
+      return
+    }
     setPending(true)
     try {
       const res = await api.createBatch({ name, text })
@@ -49,6 +62,14 @@ export function AddBatchDialog({ onSaved }: { onSaved: () => void }) {
       setPending(false)
     }
   }
+
+  useEffect(() => {
+    if (!open) return
+    api
+      .config()
+      .then((cfg) => setBlacklist(cfg.email_suffix_blacklist || []))
+      .catch(() => {})
+  }, [open])
 
   return (
     <Dialog open={open} onOpenChange={openChange}>
@@ -77,12 +98,27 @@ export function AddBatchDialog({ onSaved }: { onSaved: () => void }) {
               placeholder={"user1@example.com----pass----backup@example.com\nuser2@example.com----pass----backup@example.com"}
             />
           </div>
+          {blockedEmails.length > 0 && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+              <p className="font-medium text-destructive">检测到 {blockedEmails.length} 个黑名单后缀账号，必须先剔除才能导入。</p>
+              <p className="mt-1 break-all text-xs text-destructive/90">{blockedEmails.join("、")}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => setText(stripBlacklistedLines(text, blacklist))}
+              >
+                剔除黑名单账号
+              </Button>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>
             取消
           </Button>
-          <Button disabled={pending || !text.trim()} onClick={onSubmit}>
+          <Button disabled={pending || !text.trim() || blockedEmails.length > 0} onClick={onSubmit}>
             导入这批账号
           </Button>
         </DialogFooter>

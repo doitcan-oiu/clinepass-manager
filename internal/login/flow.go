@@ -112,12 +112,12 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 		}
 		if strings.Contains(page.URL(), "accounts.google.com") || visible(page, `input#identifierId, input[name="identifier"], input[name="Passwd"]`) {
 			if err := googleLogin(page, acc, log); err != nil {
-				return Result{}, CompactError(err)
+				return Result{}, wrapIfAuthkit(err, page.URL())
 			}
 		}
 		log("等待进入 Cline")
 		if err := waitCline(page, 180000, log); err != nil {
-			return Result{}, err
+			return Result{}, wrapIfAuthkit(err, page.URL())
 		}
 		if err := handleRadar(page, cfg, log); err != nil {
 			return Result{}, CompactError(err)
@@ -126,7 +126,7 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 			return Result{}, CompactError(err)
 		}
 		if err := waitCline(page, 60000, log); err != nil {
-			return Result{}, err
+			return Result{}, wrapIfAuthkit(err, page.URL())
 		}
 	}
 
@@ -138,7 +138,7 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 	}
 	sleep(800)
 	if cookieExpired(page.URL()) {
-		return Result{}, fmt.Errorf("登录后没有进入 Cline，当前 URL=%s", page.URL())
+		return Result{}, wrapIfAuthkit(fmt.Errorf("登录后没有进入 Cline，当前 URL=%s", page.URL()), page.URL())
 	}
 
 	cookies, err := sess.Context.Cookies()
@@ -802,6 +802,29 @@ func onRadarURL(u string) bool {
 
 func leftGoogle(page playwright.Page) bool {
 	return leftGoogleURL(page.URL())
+}
+
+func wrapIfAuthkit(err error, pageURL string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrAuthkitStuck) || isAuthkitProblemURL(pageURL) || IsAuthkitFailure(err) {
+		if errors.Is(err, ErrAuthkitStuck) {
+			return CompactError(err)
+		}
+		return CompactError(fmt.Errorf("%w: %s", ErrAuthkitStuck, err.Error()))
+	}
+	return CompactError(err)
+}
+
+func isAuthkitProblemURL(u string) bool {
+	if u == "" {
+		return false
+	}
+	if strings.HasPrefix(u, "chrome-error") || strings.HasPrefix(u, "chrome://") {
+		return true
+	}
+	return urlHost(u) == "authkit.cline.bot" && !onRadarURL(u)
 }
 
 func urlHost(raw string) string {

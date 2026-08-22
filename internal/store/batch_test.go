@@ -60,3 +60,28 @@ func TestCreateBatchAndList(t *testing.T) {
 		t.Fatalf("expected no pay links, got %d", len(links))
 	}
 }
+
+func TestCreateBatchRejectsBlacklistedSuffix(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	st, err := s.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.EmailSuffixBlacklist = []string{"foxcroftp.us"}
+	if err := s.SaveSettings(st); err != nil {
+		t.Fatal(err)
+	}
+	_, blocked, err := s.CreateBatch(model.CreateBatchInput{
+		Text: "ok@jasperway.us----pw----b@x.com\nbad@foxcroftp.us----pw----c@x.com\n",
+	})
+	if err == nil {
+		t.Fatal("expected blacklist error")
+	}
+	if len(blocked) != 1 || blocked[0] != "bad@foxcroftp.us" {
+		t.Fatalf("blocked=%v err=%v", blocked, err)
+	}
+}

@@ -139,6 +139,24 @@ func TestIsNoSMS(t *testing.T) {
 	}
 }
 
+func TestIsAuthkitFailure(t *testing.T) {
+	if !IsAuthkitFailure(fmt.Errorf("%w: 当前 URL=chrome-error://chromewebdata/", ErrAuthkitStuck)) {
+		t.Fatal("wrapped sentinel")
+	}
+	if !IsAuthkitFailure(errors.New("Google 登录未完成，当前 URL=chrome-error://chromewebdata/")) {
+		t.Fatal("chrome-error")
+	}
+	if !IsAuthkitFailure(errors.New("等待进入 Cline 超时，当前 URL=https://authkit.cline.bot/?authorization_session_id=1")) {
+		t.Fatal("authkit login")
+	}
+	if IsAuthkitFailure(errors.New("已经在验证码页")) {
+		t.Fatal("other")
+	}
+	if IsAuthkitFailure(ErrPhoneTimeout) {
+		t.Fatal("phone timeout")
+	}
+}
+
 func TestCompactErrorKeepsSMSSentinel(t *testing.T) {
 	err := CompactError(ErrSMSNeedRelogin)
 	if !errors.Is(err, ErrSMSNeedRelogin) {

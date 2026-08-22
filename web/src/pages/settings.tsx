@@ -35,6 +35,7 @@ export function SettingsPage() {
   const [headless, setHeadless] = useState(true)
   const [maxConcurrent, setMaxConcurrent] = useState(1)
   const [maxRetries, setMaxRetries] = useState(3)
+  const [suffixBlacklist, setSuffixBlacklist] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [configured, setConfigured] = useState(false)
   const [service, setService] = useState("ot")
@@ -52,6 +53,7 @@ export function SettingsPage() {
         setHeadless(cfg.headless !== false)
         setMaxConcurrent(cfg.max_concurrent >= 1 ? cfg.max_concurrent : 1)
         setMaxRetries(Number.isFinite(cfg.max_retries) && cfg.max_retries >= 0 ? cfg.max_retries : 3)
+        setSuffixBlacklist((cfg.email_suffix_blacklist || []).join("\n"))
         setApiKey(cfg.hero_sms_api_key || "")
         setConfigured(!!cfg.hero_sms_configured)
         setService(cfg.hero_sms_service || "ot")
@@ -112,9 +114,10 @@ export function SettingsPage() {
         toast.error("失败换号次数须在 0–32")
         return
       }
-      await api.saveConfig({ proxy, headless, max_concurrent: n, max_retries: retries })
+      const cfg = await api.saveConfig({ proxy, headless, max_concurrent: n, max_retries: retries })
       setMaxConcurrent(n)
       setMaxRetries(retries)
+      setSuffixBlacklist((cfg.email_suffix_blacklist || []).join("\n"))
       toast.success("运行环境已保存")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存失败")
@@ -146,6 +149,24 @@ export function SettingsPage() {
     }
   }
 
+  async function saveSuffixBlacklist(e?: FormEvent) {
+    e?.preventDefault()
+    setPending(true)
+    try {
+      const list = suffixBlacklist
+        .split(/[\n,;]+/)
+        .map((s) => s.trim().replace(/^@/, "").toLowerCase())
+        .filter(Boolean)
+      const cfg = await api.saveConfig({ email_suffix_blacklist: list })
+      setSuffixBlacklist((cfg.email_suffix_blacklist || []).join("\n"))
+      toast.success("邮箱后缀黑名单已保存")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "保存失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
   return (
     <div className="mx-auto w-full max-w-2xl space-y-6">
       <div>
@@ -153,8 +174,9 @@ export function SettingsPage() {
         <p className="text-sm text-muted-foreground">按分组切换，只改当前这一组。</p>
       </div>
       <Tabs defaultValue="runtime">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="runtime">运行环境</TabsTrigger>
+          <TabsTrigger value="suffix">邮箱后缀</TabsTrigger>
           <TabsTrigger value="herosms">Hero SMS</TabsTrigger>
         </TabsList>
         <TabsContent value="runtime" className="mt-4">
@@ -213,6 +235,35 @@ export function SettingsPage() {
                 </div>
                 <Button type="submit" disabled={pending} className="w-fit">
                   保存运行环境
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="suffix" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>邮箱后缀黑名单</CardTitle>
+              <CardDescription>
+                Cline 拉黑的邮箱后缀写在这里。登录时同一后缀连续 3 个账号都卡在 AuthKit，也会自动加进来。创建批次时必须先剔除这些后缀的账号。
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={saveSuffixBlacklist} className="grid gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="suffix-blacklist">后缀列表</Label>
+                  <textarea
+                    id="suffix-blacklist"
+                    rows={8}
+                    className="min-h-32 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                    value={suffixBlacklist}
+                    onChange={(e) => setSuffixBlacklist(e.target.value)}
+                    placeholder={"foxcroftp.us\nmail.com"}
+                  />
+                  <p className="text-xs text-muted-foreground">一行一个，例如 foxcroftp.us。保存后立即生效。</p>
+                </div>
+                <Button type="submit" disabled={pending} className="w-fit">
+                  保存黑名单
                 </Button>
               </form>
             </CardContent>

@@ -108,10 +108,50 @@ ORDER BY a.created_at DESC`, batchID)
 	return out, rows.Err()
 }
 
+func blacklistedBatchEmails(s *Store, items []model.CreateAccountInput) []string {
+	st, err := s.GetSettings()
+	if err != nil || len(st.EmailSuffixBlacklist) == 0 {
+		return nil
+	}
+	var blocked []string
+	seen := map[string]bool{}
+	for _, item := range items {
+		suf := EmailSuffix(item.Email)
+		if !SuffixBlacklisted(st.EmailSuffixBlacklist, suf) {
+			continue
+		}
+		if seen[item.Email] {
+			continue
+		}
+		seen[item.Email] = true
+		blocked = append(blocked, item.Email)
+	}
+	return blocked
+}
+
+func (s *Store) AddEmailSuffixBlacklist(suffix string) (bool, error) {
+	suffix = NormalizeSuffix(suffix)
+	if suffix == "" {
+		return false, nil
+	}
+	st, err := s.GetSettings()
+	if err != nil {
+		return false, err
+	}
+	if SuffixBlacklisted(st.EmailSuffixBlacklist, suffix) {
+		return false, nil
+	}
+	st.EmailSuffixBlacklist = AddSuffix(st.EmailSuffixBlacklist, suffix)
+	return true, s.SaveSettings(st)
+}
+
 func (s *Store) CreateBatch(in model.CreateBatchInput) (model.BatchSummary, []string, error) {
 	items := ParseBulk(in.Text)
 	if len(items) == 0 {
 		return model.BatchSummary{}, nil, fmt.Errorf("没有有效账号，格式：邮箱----密码----辅助邮箱，一行一个")
+	}
+	if blocked := blacklistedBatchEmails(s, items); len(blocked) > 0 {
+		return model.BatchSummary{}, blocked, fmt.Errorf("存在黑名单后缀账号，请先剔除：%s", strings.Join(blocked, "、"))
 	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
