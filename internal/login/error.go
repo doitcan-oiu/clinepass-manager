@@ -1,8 +1,14 @@
 package login
 
 import (
+	"errors"
 	"strings"
 	"unicode/utf8"
+)
+
+var (
+	ErrSMSNeedRelogin = errors.New("两次未收到验证码，需要重新登录")
+	ErrPhoneTimeout   = errors.New("手机号超时")
 )
 
 func CompactMessage(msg string) string {
@@ -51,13 +57,18 @@ func CompactError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return &shortError{msg: CompactMessage(err.Error())}
+	return &shortError{msg: CompactMessage(err.Error()), cause: err}
 }
 
 type shortError struct {
-	msg string
+	msg   string
+	cause error
 }
 
 func (e *shortError) Error() string {
 	return e.msg
+}
+
+func (e *shortError) Unwrap() error {
+	return e.cause
 }

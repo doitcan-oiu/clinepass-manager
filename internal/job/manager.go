@@ -3,6 +3,7 @@ package job
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -200,6 +201,9 @@ func (m *Manager) run(job *model.Job) {
 		})
 	}
 	if err != nil {
+		if errors.Is(err, login.ErrPhoneTimeout) {
+			m.logf(job, "info", "手机号超时，跳过")
+		}
 		msg := login.CompactMessage(err.Error())
 		m.fail(job, msg)
 		acc.Status = "failed"

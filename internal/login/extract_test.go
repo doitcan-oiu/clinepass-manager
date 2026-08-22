@@ -1,8 +1,11 @@
 package login
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"opencode-go-manager/internal/herosms"
 )
 
 func TestExtractFromHTML(t *testing.T) {
@@ -64,6 +67,33 @@ func TestLeftGoogleURL(t *testing.T) {
 	}
 	if !leftGoogleURL("https://app.cline.bot/dashboard") {
 		t.Fatal("app should leave google")
+	}
+}
+
+func TestRadarSendURL(t *testing.T) {
+	verify := "https://authkit.cline.bot/radar-challenge/verify?authorization_session_id=abc"
+	got := radarSendURL(verify)
+	if !strings.Contains(got, "radar-challenge/send") || strings.Contains(got, "radar-challenge/verify") {
+		t.Fatalf("%s", got)
+	}
+}
+
+func TestIsNoSMS(t *testing.T) {
+	if !isNoSMS(herosms.ErrWaitCodeTimeout) {
+		t.Fatal("timeout")
+	}
+	if !isNoSMS(herosms.ErrCancelled) {
+		t.Fatal("cancelled")
+	}
+	if isNoSMS(errors.New("填写区号失败")) {
+		t.Fatal("other error")
+	}
+}
+
+func TestCompactErrorKeepsSMSSentinel(t *testing.T) {
+	err := CompactError(ErrSMSNeedRelogin)
+	if !errors.Is(err, ErrSMSNeedRelogin) {
+		t.Fatal(err)
 	}
 }
 

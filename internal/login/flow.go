@@ -34,6 +34,27 @@ func Run(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 	if log == nil {
 		log = func(string, ...any) {}
 	}
+	var last error
+	for round := 1; round <= 2; round++ {
+		if round > 1 {
+			log("两次都没收到验证码，重新走一遍登录（第 %d 轮）", round)
+		}
+		res, err := runOnce(cfg, acc, log)
+		if err == nil {
+			return res, nil
+		}
+		if !errors.Is(err, ErrSMSNeedRelogin) {
+			return Result{}, err
+		}
+		last = err
+	}
+	if last != nil {
+		log("两轮登录共 4 次接码都没收到验证码，跳过")
+	}
+	return Result{}, ErrPhoneTimeout
+}
+
+func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 	profile := ""
 	shotDir := cfg.ScreenshotsDir()
 	sess, err := browser.Launch(cfg, browser.LaunchOptions{

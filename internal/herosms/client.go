@@ -2,6 +2,7 @@ package herosms
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+var (
+	ErrWaitCodeTimeout = errors.New("等待验证码超时")
+	ErrCancelled       = errors.New("接码已取消或失败")
 )
 
 const (
@@ -185,11 +191,11 @@ func (c *Client) WaitCode(id string, timeout time.Duration) (string, error) {
 			return code, nil
 		}
 		if !wait {
-			return "", fmt.Errorf("接码已取消或失败")
+			return "", ErrCancelled
 		}
 		time.Sleep(5 * time.Second)
 	}
-	return "", fmt.Errorf("等待验证码超时")
+	return "", ErrWaitCodeTimeout
 }
 
 func (c *Client) Status(id string) (code string, waiting bool, err error) {

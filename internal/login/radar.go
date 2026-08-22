@@ -1,6 +1,7 @@
 package login
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,12 +15,11 @@ import (
 	"opencode-go-manager/internal/usage"
 )
 
+const radarPhoneAttempts = 2
+
 func handleRadar(page playwright.Page, cfg config.Config, log Logger) error {
 	if !strings.Contains(page.URL(), "radar-challenge") {
 		return nil
-	}
-	if strings.Contains(page.URL(), "radar-challenge/verify") {
-		return fmt.Errorf("已经在验证码页，但没有进行中的接码")
 	}
 	if cfg.HeroSMSAPIKey == "" {
 		return fmt.Errorf("遇到手机验证，请先在设置里填写 Hero SMS API Key")
@@ -28,8 +28,37 @@ func handleRadar(page playwright.Page, cfg config.Config, log Logger) error {
 		return fmt.Errorf("遇到手机验证，请先在设置里选择接码区域和报价")
 	}
 
+	sendURL := page.URL()
+	if strings.Contains(sendURL, "radar-challenge/verify") {
+		sendURL = radarSendURL(sendURL)
+	}
+	if err := gotoRadarSend(page, sendURL, log); err != nil {
+		return err
+	}
+	sendURL = page.URL()
+
 	sms := herosms.New(cfg.HeroSMSAPIKey, cfg.HeroSMSService)
-	log("Hero SMS 取号 country=%d price=%s", cfg.HeroSMSCountry, formatPrice(cfg.HeroSMSMaxPrice))
+	for i := 1; i <= radarPhoneAttempts; i++ {
+		err := requestRadarCode(page, cfg, sms, log, i)
+		if err == nil {
+			return nil
+		}
+		if !isNoSMS(err) {
+			return err
+		}
+		log("第 %d/%d 次未收到验证码: %v", i, radarPhoneAttempts, err)
+		if i < radarPhoneAttempts {
+			log("返回手机号输入页，换一个 Hero SMS 号码重试")
+			if err := gotoRadarSend(page, sendURL, log); err != nil {
+				return err
+			}
+		}
+	}
+	return ErrSMSNeedRelogin
+}
+
+func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Client, log Logger, attempt int) error {
+	log("Hero SMS 取号 country=%d price=%s（第 %d/%d 次）", cfg.HeroSMSCountry, formatPrice(cfg.HeroSMSMaxPrice), attempt, radarPhoneAttempts)
 	num, err := sms.GetNumber(cfg.HeroSMSCountry, cfg.HeroSMSMaxPrice)
 	if err != nil {
 		return err
@@ -82,6 +111,52 @@ func handleRadar(page playwright.Page, cfg config.Config, log Logger) error {
 		sleep(400)
 	}
 	return fmt.Errorf("提交验证码后仍停在验证页，当前 URL=%s", page.URL())
+}
+
+func gotoRadarSend(page playwright.Page, sendURL string, log Logger) error {
+	if onRadarSend(page.URL()) && visible(page, `input[name="local_number"]`) {
+		return nil
+	}
+	target := strings.TrimSpace(sendURL)
+	if target == "" || strings.Contains(target, "radar-challenge/verify") {
+		target = radarSendURL(page.URL())
+	}
+	if log != nil && target != "" {
+		log("打开手机号输入页")
+	}
+	if target != "" {
+		if _, err := page.Goto(target, playwright.PageGotoOptions{
+			WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+			Timeout:   playwright.Float(30000),
+		}); err != nil {
+			if log != nil {
+				log("打开手机号页失败: %v，尝试后退", err)
+			}
+			_, _ = page.GoBack()
+		}
+	} else {
+		_, _ = page.GoBack()
+	}
+	sleep(800)
+	if onRadarSend(page.URL()) || visible(page, `input[name="local_number"]`) {
+		return nil
+	}
+	return fmt.Errorf("无法回到手机号输入页，当前 URL=%s", page.URL())
+}
+
+func radarSendURL(raw string) string {
+	return strings.Replace(raw, "radar-challenge/verify", "radar-challenge/send", 1)
+}
+
+func onRadarSend(u string) bool {
+	return strings.Contains(u, "radar-challenge/send")
+}
+
+func isNoSMS(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, herosms.ErrWaitCodeTimeout) || errors.Is(err, herosms.ErrCancelled)
 }
 
 func fillOTP(page playwright.Page, code string) error {
