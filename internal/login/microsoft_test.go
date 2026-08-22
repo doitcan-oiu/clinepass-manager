@@ -26,11 +26,11 @@ func TestOnMicrosoftURL(t *testing.T) {
 }
 
 func TestMicrosoftInvite(t *testing.T) {
-	if got := microsoftInvite(""); got != "https://authkit.cline.bot/sign-up" {
+	if got := microsoftInvite(""); got != "" {
 		t.Fatalf("empty=%q", got)
 	}
-	if got := microsoftInvite("https://authkit.cline.bot/?ref=1"); got != "https://authkit.cline.bot/sign-up" {
-		t.Fatalf("authkit=%q", got)
+	if got := microsoftInvite("https://authkit.cline.bot/?ref=1"); got != "https://authkit.cline.bot/?ref=1" {
+		t.Fatalf("keep invite=%q", got)
 	}
 	if got := microsoftInvite("https://authkit.cline.bot/sign-up"); got != "https://authkit.cline.bot/sign-up" {
 		t.Fatalf("already=%q", got)

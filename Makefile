@@ -1,10 +1,11 @@
 .DEFAULT_GOAL := dev
 
-.PHONY: dev api web build tidy install-web build-web install-pw browser-deps
+.PHONY: dev api web build tidy install-web build-web install-pw browser-deps worker-venv worker-test
 
 dev:
 	@echo "==> 安装依赖"
 	go mod tidy
+	$(MAKE) worker-venv
 	cd web && npm install
 	@echo "==> 启动后端 http://127.0.0.1:8080 （开发模式固定 8080，go run 编译期间请等待）"
 	@echo "==> Ctrl+C 会同时退出两边"
@@ -51,5 +52,21 @@ browser-deps:
 	sudo apt-get install -y xvfb libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation libasound2t64 || \
 	sudo apt-get install -y xvfb libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation libasound2
 
-build: build-web
+worker-venv:
+	@if ! worker/.venv/bin/python -c "import cloakbrowser" >/dev/null 2>&1; then \
+		rm -rf worker/.venv; \
+		if command -v uv >/dev/null 2>&1; then \
+			uv venv worker/.venv && uv pip install --python worker/.venv/bin/python -r worker/requirements.txt; \
+		elif python3 -m venv worker/.venv; then \
+			worker/.venv/bin/pip install -q -r worker/requirements.txt; \
+		else \
+			echo "需要 uv 或 python3-venv（sudo apt-get install -y python3-venv）"; \
+			exit 1; \
+		fi; \
+	fi
+
+worker-test:
+	cd worker && python3 -m unittest test_urls test_herosms -v
+
+build: build-web worker-venv
 	go build -o bin/server ./cmd/server

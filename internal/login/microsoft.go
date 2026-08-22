@@ -42,17 +42,7 @@ func onMicrosoftURL(u string) bool {
 }
 
 func microsoftInvite(invite string) string {
-	invite = strings.TrimSpace(invite)
-	if strings.Contains(invite, "sign-up") {
-		return invite
-	}
-	if strings.Contains(invite, "authkit.cline.bot") {
-		return "https://authkit.cline.bot/sign-up"
-	}
-	if invite == "" {
-		return "https://authkit.cline.bot/sign-up"
-	}
-	return strings.TrimRight(invite, "/") + "/sign-up"
+	return strings.TrimSpace(invite)
 }
 
 func microsoftEmailSelectors() []string {

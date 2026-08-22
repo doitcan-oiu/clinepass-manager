@@ -10,14 +10,20 @@ func TestDefaultStealthArgsUseBinaryFingerprint(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"--fingerprint=12345",
-		"--fingerprint-timezone=America/New_York",
-		"--fingerprint-locale=en-US",
-		"--lang=en-US",
 		"--fingerprint-storage-quota=5000",
 		"--ignore-gpu-blocklist",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %s in %v", want, args)
+		}
+	}
+	for _, banned := range []string{
+		"--fingerprint-timezone=",
+		"--fingerprint-locale=",
+		"--lang=",
+	} {
+		if strings.Contains(joined, banned) {
+			t.Fatalf("must not force locale/timezone: %v", args)
 		}
 	}
 }

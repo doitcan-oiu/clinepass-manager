@@ -39,7 +39,7 @@ func Run(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 		if round > 1 {
 			log("两次都没收到验证码，重新走一遍登录（第 %d 轮）", round)
 		}
-		res, err := runOnce(cfg, acc, log)
+		res, err := runOnceDispatch(cfg, acc, log)
 		if err == nil {
 			return res, nil
 		}
@@ -52,6 +52,13 @@ func Run(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 		log("两轮登录共 4 次接码都没收到验证码，跳过")
 	}
 	return Result{}, ErrPhoneTimeout
+}
+
+func runOnceDispatch(cfg config.Config, acc model.Account, log Logger) (Result, error) {
+	if Engine() == "python" {
+		return runPythonOnce(cfg, acc, "login", log)
+	}
+	return runOnce(cfg, acc, log)
 }
 
 func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
@@ -82,10 +89,6 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 	if invite == "" {
 		invite = cline.AuthURL
 	}
-	if provider == model.LoginMicrosoft {
-		invite = microsoftInvite(invite)
-	}
-
 	log("无头模式=%v", cfg.Headless)
 	if cfg.Proxy != "" {
 		log("使用全局代理")
@@ -162,6 +165,9 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 func RefreshPayment(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 	if log == nil {
 		log = func(string, ...any) {}
+	}
+	if Engine() == "python" {
+		return runPythonOnce(cfg, acc, "refresh", log)
 	}
 	if strings.TrimSpace(acc.CookiesJSON) == "" && strings.TrimSpace(acc.CookieHeader) == "" {
 		return Result{}, fmt.Errorf("没有可用 Cookie，需要先完整登录")
@@ -506,6 +512,9 @@ func consentSelectors() []string {
 }
 
 func startIdentityLogin(page playwright.Page, acc model.Account, provider string, log Logger) error {
+	if urlHost(page.URL()) == "authkit.cline.bot" && !onRadarFlow(page) {
+		humanIdleAuthkit(page, log)
+	}
 	if provider == model.LoginMicrosoft {
 		if !onMicrosoftURL(page.URL()) {
 			if err := clickOneOf(page, microsoftAuthSelectors(), 20000, log, "选择 Microsoft 登录"); err != nil {
@@ -749,6 +758,13 @@ func handleAuthkitWait(page playwright.Page, log Logger, lastClick *time.Time, p
 		log("已进入手机验证或 Cline，当前 URL=%s", rawURL)
 		return true, nil
 	}
+	if code := authkitCallbackError(rawURL); code != "" {
+		log("AuthKit 回调错误 error=%s，当前 URL=%s", code, rawURL)
+		if strings.EqualFold(code, "policy_denied") {
+			return false, ErrRadarDenied
+		}
+		return false, fmt.Errorf("AuthKit 回调失败：%s", code)
+	}
 	sid := authkitSessionID(rawURL)
 	authVisible := visibleAuthButton(page, provider)
 	log("到达 AuthKit，当前 URL=%s title=%q session=%s 登录按钮=%v 方式=%s", rawURL, pageTitle(page), sid, authVisible, provider)
@@ -761,6 +777,13 @@ func handleAuthkitWait(page playwright.Page, log Logger, lastClick *time.Time, p
 		return onRadarFlow(page) || onCline(page.URL()), nil
 	}
 	after := page.URL()
+	if code := authkitCallbackError(after); code != "" {
+		log("AuthKit 等待后出现回调错误 error=%s，当前 URL=%s", code, after)
+		if strings.EqualFold(code, "policy_denied") {
+			return false, ErrRadarDenied
+		}
+		return false, fmt.Errorf("AuthKit 回调失败：%s", code)
+	}
 	log("AuthKit 等待后仍未进入接码，当前 URL=%s title=%q 登录按钮=%v", after, pageTitle(page), visibleAuthButton(page, provider))
 	if authkitBannedAfterWait(after) {
 		log("仍停在 AuthKit，账号已被封禁，跳过")
@@ -801,11 +824,19 @@ func pageTitle(page playwright.Page) string {
 }
 
 func authkitSessionID(u string) string {
+	return authkitQuery(u, "authorization_session_id")
+}
+
+func authkitCallbackError(u string) string {
+	return authkitQuery(u, "error")
+}
+
+func authkitQuery(u, key string) string {
 	parsed, err := neturl.Parse(u)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(parsed.Query().Get("authorization_session_id"))
+	return strings.TrimSpace(parsed.Query().Get(key))
 }
 
 func waitAuthkitAdvance(page playwright.Page, timeout float64) bool {
@@ -816,6 +847,9 @@ func waitAuthkitAdvance(page playwright.Page, timeout float64) bool {
 		}
 		if urlHost(page.URL()) != "authkit.cline.bot" {
 			return true
+		}
+		if authkitCallbackError(page.URL()) != "" {
+			return false
 		}
 		sleep(400)
 	}
@@ -835,8 +869,11 @@ func wrapIfAuthkit(err error, pageURL string) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, ErrAccountBanned) {
+	if errors.Is(err, ErrAccountBanned) || errors.Is(err, ErrRadarDenied) {
 		return err
+	}
+	if strings.EqualFold(authkitCallbackError(pageURL), "policy_denied") {
+		return ErrRadarDenied
 	}
 	if errors.Is(err, ErrAuthkitStuck) || isAuthkitProblemURL(pageURL) || IsAuthkitFailure(err) {
 		if errors.Is(err, ErrAuthkitStuck) {

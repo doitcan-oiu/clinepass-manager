@@ -32,6 +32,22 @@ func EnsureVirtualDisplay(logf func(string, ...any)) error {
 	return xvfbErr
 }
 
+func PrepareDisplay(wantedHeadless bool, logf func(string, ...any)) bool {
+	headless := wantedHeadless
+	if err := EnsureVirtualDisplay(logf); err != nil && !hasDisplay() {
+		if logf != nil {
+			logf("%v", err)
+		}
+	}
+	if virtualDisplay() != "" && wantedHeadless {
+		headless = false
+	}
+	if !headless && !hasDisplay() {
+		headless = true
+	}
+	return headless
+}
+
 func startXvfb(logf func(string, ...any)) error {
 	bin, err := exec.LookPath("Xvfb")
 	if err != nil {

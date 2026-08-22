@@ -1,0 +1,2 @@
+cloakbrowser[geoip]>=0.5.8
+playwright>=1.53

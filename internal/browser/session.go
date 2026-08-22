@@ -53,15 +53,11 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 	}
 
 	wantedHeadless := opt.Headless
-	if err := EnsureVirtualDisplay(logf); err != nil && !hasDisplay() {
-		logf("%v", err)
-	}
-	if virtualDisplay() != "" && wantedHeadless {
-		opt.Headless = false
+	opt.Headless = PrepareDisplay(opt.Headless, logf)
+	if wantedHeadless && !opt.Headless && virtualDisplay() != "" {
 		logf("本机无头能过是因为本机有 DISPLAY；服务器改用 Xvfb %s 有界面模式，避免 AuthKit 把无头会话卡住", virtualDisplay())
 	}
-	if !opt.Headless && !hasDisplay() {
-		opt.Headless = true
+	if wantedHeadless && opt.Headless && !hasDisplay() {
 		logf("服务器没有图形界面且没有 Xvfb，只能继续无头")
 	}
 	args := DefaultStealthArgs(opt.Seed)

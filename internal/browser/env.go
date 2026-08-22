@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+func IsProxyEnv(key string) bool {
+	return isProxyEnv(key)
+}
+
 func isProxyEnv(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
 	case "all_proxy", "http_proxy", "https_proxy", "ftp_proxy", "no_proxy",

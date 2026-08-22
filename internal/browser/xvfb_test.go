@@ -17,3 +17,13 @@ func TestEnsureVirtualDisplayNoopWhenDisplaySet(t *testing.T) {
 		t.Fatalf("DISPLAY=%q", os.Getenv("DISPLAY"))
 	}
 }
+
+func TestPrepareDisplayKeepsWantedHeadlessWhenDisplayExists(t *testing.T) {
+	t.Setenv("DISPLAY", ":0")
+	if !PrepareDisplay(true, nil) {
+		t.Fatal("local DISPLAY should keep requested headless")
+	}
+	if PrepareDisplay(false, nil) {
+		t.Fatal("headed request should stay headed")
+	}
+}

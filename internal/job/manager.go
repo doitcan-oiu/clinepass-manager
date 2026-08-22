@@ -205,6 +205,9 @@ func (m *Manager) run(job *model.Job) {
 		if errors.Is(err, login.ErrAccountBanned) {
 			m.logf(job, "info", "账号已被封禁，跳过")
 		}
+		if errors.Is(err, login.ErrRadarDenied) {
+			m.logf(job, "info", "AuthKit Radar 拦截，跳过")
+		}
 		msg := login.CompactMessage(err.Error())
 		m.fail(job, msg)
 		acc.Status = "failed"
@@ -251,7 +254,7 @@ func (m *Manager) runLoginWithAuthkitRetry(cfg config.Config, acc model.Account,
 			return res, nil
 		}
 		last = err
-		if errors.Is(err, login.ErrAccountBanned) || !login.IsAuthkitFailure(err) {
+		if errors.Is(err, login.ErrAccountBanned) || errors.Is(err, login.ErrRadarDenied) || !login.IsAuthkitFailure(err) {
 			return login.Result{}, err
 		}
 	}

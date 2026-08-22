@@ -66,6 +66,19 @@ func humanType(page playwright.Page, loc playwright.Locator, value string) error
 	return nil
 }
 
+func humanIdleAuthkit(page playwright.Page, log Logger) {
+	if log != nil {
+		log("在 AuthKit 停留，让 Radar 采集页面信号")
+	}
+	for i := 0; i < 3; i++ {
+		x := 80 + rand.Float64()*400
+		y := 80 + rand.Float64()*240
+		_ = page.Mouse().Move(x, y)
+		sleep(350 + rand.IntN(400))
+	}
+	sleep(1200 + rand.IntN(800))
+}
+
 func humanScroll(page playwright.Page) {
 	for i := 0; i < 4+rand.IntN(3); i++ {
 		_ = page.Mouse().Wheel(0, 280+rand.Float64()*220)

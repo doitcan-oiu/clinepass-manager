@@ -167,6 +167,22 @@ func TestIsAuthkitFailure(t *testing.T) {
 	if IsAuthkitFailure(ErrAccountBanned) {
 		t.Fatal("banned account should skip, not retry as AuthKit failure")
 	}
+	if IsAuthkitFailure(ErrRadarDenied) {
+		t.Fatal("radar deny should skip, not retry as AuthKit failure")
+	}
+}
+
+func TestAuthkitCallbackError(t *testing.T) {
+	u := "https://authkit.cline.bot/?error=policy_denied&authorization_session_id=01ABC"
+	if got := authkitCallbackError(u); got != "policy_denied" {
+		t.Fatalf("error=%q", got)
+	}
+	if authkitCallbackError("https://authkit.cline.bot/?authorization_session_id=01ABC") != "" {
+		t.Fatal("no error query")
+	}
+	if authkitBannedAfterWait(u) && authkitCallbackError(u) == "" {
+		t.Fatal("policy_denied must be classified before banned")
+	}
 }
 
 func TestAuthkitBannedAfterWait(t *testing.T) {

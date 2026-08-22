@@ -11,10 +11,11 @@ var (
 	ErrPhoneTimeout   = errors.New("手机号超时")
 	ErrAuthkitStuck   = errors.New("AuthKit 页面异常")
 	ErrAccountBanned  = errors.New("账号已被封禁，已跳过")
+	ErrRadarDenied    = errors.New("AuthKit Radar 拦截（policy_denied），已跳过")
 )
 
 func IsAuthkitFailure(err error) bool {
-	if err == nil || errors.Is(err, ErrAccountBanned) {
+	if err == nil || errors.Is(err, ErrAccountBanned) || errors.Is(err, ErrRadarDenied) {
 		return false
 	}
 	if errors.Is(err, ErrAuthkitStuck) {
