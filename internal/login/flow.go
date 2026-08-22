@@ -300,10 +300,12 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			sleep(1200)
 			continue
 		}
-		if visible(page, accountChooser) {
-			log("选择已列出的账号")
-			_ = clickFirst(page, []string{accountChooser}, 8000, log, "点击账号卡片")
-			sleep(1000)
+		if step == "chooser" || visible(page, accountChooser) {
+			if visible(page, accountChooser) {
+				log("选择已列出的账号")
+				_ = clickFirst(page, []string{accountChooser}, 8000, log, "点击账号卡片")
+			}
+			_ = waitLeaveLogged(page, "accountchooser", 15000, log, "账号选择页")
 			continue
 		}
 
@@ -384,6 +386,8 @@ func classifyGoogle(raw string) string {
 		return "email"
 	case strings.Contains(p, "/signin/oauth"):
 		return "consent"
+	case strings.Contains(p, "accountchooser"):
+		return "chooser"
 	case strings.Contains(p, "unknownerror"):
 		return "unknownerror"
 	default:
@@ -725,45 +729,62 @@ func leftGoogle(page playwright.Page) bool {
 	return leftGoogleURL(page.URL())
 }
 
+func urlHost(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
 func leftGoogleURL(u string) bool {
 	if u == "" || u == "about:blank" || strings.HasPrefix(u, "chrome-error") || strings.HasPrefix(u, "chrome://") {
 		return false
 	}
-	if strings.Contains(u, "accounts.google.com") {
+	host := urlHost(u)
+	if host == "" || strings.HasSuffix(host, "google.com") || strings.HasSuffix(host, "google.com.hk") {
 		return false
 	}
 	if onAuthkitLogin(u) {
 		return false
 	}
-	return onCline(u) || strings.Contains(u, "api.cline.bot")
+	return onCline(u) || host == "api.cline.bot"
 }
 
 func onAuthkitLogin(u string) bool {
-	if !strings.Contains(u, "authkit.cline.bot") {
+	if urlHost(u) != "authkit.cline.bot" {
 		return false
 	}
-	if strings.Contains(u, "radar-challenge") || strings.Contains(u, "/radar") {
+	p := googlePath(u)
+	if strings.Contains(p, "radar-challenge") || strings.Contains(p, "/radar") {
 		return false
 	}
-	if strings.Contains(u, "/api/callback") || strings.Contains(u, "/api/login") {
+	if strings.Contains(p, "/api/") {
 		return false
 	}
 	return true
 }
 
 func onCline(u string) bool {
-	return strings.Contains(u, "app.cline.bot") ||
-		strings.Contains(u, "radar-challenge") ||
-		strings.Contains(u, "authkit.cline.bot/radar")
+	host := urlHost(u)
+	p := googlePath(u)
+	if host == "app.cline.bot" {
+		return true
+	}
+	return strings.Contains(p, "radar-challenge") || host == "authkit.cline.bot" && strings.Contains(p, "/radar")
 }
 
 func onClineApp(u string) bool {
-	return strings.Contains(u, "app.cline.bot")
+	return urlHost(u) == "app.cline.bot"
 }
 
 func cookieExpired(u string) bool {
-	return strings.Contains(u, "authkit.cline.bot") && !strings.Contains(u, "radar-challenge") ||
-		strings.Contains(u, "accounts.google.com")
+	host := urlHost(u)
+	p := googlePath(u)
+	if strings.HasSuffix(host, "google.com") || strings.HasSuffix(host, "google.com.hk") {
+		return true
+	}
+	return host == "authkit.cline.bot" && !strings.Contains(p, "radar-challenge")
 }
 
 func stepErr(err error) error {

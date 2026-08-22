@@ -86,6 +86,19 @@ func TestLeftGoogleURL(t *testing.T) {
 	if onAuthkitLogin("https://authkit.cline.bot/radar-challenge/send") {
 		t.Fatal("radar is not login page")
 	}
+	chooser := "https://accounts.google.com/v3/signin/accountchooser?state=eyJ&redirect_uri=https%3A%2F%2Fauthkit.cline.bot%2Fapi%2Fcallback"
+	if onAuthkitLogin(chooser) {
+		t.Fatal("google accountchooser must not look like authkit login")
+	}
+	if leftGoogleURL(chooser) {
+		t.Fatal("accountchooser is still google")
+	}
+	if classifyGoogle(chooser) != "chooser" {
+		t.Fatal("accountchooser step")
+	}
+	if onAuthkitLogin("https://accounts.google.com/signin/oauth/id?continue=https%3A%2F%2Fauthkit.cline.bot%2F") {
+		t.Fatal("google oauth query must not look like authkit login")
+	}
 }
 
 func TestRadarSendURL(t *testing.T) {
