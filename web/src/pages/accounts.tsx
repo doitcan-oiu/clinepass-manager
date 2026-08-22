@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { ChartColumn, ChevronLeft, ChevronRight, Download, RefreshCw, Upload } from "lucide-react"
+import { ChartColumn, ChevronLeft, ChevronRight, Download, RefreshCw, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { downloadJSON } from "@/lib/download"
@@ -9,6 +9,16 @@ import { AddPaidDialog } from "@/components/accounts/add-paid-dialog"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 const PAGE_SIZE = 24
 
@@ -24,6 +34,7 @@ export function AccountsPage() {
   const [sync, setSync] = useState<UsageSyncStatus>(emptySync)
   const [stats, setStats] = useState<PoolStats>(emptyStats)
   const [modelsOf, setModelsOf] = useState<PoolAccount | null>(null)
+  const [remove, setRemove] = useState<PoolAccount | null>(null)
   const [busyId, setBusyId] = useState("")
   const [barsOn, setBarsOn] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -103,6 +114,18 @@ export function AccountsPage() {
     } finally {
       setImporting(false)
       if (fileRef.current) fileRef.current.value = ""
+    }
+  }
+
+  async function confirmRemove() {
+    if (!remove) return
+    try {
+      await api.deleteAccount(remove.id)
+      toast.success("已删除")
+      setRemove(null)
+      await reload(page, batchId)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "删除失败")
     }
   }
 
@@ -228,6 +251,15 @@ export function AccountsPage() {
                   >
                     <RefreshCw className={busyId === a.id ? "animate-spin" : undefined} />
                   </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-destructive"
+                    title="删除账号"
+                    onClick={() => setRemove(a)}
+                  >
+                    <Trash2 />
+                  </Button>
                 </div>
                 <div className="mb-3 flex flex-wrap items-center gap-1">
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${h.className}`}>{h.label}</span>
@@ -281,6 +313,21 @@ export function AccountsPage() {
           </Button>
         </div>
       </div>
+
+      <AlertDialog open={!!remove} onOpenChange={(v) => !v && setRemove(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除账号</AlertDialogTitle>
+            <AlertDialogDescription>删除 {remove?.email}？删除后无法从账号池调度。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={confirmRemove}>
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={!!modelsOf} onOpenChange={(v) => !v && setModelsOf(null)}>
         <DialogContent className="sm:max-w-xl">
