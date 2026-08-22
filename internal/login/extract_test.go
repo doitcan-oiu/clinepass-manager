@@ -99,6 +99,12 @@ func TestLeftGoogleURL(t *testing.T) {
 	if onAuthkitLogin("https://accounts.google.com/signin/oauth/id?continue=https%3A%2F%2Fauthkit.cline.bot%2F") {
 		t.Fatal("google oauth query must not look like authkit login")
 	}
+	if !onRadarURL("https://authkit.cline.bot/radar-challenge/send?user_id=1") {
+		t.Fatal("phone verify is radar")
+	}
+	if onAuthkitLogin("https://authkit.cline.bot/radar-challenge/verify") {
+		t.Fatal("otp page is not login")
+	}
 }
 
 func TestRadarSendURL(t *testing.T) {

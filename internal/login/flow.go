@@ -248,9 +248,17 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			emailDone = true
 		}
 
-		if onAuthkitLogin(rawURL) {
-			if time.Since(lastAuthkitClick) > 5*time.Second && visibleGoogleAuth(page) {
-				log("OAuth 后回到 AuthKit 登录页，再次选择 Google")
+		if urlHost(rawURL) == "authkit.cline.bot" {
+			if onRadarFlow(page) || onCline(rawURL) {
+				log("已进入手机验证或 Cline，当前 URL=%s", rawURL)
+				return nil
+			}
+			log("到达 AuthKit，先等是否跳到手机验证页")
+			if waitAuthkitAdvance(page, 8000) {
+				continue
+			}
+			if onAuthkitLogin(page.URL()) && visibleGoogleAuth(page) && time.Since(lastAuthkitClick) > 12*time.Second {
+				log("AuthKit 仍是登录页，再次选择 Google")
 				_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
 				lastAuthkitClick = time.Now()
 			}
@@ -538,7 +546,7 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 	last := time.Time{}
 	lastAuthkitClick := time.Time{}
 	for time.Now().Before(deadline) {
-		if onCline(page.URL()) {
+		if onCline(page.URL()) || onRadarFlow(page) {
 			return nil
 		}
 		if classifyGoogle(page.URL()) == "tos" && visible(page, `#gaplustosNext button`) {
@@ -550,10 +558,15 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 		if classifyGoogle(page.URL()) == "consent" && (visible(page, `div[jsname="uRHG6"] button`) || visible(page, `#submit_approve_access`)) {
 			_ = clickOneOf(page, consentSelectors(), 8000, log, "同意授权")
 		}
-		if onAuthkitLogin(page.URL()) && time.Since(lastAuthkitClick) > 5*time.Second && visibleGoogleAuth(page) {
-			log("仍停在 AuthKit 登录页，再次选择 Google")
-			_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
-			lastAuthkitClick = time.Now()
+		if urlHost(page.URL()) == "authkit.cline.bot" && !onRadarFlow(page) {
+			if waitAuthkitAdvance(page, 8000) {
+				continue
+			}
+			if onAuthkitLogin(page.URL()) && time.Since(lastAuthkitClick) > 12*time.Second && visibleGoogleAuth(page) {
+				log("AuthKit 仍是登录页，再次选择 Google")
+				_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
+				lastAuthkitClick = time.Now()
+			}
 		}
 		if time.Since(last) > 8*time.Second {
 			log("仍在等待进入 Cline，当前 URL=%s", page.URL())
@@ -722,7 +735,36 @@ func googlePath(raw string) string {
 }
 
 func loggedIn(page playwright.Page) bool {
-	return leftGoogle(page)
+	return leftGoogle(page) || onRadarFlow(page)
+}
+
+func onRadarFlow(page playwright.Page) bool {
+	if onRadarURL(page.URL()) {
+		return true
+	}
+	return visible(page, `input[name="local_number"]`) ||
+		visible(page, `input[name="country_code"]`) ||
+		visible(page, `input[data-test="otp-input"]`) ||
+		visible(page, `.ak-Otp`)
+}
+
+func waitAuthkitAdvance(page playwright.Page, timeout float64) bool {
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if onCline(page.URL()) || onRadarFlow(page) {
+			return true
+		}
+		if urlHost(page.URL()) != "authkit.cline.bot" {
+			return true
+		}
+		sleep(400)
+	}
+	return onCline(page.URL()) || onRadarFlow(page) || urlHost(page.URL()) != "authkit.cline.bot"
+}
+
+func onRadarURL(u string) bool {
+	p := googlePath(u)
+	return strings.Contains(p, "radar-challenge") || strings.Contains(p, "/radar")
 }
 
 func leftGoogle(page playwright.Page) bool {
@@ -755,23 +797,20 @@ func onAuthkitLogin(u string) bool {
 	if urlHost(u) != "authkit.cline.bot" {
 		return false
 	}
-	p := googlePath(u)
-	if strings.Contains(p, "radar-challenge") || strings.Contains(p, "/radar") {
+	if onRadarURL(u) {
 		return false
 	}
-	if strings.Contains(p, "/api/") {
+	if strings.Contains(googlePath(u), "/api/") {
 		return false
 	}
 	return true
 }
 
 func onCline(u string) bool {
-	host := urlHost(u)
-	p := googlePath(u)
-	if host == "app.cline.bot" {
+	if urlHost(u) == "app.cline.bot" {
 		return true
 	}
-	return strings.Contains(p, "radar-challenge") || host == "authkit.cline.bot" && strings.Contains(p, "/radar")
+	return onRadarURL(u)
 }
 
 func onClineApp(u string) bool {
@@ -780,11 +819,10 @@ func onClineApp(u string) bool {
 
 func cookieExpired(u string) bool {
 	host := urlHost(u)
-	p := googlePath(u)
 	if strings.HasSuffix(host, "google.com") || strings.HasSuffix(host, "google.com.hk") {
 		return true
 	}
-	return host == "authkit.cline.bot" && !strings.Contains(p, "radar-challenge")
+	return host == "authkit.cline.bot" && !onRadarURL(u)
 }
 
 func stepErr(err error) error {
