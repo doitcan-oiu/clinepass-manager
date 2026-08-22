@@ -53,6 +53,14 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 	}
 
 	args := DefaultStealthArgs(opt.Seed)
+	args = append(args, "--disable-setuid-sandbox", "--disable-dev-shm-usage")
+	if !opt.Headless && strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != "" {
+		args = append(args, "--ozone-platform=x11")
+		logf("有界面模式遇到 Wayland，改走 X11，避免 Chrome 启动即退出")
+	}
+	if systemProxySet() && strings.TrimSpace(opt.Proxy) == "" {
+		logf("已忽略环境变量里的系统代理，浏览器只使用设置里的代理")
+	}
 	launch := playwright.BrowserTypeLaunchPersistentContextOptions{
 		ExecutablePath:    playwright.String(info.Path),
 		Headless:          playwright.Bool(opt.Headless),
@@ -62,6 +70,7 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 		TimezoneId:        playwright.String(firstNonEmpty(opt.Timezone, "America/New_York")),
 		ColorScheme:       playwright.ColorSchemeLight,
 		AcceptDownloads:   playwright.Bool(true),
+		Env:               browserLaunchEnv(cfg.LicenseKey),
 	}
 	if opt.SlowMo > 0 {
 		launch.SlowMo = playwright.Float(opt.SlowMo)

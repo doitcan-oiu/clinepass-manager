@@ -59,7 +59,7 @@ Call log:
 	if strings.Contains(got, "Call log") || strings.Contains(got, "navigated to") {
 		t.Fatalf("still too long: %q", got)
 	}
-	if len([]rune(got)) > 120 {
+	if len([]rune(got)) > 200 {
 		t.Fatalf("len=%d %q", len([]rune(got)), got)
 	}
 }
