@@ -6,12 +6,12 @@ dev:
 	@echo "==> 安装依赖"
 	go mod tidy
 	cd web && npm install
-	@echo "==> 启动后端 http://127.0.0.1:8080 （go run 编译期间请等待）"
+	@echo "==> 启动后端 http://127.0.0.1:8080 （开发模式固定 8080，go run 编译期间请等待）"
 	@echo "==> Ctrl+C 会同时退出两边"
 	@bash -c 'set -u; \
 		cleanup() { kill 0 2>/dev/null || true; }; \
 		trap cleanup EXIT INT TERM; \
-		go run ./cmd/server & \
+		ADDR=:8080 go run ./cmd/server & \
 		echo "==> 等待后端 /api/health ..."; \
 		ready=0; \
 		for i in $$(seq 1 120); do \
@@ -30,7 +30,7 @@ dev:
 		wait'
 
 api:
-	go run ./cmd/server
+	ADDR=:8080 go run ./cmd/server
 
 web:
 	cd web && npm run dev
@@ -48,8 +48,8 @@ install-pw:
 	go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.0 install --with-deps
 
 browser-deps:
-	sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation libasound2t64 || \
-	sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation libasound2
+	sudo apt-get install -y xvfb libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation libasound2t64 || \
+	sudo apt-get install -y xvfb libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation libasound2
 
 build: build-web
 	go build -o bin/server ./cmd/server

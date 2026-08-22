@@ -28,7 +28,7 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		Addr:            env("ADDR", ":8080"),
+		Addr:            env("ADDR", ":9999"),
 		DataDir:         env("DATA_DIR", "./data"),
 		InviteURL:       env("INVITE_URL", "https://authkit.cline.bot"),
 		Headless:        envBool("HEADLESS", true),
