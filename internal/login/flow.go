@@ -253,11 +253,13 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 				log("已进入手机验证或 Cline，当前 URL=%s", rawURL)
 				return nil
 			}
-			log("到达 AuthKit，先等是否跳到手机验证页")
+			log("到达 AuthKit，先等是否跳到手机验证页，当前 URL=%s", rawURL)
 			if waitAuthkitAdvance(page, 8000) {
 				continue
 			}
-			if onAuthkitLogin(page.URL()) && visibleGoogleAuth(page) && time.Since(lastAuthkitClick) > 12*time.Second {
+			after := page.URL()
+			log("AuthKit 8 秒内未跳到手机验证，当前 URL=%s", after)
+			if onAuthkitLogin(after) && visibleGoogleAuth(page) && time.Since(lastAuthkitClick) > 12*time.Second {
 				log("AuthKit 仍是登录页，再次选择 Google")
 				_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
 				lastAuthkitClick = time.Now()
@@ -562,7 +564,9 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 			if waitAuthkitAdvance(page, 8000) {
 				continue
 			}
-			if onAuthkitLogin(page.URL()) && time.Since(lastAuthkitClick) > 12*time.Second && visibleGoogleAuth(page) {
+			after := page.URL()
+			log("AuthKit 8 秒内未跳到手机验证，当前 URL=%s", after)
+			if onAuthkitLogin(after) && time.Since(lastAuthkitClick) > 12*time.Second && visibleGoogleAuth(page) {
 				log("AuthKit 仍是登录页，再次选择 Google")
 				_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
 				lastAuthkitClick = time.Now()
