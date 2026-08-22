@@ -238,7 +238,6 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 	emailSel := `input#identifierId:not([aria-hidden="true"])`
 	passSel := `input[name="Passwd"], #password input[type="password"]`
 	emailDone := false
-	tosDone := false
 	lastUnknown := time.Time{}
 
 	for time.Now().Before(deadline) {
@@ -252,17 +251,13 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			emailDone = true
 		}
 
-		if step == "tos" && !tosDone {
-			log("检测到服务条款页，点击同意")
-			if err := waitVisible(page, `#gaplustosNext button`, 15000); err != nil {
+		if step == "tos" {
+			if err := acceptWorkspaceTos(page, log); err != nil {
+				if loggedIn(page) {
+					return nil
+				}
 				return stepErr(err)
 			}
-			if err := clickOneOf(page, []string{`#gaplustosNext button`}, 15000, log, "同意服务条款"); err != nil {
-				return stepErr(err)
-			}
-			tosDone = true
-			log("等待离开服务条款页")
-			_ = waitLeaveLogged(page, "workspacetermsofservice", 20000, log, "服务条款页")
 			continue
 		}
 		if step == "consent" {
@@ -381,6 +376,93 @@ func isStripe(u string) bool {
 	return strings.Contains(u, "stripe.com") || strings.Contains(u, "checkout.stripe.com")
 }
 
+func acceptWorkspaceTos(page playwright.Page, log Logger) error {
+	if err := waitVisible(page, `#gaplustosNext button`, 15000); err != nil {
+		return err
+	}
+	log("检测到服务条款页，准备同意")
+	for i := 1; i <= 4; i++ {
+		if classifyGoogle(page.URL()) != "tos" || loggedIn(page) {
+			return nil
+		}
+		scrollTos(page)
+		checkTosBoxes(page)
+		log("点击同意服务条款（第 %d 次）", i)
+		if err := clickTosButton(page); err != nil {
+			log("第 %d 次点击未生效: %v", i, err)
+		} else {
+			log("同意服务条款 成功")
+		}
+		sleep(1500)
+		if classifyGoogle(page.URL()) != "tos" || loggedIn(page) {
+			return nil
+		}
+	}
+	log("服务条款仍在，当前 URL=%s", page.URL())
+	return nil
+}
+
+func scrollTos(page playwright.Page) {
+	_, _ = page.Evaluate(`() => {
+		const nodes = Array.from(document.querySelectorAll('*'));
+		for (const el of nodes) {
+			if (!(el instanceof HTMLElement)) continue;
+			const st = getComputedStyle(el);
+			const oy = st.overflowY;
+			if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && el.scrollHeight > el.clientHeight + 8) {
+				el.scrollTop = el.scrollHeight;
+			}
+		}
+		window.scrollTo(0, document.documentElement.scrollHeight);
+	}`)
+}
+
+func checkTosBoxes(page playwright.Page) {
+	loc := page.Locator(`#gaplustos input[type="checkbox"], form input[type="checkbox"]`)
+	n, err := loc.Count()
+	if err != nil || n == 0 {
+		return
+	}
+	for i := 0; i < n && i < 4; i++ {
+		box := loc.Nth(i)
+		ok, err := box.IsVisible()
+		if err != nil || !ok {
+			continue
+		}
+		checked, _ := box.IsChecked()
+		if !checked {
+			_ = box.Check(playwright.LocatorCheckOptions{Timeout: playwright.Float(2000)})
+		}
+	}
+}
+
+func clickTosButton(page playwright.Page) error {
+	waitOverlayGone(page)
+	loc := page.Locator(`#gaplustosNext button`).First()
+	ok, err := loc.IsVisible()
+	if err != nil || !ok {
+		return fmt.Errorf("未找到同意按钮")
+	}
+	_ = loc.ScrollIntoViewIfNeeded()
+	if err := loc.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(5000)}); err == nil {
+		return nil
+	}
+	if err := loc.Click(playwright.LocatorClickOptions{
+		Force:   playwright.Bool(true),
+		Timeout: playwright.Float(4000),
+	}); err == nil {
+		return nil
+	}
+	if _, err := loc.Evaluate(`el => { el.click(); }`, nil); err == nil {
+		return nil
+	}
+	_ = loc.Focus()
+	if err := loc.Press("Enter", playwright.LocatorPressOptions{Timeout: playwright.Float(2000)}); err == nil {
+		return nil
+	}
+	return fmt.Errorf("同意按钮点不下去")
+}
+
 func consentSelectors() []string {
 	return []string{
 		`div[jsname="uRHG6"] button`,
@@ -397,7 +479,7 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 			return nil
 		}
 		if classifyGoogle(page.URL()) == "tos" && visible(page, `#gaplustosNext button`) {
-			_ = clickOneOf(page, []string{`#gaplustosNext button`}, 8000, log, "同意服务条款")
+			_ = acceptWorkspaceTos(page, log)
 		}
 		if classifyGoogle(page.URL()) == "consent" && (visible(page, `div[jsname="uRHG6"] button`) || visible(page, `#submit_approve_access`)) {
 			_ = clickOneOf(page, consentSelectors(), 8000, log, "同意授权")
