@@ -15,7 +15,7 @@ import (
 	"opencode-go-manager/internal/usage"
 )
 
-const radarPhoneAttempts = 2
+const radarPhoneAttempts = 3
 
 func handleRadar(page playwright.Page, cfg config.Config, log Logger) error {
 	if !strings.Contains(page.URL(), "radar-challenge") {
@@ -43,10 +43,10 @@ func handleRadar(page playwright.Page, cfg config.Config, log Logger) error {
 		if err == nil {
 			return nil
 		}
-		if !isNoSMS(err) {
+		if !shouldRetryRadarPhone(err) {
 			return err
 		}
-		log("第 %d/%d 次未收到验证码: %v", i, radarPhoneAttempts, err)
+		log("第 %d/%d 次接码失败: %v", i, radarPhoneAttempts, err)
 		if i < radarPhoneAttempts {
 			log("返回手机号输入页，换一个 Hero SMS 号码重试")
 			sleep(2000)
@@ -93,6 +93,9 @@ func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Clie
 		return err
 	}
 	if err := waitAnyURL(page, []string{"radar-challenge/verify"}, 30000); err != nil {
+		if onRadarSend(page.URL()) || visible(page, `input[name="local_number"]`) {
+			return fmt.Errorf("发送验证码失败，号码可能已被使用: %w", err)
+		}
 		return fmt.Errorf("没有进入验证码页: %w", err)
 	}
 	sleep(1200)
@@ -166,6 +169,20 @@ func isNoSMS(err error) bool {
 	return errors.Is(err, herosms.ErrWaitCodeTimeout) ||
 		errors.Is(err, herosms.ErrCancelled) ||
 		errors.Is(err, herosms.ErrUnavailable)
+}
+
+func shouldRetryRadarPhone(err error) bool {
+	if isNoSMS(err) {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "号码可能已被使用") {
+		return true
+	}
+	return strings.Contains(msg, "等待 URL 超时") && strings.Contains(msg, "radar-challenge/send")
 }
 
 func fillOTP(page playwright.Page, code string) error {

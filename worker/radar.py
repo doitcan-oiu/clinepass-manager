@@ -90,7 +90,7 @@ def goto_radar_send(page, send_url: str) -> None:
 def request_radar_code(page, settings: dict, sms: Client, attempt: int) -> None:
     country = int(settings.get("hero_sms_country") or 0)
     price = float(settings.get("hero_sms_max_price") or 0)
-    log("Hero SMS 取号 country=%d price=%s（第 %d/2 次）", country, ("%g" % price) if price > 0 else "auto", attempt)
+    log("Hero SMS 取号 country=%d price=%s（第 %d 次）", country, ("%g" % price) if price > 0 else "auto", attempt)
     num = sms.get_number(country, price)
     finished = False
     try:
@@ -109,7 +109,12 @@ def request_radar_code(page, settings: dict, sms: Client, attempt: int) -> None:
             15000,
             "发送验证码",
         )
-        wait_any_url(page, ["radar-challenge/verify"], 30000)
+        try:
+            wait_any_url(page, ["radar-challenge/verify"], 30000)
+        except Exception as exc:
+            if on_radar_send(page.url) or visible(page, 'input[name="local_number"]'):
+                raise RuntimeError("发送验证码失败，号码可能已被使用") from exc
+            raise
         sleep_ms(1200)
         log("等待短信验证码")
         code = sms.wait_code(num["id"], 120)
@@ -141,6 +146,15 @@ def is_no_sms(exc: Exception) -> bool:
     return isinstance(exc, TimeoutError) or "等待验证码超时" in msg or "接码已取消" in msg or "Hero SMS 暂时不可用" in msg
 
 
+def should_retry_phone(exc: Exception) -> bool:
+    if is_no_sms(exc):
+        return True
+    msg = str(exc)
+    if "号码可能已被使用" in msg:
+        return True
+    return "等待 URL 超时" in msg and "radar-challenge/send" in msg
+
+
 def handle_radar(page, settings: dict) -> None:
     if "radar-challenge" not in page.url:
         return
@@ -155,20 +169,21 @@ def handle_radar(page, settings: dict) -> None:
     send_url = page.url
     sms = Client(settings.get("hero_sms_api_key") or "", settings.get("hero_sms_service") or "")
     last = None
-    for i in range(1, 3):
+    attempts = 3
+    for i in range(1, attempts + 1):
         try:
             request_radar_code(page, settings, sms, i)
             return
         except Exception as exc:
             last = exc
-            if not is_no_sms(exc):
+            if not should_retry_phone(exc):
                 raise
-            log("第 %d/2 次未收到验证码: %s", i, exc)
-            if i < 2:
+            log("第 %d/%d 次接码失败: %s", i, attempts, exc)
+            if i < attempts:
                 log("返回手机号输入页，换一个 Hero SMS 号码重试")
-                sleep_ms(2000)
+                sleep_ms(1500)
                 goto_radar_send(page, send_url)
-    raise WorkerError("两次未收到验证码，需要重新登录", "sms_relogin") from last
+    raise WorkerError("多次接码失败，需要重新登录", "sms_relogin") from last
 
 
 def handle_terms(page) -> None:

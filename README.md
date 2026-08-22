@@ -52,7 +52,7 @@ bin/server       生产二进制（make build 生成）
 | `make build-web` | `cd web && npm run build` |
 | `make tidy` | `go mod tidy` |
 | `make browser-deps` | `apt` 安装 Xvfb 和 Chromium 运行库（需要 sudo） |
-| `make worker-test` | 跑工人单测（`test_urls`、`test_herosms`、`test_cloak`） |
+| `make worker-test` | 跑工人单测（`test_urls`、`test_herosms`、`test_cloak`、`test_radar`） |
 | `make install-pw` | 安装 Playwright-Go 驱动（仅 `LOGIN_ENGINE=go` 回退时需要） |
 
 单独补环境、不启动：

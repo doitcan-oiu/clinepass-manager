@@ -172,6 +172,18 @@ func TestIsAuthkitFailure(t *testing.T) {
 	}
 }
 
+func TestShouldRetryRadarPhone(t *testing.T) {
+	if !shouldRetryRadarPhone(fmt.Errorf("发送验证码失败，号码可能已被使用")) {
+		t.Fatal("used number")
+	}
+	if !shouldRetryRadarPhone(fmt.Errorf("等待 URL 超时，当前 URL=https://authkit.cline.bot/radar-challenge/send?user_id=1")) {
+		t.Fatal("send timeout")
+	}
+	if shouldRetryRadarPhone(fmt.Errorf("填写区号失败")) {
+		t.Fatal("other")
+	}
+}
+
 func TestIsRadarDeniedMessage(t *testing.T) {
 	if !IsRadarDeniedMessage(ErrRadarDenied.Error()) {
 		t.Fatal("sentinel")
