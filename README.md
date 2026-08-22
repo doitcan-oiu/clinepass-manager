@@ -10,6 +10,7 @@
 cmd/server/      HTTP 入口
 internal/        API、任务、存储、用量、Playwright-Go 回退
 worker/          Python 登录工人（Cloak 官方 launch）
+scripts/         环境检测与自动安装
 web/             前端
 data/            运行时数据（库、浏览器配置目录、截图）
 bin/server       生产二进制（make build 生成）
@@ -17,30 +18,55 @@ bin/server       生产二进制（make build 生成）
 
 ## 准备
 
+本机需要能编译 Go、跑前端。登录工人的 Python / uv / 虚拟环境可以由 Make 自动补：
+
 - Go 1.22+
 - Node 20+
-- Python 3.12+（登录工人）。没有 `python3-venv` 时可用 [uv](https://github.com/astral-sh/uv)
-- Linux 浏览器依赖和虚拟显示（服务器无桌面时需要 Xvfb）：
+- Linux 上装 Chromium 依赖和 Xvfb（无桌面服务器必须）：`make browser-deps`
 
-```bash
-make browser-deps
-```
+`make`、`make build`、`make ensure-env` 都会跑 `scripts/ensure-worker-env.sh`，按顺序检查：
 
-等价于安装 `xvfb` 以及 Chromium 常用库。
+1. Python 3（没有就 `apt` 装 `python3` / `python3-venv` / `python3-pip`）
+2. [uv](https://github.com/astral-sh/uv)（没有或不能用，就走官方安装脚本）
+3. 系统 `python3-venv`（有 Python 但缺 `ensurepip` 时自动装）
+4. `worker/.venv` 和 `cloakbrowser`（没有或坏了就重建）
+
+已经装好的会跳过。用 `apt` 时需要 sudo。
 
 首次登录会下载 CloakBrowser 到 `~/.cloakbrowser/`（约 200MB）。也可在设置里填 `CLOAKBROWSER_LICENSE_KEY`。
 
-`make` / `make build` 会自动执行 `make worker-venv`，在 `worker/.venv` 安装 `cloakbrowser`。
+## 常用命令
+
+都在仓库根目录执行。`make` 等于 `make dev`。
+
+| 命令 | 做什么 |
+|---|---|
+| `make` / `make dev` | 先 `ensure-env`，再 `go mod tidy`、装前端依赖，同时起后端 `:8080` 和 Vite `:5173` |
+| `make build` | 先 `ensure-env`，构建 `web/dist`，再编译 `bin/server`（生产） |
+| `make ensure-env` | 只检查/安装 Python、uv、工人虚拟环境，不启动服务 |
+| `make worker-venv` | 与 `ensure-env` 相同（兼容旧名字） |
+| `make api` | 只起后端，开发端口 `:8080`（不跑 ensure-env，不启前端） |
+| `make web` | 只起 Vite 前端 `:5173` |
+| `make install-web` | `cd web && npm install` |
+| `make build-web` | `cd web && npm run build` |
+| `make tidy` | `go mod tidy` |
+| `make browser-deps` | `apt` 安装 Xvfb 和 Chromium 运行库（需要 sudo） |
+| `make worker-test` | 跑工人单测（`test_urls`、`test_herosms`） |
+| `make install-pw` | 安装 Playwright-Go 驱动（仅 `LOGIN_ENGINE=go` 回退时需要） |
+
+单独补环境、不启动：
+
+```bash
+make ensure-env
+```
 
 ## 开发
-
-在项目根目录：
 
 ```bash
 make
 ```
 
-会安装 Go / 前端 / Python 工人依赖，然后同时启动：
+会先补齐工人环境，再安装 Go / 前端依赖，然后同时启动：
 
 | 服务 | 地址 |
 |---|---|
@@ -49,7 +75,7 @@ make
 
 浏览器打开 **http://127.0.0.1:5173**。`Ctrl+C` 同时退出两边。后端 `go run` 就绪后才会起前端。
 
-分开跑：
+已经 `ensure-env` 过、只想重开服务：
 
 ```bash
 make api    # 仅后端，:8080
@@ -58,7 +84,7 @@ make web    # 仅前端，:5173
 
 页面：`/` 仪表盘，`/automation` 提取支付链接，`/account` 账号，`/logs` 日志，`/settings` 设置。
 
-改登录工人后不用重编 Go，重启任务即可。改 Go 代码在开发模式用 `make`（`go run`）会重新编译。
+改 `worker/` 后不用重编 Go，重启任务即可。改 Go 代码在开发模式用 `make`（`go run`）会重新编译。
 
 ## 生产
 
@@ -69,11 +95,11 @@ make build
 ./bin/server
 ```
 
-然后打开 **http://127.0.0.1:9999**（Go 托管已构建的前端）。
+`make build` 会先 `ensure-env`，再打包前端、编译 `bin/server`。然后打开 **http://127.0.0.1:9999**。
 
-改过登录或设置后，要重新 `make build` 并重启 `./bin/server` 才生效。不要直接跑开发态的 `:8080` 当生产。
+改过 Go 或前端后，要重新 `make build` 并重启 `./bin/server`。只改 Python 工人时，重启进程或再跑一次任务即可，不必重编。不要把开发态的 `:8080` 当生产。
 
-建议在仓库根目录启动，保证能找到：
+启动时要能找到：
 
 - `worker/login.py` 和 `worker/.venv/bin/python`
 - `web/dist`
