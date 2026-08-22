@@ -29,14 +29,14 @@ export function formatTime(ts: number) {
 
 export function barClass(pct: number | null) {
   if (pct == null) return "bg-muted"
-  if (pct >= 100) return "bg-red-500"
+  if (Math.round(pct) >= 100) return "bg-red-500"
   if (pct >= WARN) return "bg-amber-500"
   return "bg-emerald-500"
 }
 
 export function pctText(pct: number | null) {
   if (pct == null) return "text-muted-foreground"
-  if (pct >= 100) return "text-red-500"
+  if (Math.round(pct) >= 100) return "text-red-500"
   if (pct >= WARN) return "text-amber-500"
   return "text-muted-foreground"
 }
@@ -52,7 +52,7 @@ export function health(a: PoolAccount): { label: string; className: string } {
   if (!synced) return { label: "未同步", className: "bg-muted text-muted-foreground" }
   if (u.error && !u.rolling?.status) return { label: "异常", className: "bg-red-500/15 text-red-600" }
   const rows = [u.rolling, u.weekly, u.monthly]
-  if (rows.some((w) => w?.status === "rate-limited" || (w?.usage_percent ?? 0) >= 100)) {
+  if (rows.some((w) => w?.status === "rate-limited" || Math.round(w?.usage_percent ?? 0) >= 100)) {
     return { label: "额度用尽", className: "bg-red-500/15 text-red-600" }
   }
   if (rows.some((w) => (w?.usage_percent ?? 0) >= WARN)) {

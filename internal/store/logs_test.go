@@ -114,4 +114,23 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if err != nil || got.MaxConcurrent != 8 {
 		t.Fatalf("%+v %v", got, err)
 	}
+	if got.MaxRetries != 3 {
+		t.Fatalf("default retries=%d", got.MaxRetries)
+	}
+	got.MaxRetries = 0
+	if err := s.SaveSettings(got); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.GetSettings()
+	if err != nil || again.MaxRetries != 0 {
+		t.Fatalf("zero retries %+v %v", again, err)
+	}
+	got.MaxRetries = 5
+	if err := s.SaveSettings(got); err != nil {
+		t.Fatal(err)
+	}
+	again, err = s.GetSettings()
+	if err != nil || again.MaxRetries != 5 {
+		t.Fatalf("retries %+v %v", again, err)
+	}
 }

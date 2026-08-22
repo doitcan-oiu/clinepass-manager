@@ -79,6 +79,7 @@ export type AppConfig = {
   proxy: string
   invite_url: string
   max_concurrent: number
+  max_retries: number
   hero_sms_api_key: string
   hero_sms_configured: boolean
   hero_sms_service: string

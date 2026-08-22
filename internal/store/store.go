@@ -114,6 +114,9 @@ CREATE TABLE IF NOT EXISTS batches (
 	if err := s.ensureColumn("settings", "max_concurrent", `ALTER TABLE settings ADD COLUMN max_concurrent INTEGER NOT NULL DEFAULT 1`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("settings", "max_retries", `ALTER TABLE settings ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 3`); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`UPDATE settings SET invite_url = 'https://authkit.cline.bot' WHERE invite_url = '' OR invite_url LIKE '%opencode.ai%'`); err != nil {
 		return err
 	}
@@ -362,18 +365,19 @@ func scanAccount(sc rowScanner) (model.Account, error) {
 func (s *Store) GetSettings() (model.Settings, error) {
 	row := s.db.QueryRow(`SELECT proxy, headless, invite_url, usage_js_url,
 		IFNULL(hero_sms_api_key, ''), IFNULL(hero_sms_service, ''), IFNULL(hero_sms_country, 0), IFNULL(hero_sms_max_price, 0),
-		IFNULL(max_concurrent, 1)
+		IFNULL(max_concurrent, 1), IFNULL(max_retries, 3)
 		FROM settings WHERE id = 1`)
 	var out model.Settings
 	var headless int
 	if err := row.Scan(&out.Proxy, &headless, &out.InviteURL, &out.UsageJSURL,
-		&out.HeroSMSAPIKey, &out.HeroSMSService, &out.HeroSMSCountry, &out.HeroSMSMaxPrice, &out.MaxConcurrent); err != nil {
-		return model.Settings{Headless: true}, err
+		&out.HeroSMSAPIKey, &out.HeroSMSService, &out.HeroSMSCountry, &out.HeroSMSMaxPrice, &out.MaxConcurrent, &out.MaxRetries); err != nil {
+		return model.Settings{Headless: true, MaxRetries: 3}, err
 	}
 	out.Headless = headless != 0
 	if out.MaxConcurrent < 1 {
 		out.MaxConcurrent = 1
 	}
+	out.MaxRetries = clampMaxRetries(out.MaxRetries)
 	return out, nil
 }
 
@@ -390,9 +394,10 @@ func (s *Store) SaveSettings(in model.Settings) error {
 	if conc < 1 {
 		conc = 1
 	}
+	retries := clampMaxRetries(in.MaxRetries)
 	_, err := s.db.Exec(`
-INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, updated_at)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	proxy = excluded.proxy,
 	headless = excluded.headless,
@@ -403,9 +408,10 @@ ON CONFLICT(id) DO UPDATE SET
 	hero_sms_country = excluded.hero_sms_country,
 	hero_sms_max_price = excluded.hero_sms_max_price,
 	max_concurrent = excluded.max_concurrent,
+	max_retries = excluded.max_retries,
 	updated_at = excluded.updated_at`,
 		strings.TrimSpace(in.Proxy), headless, strings.TrimSpace(in.InviteURL), strings.TrimSpace(in.UsageJSURL),
-		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, time.Now().Unix())
+		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, retries, time.Now().Unix())
 	return err
 }
 
@@ -422,7 +428,18 @@ func ApplySettings(cfg config.Config, s model.Settings) config.Config {
 	if s.MaxConcurrent >= 1 {
 		cfg.MaxConcurrent = s.MaxConcurrent
 	}
+	cfg.MaxRetries = clampMaxRetries(s.MaxRetries)
 	return cfg
+}
+
+func clampMaxRetries(n int) int {
+	if n < 0 {
+		return 3
+	}
+	if n > 32 {
+		return 32
+	}
+	return n
 }
 
 func (s *Store) SeedDefaults(cfg config.Config) error {
@@ -432,8 +449,9 @@ func (s *Store) SeedDefaults(cfg config.Config) error {
 		return nil
 	}
 	return s.SaveSettings(model.Settings{
-		Proxy:     cfg.Proxy,
-		Headless:  cfg.Headless,
-		InviteURL: cfg.InviteURL,
+		Proxy:      cfg.Proxy,
+		Headless:   cfg.Headless,
+		InviteURL:  cfg.InviteURL,
+		MaxRetries: 3,
 	})
 }

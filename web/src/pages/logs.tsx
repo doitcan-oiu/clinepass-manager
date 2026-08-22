@@ -217,6 +217,7 @@ export function LogsPage() {
                 <TableHead>流式</TableHead>
                 <TableHead>渠道</TableHead>
                 <TableHead>状态</TableHead>
+                <TableHead>错误</TableHead>
                 <TableHead>词元</TableHead>
                 <TableHead>读缓存</TableHead>
                 <TableHead>写缓存</TableHead>
@@ -256,15 +257,20 @@ export function LogsPage() {
                       {row.account_email || "—"}
                     </TableCell>
                     <TableCell>
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${st.className}`}>{st.label}</span>
+                    </TableCell>
+                    <TableCell className="max-w-[360px]">
                       {row.error ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${st.className}`}>{st.label}</span>
+                            <span className="block truncate text-xs text-red-600" title={row.error}>
+                              {row.error}
+                            </span>
                           </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">{row.error}</TooltipContent>
+                          <TooltipContent className="max-w-lg whitespace-pre-wrap break-words">{row.error}</TooltipContent>
                         </Tooltip>
                       ) : (
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${st.className}`}>{st.label}</span>
+                        <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>
                     <TableCell>

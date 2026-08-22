@@ -116,6 +116,7 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		HeroSMSCountry  *int     `json:"hero_sms_country"`
 		HeroSMSMaxPrice *float64 `json:"hero_sms_max_price"`
 		MaxConcurrent   *int     `json:"max_concurrent"`
+		MaxRetries      *int     `json:"max_retries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 无效")
@@ -152,6 +153,13 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		cur.MaxConcurrent = *in.MaxConcurrent
 	}
+	if in.MaxRetries != nil {
+		if *in.MaxRetries < 0 || *in.MaxRetries > 32 {
+			writeErr(w, http.StatusBadRequest, "失败换号次数须在 0–32")
+			return
+		}
+		cur.MaxRetries = *in.MaxRetries
+	}
 	if err := s.store.SaveSettings(cur); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -174,6 +182,7 @@ func (s *Server) publicConfig() map[string]any {
 		"proxy":               cfg.Proxy,
 		"cloak_version":       cfg.CloakVersion,
 		"max_concurrent":      cfg.MaxConcurrent,
+		"max_retries":         cfg.MaxRetries,
 		"platform":            browser.PlatformTag(),
 		"hero_sms_api_key":    maskSecret(st.HeroSMSAPIKey),
 		"hero_sms_configured": strings.TrimSpace(st.HeroSMSAPIKey) != "",

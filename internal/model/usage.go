@@ -1,9 +1,22 @@
 package model
 
+import (
+	"math"
+	"strings"
+)
+
 type UsageWindow struct {
 	Status       string  `json:"status"`
 	ResetInSec   int     `json:"reset_in_sec"`
 	UsagePercent float64 `json:"usage_percent"`
+}
+
+func (w UsageWindow) Exhausted() bool {
+	s := strings.ToLower(strings.TrimSpace(w.Status))
+	if s == "rate-limited" || s == "exhausted" || s == "limited" {
+		return true
+	}
+	return math.Round(w.UsagePercent) >= 100
 }
 
 type ModelDay struct {
@@ -38,6 +51,10 @@ func (u AccountUsage) MonthlyExpiresAt() int64 {
 func (u AccountUsage) MonthlyExpired(now int64) bool {
 	at := u.MonthlyExpiresAt()
 	return at > 0 && now >= at
+}
+
+func (u AccountUsage) QuotaExhausted() bool {
+	return u.Rolling.Exhausted() || u.Weekly.Exhausted() || u.Monthly.Exhausted()
 }
 
 type PoolAccount struct {

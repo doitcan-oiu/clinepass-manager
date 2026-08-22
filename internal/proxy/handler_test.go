@@ -134,6 +134,151 @@ func TestRecordsTokenUsage(t *testing.T) {
 	}
 }
 
+func TestFailoverRespectsMaxRetries(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	cfg, err := st.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.MaxRetries = 1
+	if err := st.SaveSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	for _, email := range []string{"a@x.com", "b@x.com", "c@x.com"} {
+		a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: email, APIKey: "sk-" + email, WorkspaceID: "ws", CookieHeader: "auth=1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustUsage(t, st, a.ID, 1, now)
+	}
+	var hits int
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate"}`))
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if hits != 2 {
+		t.Fatalf("retries=1 should try 2 keys, hits=%d status=%d", hits, rr.Code)
+	}
+	logs, err := st.ListRequestLogs(model.RequestLogFilter{}, 1, 0)
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("logs %v", err)
+	}
+	if logs[0].Retries != 1 {
+		t.Fatalf("log retries=%d", logs[0].Retries)
+	}
+}
+
+func Test429MarksRollingExhausted(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "a@x.com", APIKey: "sk-a", WorkspaceID: "ws", CookieHeader: "auth=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUsage(t, st, a.ID, 40, time.Now().Unix())
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate"}`))
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d", rr.Code)
+	}
+	u, err := st.GetAccountUsage(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.Rolling.Exhausted() {
+		t.Fatalf("rolling should be marked full after 429: %+v", u.Rolling)
+	}
+	p, err := st.GetPoolAccount(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(Rank([]model.PoolAccount{p}, "glm-5.3")) != 0 {
+		t.Fatal("exhausted key should be excluded from later picks")
+	}
+}
+
+func TestRecordsUpstream400ErrorBody(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "a@x.com", APIKey: "sk-a", WorkspaceID: "ws", CookieHeader: "auth=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUsage(t, st, a.ID, 1, time.Now().Unix())
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"model claude-sonnet-4 is not available","type":"invalid_request_error"}}`))
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	logs, err := st.ListRequestLogs(model.RequestLogFilter{}, 1, 0)
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("logs %v", err)
+	}
+	l := logs[0]
+	if l.Status != "error" || l.HTTPStatus != http.StatusBadRequest {
+		t.Fatalf("%+v", l)
+	}
+	if !strings.Contains(l.Error, "model claude-sonnet-4 is not available") {
+		t.Fatalf("error should keep upstream body, got %q", l.Error)
+	}
+	if !strings.Contains(l.Error, "400") {
+		t.Fatalf("error should include HTTP status, got %q", l.Error)
+	}
+}
+
+func TestFormatLogError(t *testing.T) {
+	got := formatLogError(400, []byte(`{"error":{"message":"bad model"}}`))
+	if got != "HTTP 400: bad model" {
+		t.Fatalf("got %q", got)
+	}
+	got = formatLogError(422, []byte(`{"message":"validation failed"}`))
+	if got != "HTTP 422: validation failed" {
+		t.Fatalf("got %q", got)
+	}
+	got = formatLogError(502, []byte(`{"error":"upstream timeout"}`))
+	if got != "HTTP 502: upstream timeout" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func mustUsage(t *testing.T, st *store.Store, id string, rolling float64, now int64) {
 	t.Helper()
 	if err := st.SaveAccountUsage(id, model.AccountUsage{

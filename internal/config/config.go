@@ -18,6 +18,7 @@ type Config struct {
 	CloakBinaryPath string
 	LicenseKey      string
 	MaxConcurrent   int
+	MaxRetries      int
 	Proxy           string
 	HeroSMSAPIKey   string
 	HeroSMSService  string
@@ -37,6 +38,7 @@ func Load() Config {
 		CloakBinaryPath: env("CLOAKBROWSER_BINARY_PATH", ""),
 		LicenseKey:      env("CLOAKBROWSER_LICENSE_KEY", ""),
 		MaxConcurrent:   envInt("MAX_CONCURRENT", 1),
+		MaxRetries:      envInt("MAX_RETRIES", 3),
 		Proxy:           env("PROXY", ""),
 	}
 }

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -89,7 +90,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var lastStatus int
 	var lastBody []byte
 	var lastAcc model.PoolAccount
-	for i := 0; i < maxFailover; i++ {
+	for i := 0; i < h.maxAttempts(); i++ {
 		a, ok := lb.reserve(list, modelID, tried)
 		if !ok {
 			break
@@ -108,7 +109,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			lastStatus = http.StatusBadGateway
 			lastBody, _ = json.Marshal(map[string]any{"error": ferr.Error()})
 			state.httpStatus = lastStatus
-			state.err = ferr.Error()
+			state.err = formatLogError(lastStatus, lastBody)
 			continue
 		}
 		if retryableStatus(resp.StatusCode) {
@@ -118,8 +119,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			lb.cooldown(keyID, cooldownFor(a, resp.StatusCode, resp.Header))
 			lastStatus, lastBody = resp.StatusCode, b
 			state.httpStatus = lastStatus
-			state.err = errorMessage(b, http.StatusText(resp.StatusCode))
+			state.err = formatLogError(resp.StatusCode, b)
+			h.rememberQuota(a, resp.StatusCode)
 			continue
+		}
+		if resp.StatusCode >= 400 {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			resp.Body.Close()
+			lb.end(keyID)
+			copyHeader(w.Header(), resp.Header)
+			if w.Header().Get("Content-Type") == "" {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			}
+			w.WriteHeader(resp.StatusCode)
+			_, _ = w.Write(b)
+			if u, ok := parseUsageJSON(b); ok {
+				state.usage = u
+			}
+			state.httpStatus = resp.StatusCode
+			state.status = "error"
+			state.err = formatLogError(resp.StatusCode, b)
+			return
 		}
 		copyHeader(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
@@ -132,13 +152,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		state.usage = usage
 		state.httpStatus = resp.StatusCode
-		if resp.StatusCode >= 400 {
-			state.status = "error"
-			state.err = http.StatusText(resp.StatusCode)
-		} else {
-			state.status = "completed"
-			state.err = ""
-		}
+		state.status = "completed"
+		state.err = ""
 		return
 	}
 	if lastStatus == 0 {
@@ -148,11 +163,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	state.acc = lastAcc
 	state.httpStatus = lastStatus
 	if state.err == "" {
-		state.err = errorMessage(lastBody, http.StatusText(lastStatus))
+		state.err = formatLogError(lastStatus, lastBody)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(lastStatus)
 	_, _ = w.Write(lastBody)
+}
+
+func (h *Handler) maxAttempts() int {
+	retries := defaultMaxRetries
+	if st, err := h.store.GetSettings(); err == nil {
+		retries = st.MaxRetries
+	}
+	return maxAttemptsFromSettings(retries)
+}
+
+func (h *Handler) rememberQuota(a model.PoolAccount, status int) {
+	if strings.TrimSpace(a.ID) == "" {
+		return
+	}
+	u := a.Usage
+	if !markQuotaFromStatus(&u, status) {
+		return
+	}
+	_ = h.store.SaveAccountUsage(a.ID, u)
 }
 
 func (h *Handler) pool() ([]model.PoolAccount, error) {
@@ -297,28 +331,59 @@ func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool) (tokenUsage
 	}
 }
 
-func errorMessage(body []byte, fallback string) string {
-	var wrap struct {
-		Error any `json:"error"`
-	}
-	if json.Unmarshal(body, &wrap) == nil {
-		switch e := wrap.Error.(type) {
-		case string:
-			if strings.TrimSpace(e) != "" {
-				return e
-			}
-		case map[string]any:
-			if m, ok := e["message"].(string); ok && strings.TrimSpace(m) != "" {
-				return m
-			}
+func formatLogError(status int, body []byte) string {
+	msg := strings.TrimSpace(errorMessage(body, http.StatusText(status)))
+	if msg == "" {
+		if status > 0 {
+			return fmt.Sprintf("HTTP %d", status)
 		}
+		return "请求失败"
+	}
+	if status > 0 {
+		return fmt.Sprintf("HTTP %d: %s", status, msg)
+	}
+	return msg
+}
+
+func errorMessage(body []byte, fallback string) string {
+	if m := extractJSONError(body); m != "" {
+		return m
 	}
 	s := strings.TrimSpace(string(body))
 	if s != "" {
-		if len(s) > 200 {
-			return s[:200]
+		if len(s) > 400 {
+			return s[:400]
 		}
 		return s
 	}
 	return fallback
+}
+
+func extractJSONError(body []byte) string {
+	var wrap map[string]any
+	if json.Unmarshal(body, &wrap) != nil {
+		return ""
+	}
+	switch e := wrap["error"].(type) {
+	case string:
+		if s := strings.TrimSpace(e); s != "" {
+			return s
+		}
+	case map[string]any:
+		if m := stringField(e, "message", "msg", "detail"); m != "" {
+			return m
+		}
+	}
+	return stringField(wrap, "message", "detail", "msg")
+}
+
+func stringField(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if s, ok := m[k].(string); ok {
+			if t := strings.TrimSpace(s); t != "" {
+				return t
+			}
+		}
+	}
+	return ""
 }

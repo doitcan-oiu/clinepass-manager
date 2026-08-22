@@ -349,8 +349,7 @@ func (s *Store) PoolStats(batchID string) (model.PoolStats, error) {
 	var rN, wN, mN int
 	for _, a := range list {
 		u := a.Usage
-		ex := u.Rolling.Status == "rate-limited" || u.Weekly.Status == "rate-limited" || u.Monthly.Status == "rate-limited" ||
-			u.Rolling.UsagePercent >= 100 || u.Weekly.UsagePercent >= 100 || u.Monthly.UsagePercent >= 100
+		ex := u.QuotaExhausted()
 		tight := !ex && (u.Rolling.UsagePercent >= 80 || u.Weekly.UsagePercent >= 80 || u.Monthly.UsagePercent >= 80)
 		if u.Error != "" && u.Rolling.Status == "" {
 			continue

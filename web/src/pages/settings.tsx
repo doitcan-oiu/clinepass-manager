@@ -34,6 +34,7 @@ export function SettingsPage() {
   const [proxy, setProxy] = useState("")
   const [headless, setHeadless] = useState(true)
   const [maxConcurrent, setMaxConcurrent] = useState(1)
+  const [maxRetries, setMaxRetries] = useState(3)
   const [apiKey, setApiKey] = useState("")
   const [configured, setConfigured] = useState(false)
   const [service, setService] = useState("ot")
@@ -50,6 +51,7 @@ export function SettingsPage() {
         setProxy(cfg.proxy || "")
         setHeadless(cfg.headless !== false)
         setMaxConcurrent(cfg.max_concurrent >= 1 ? cfg.max_concurrent : 1)
+        setMaxRetries(Number.isFinite(cfg.max_retries) && cfg.max_retries >= 0 ? cfg.max_retries : 3)
         setApiKey(cfg.hero_sms_api_key || "")
         setConfigured(!!cfg.hero_sms_configured)
         setService(cfg.hero_sms_service || "ot")
@@ -105,8 +107,14 @@ export function SettingsPage() {
         toast.error("并发数至少为 1")
         return
       }
-      await api.saveConfig({ proxy, headless, max_concurrent: n })
+      const retries = Math.floor(Number(maxRetries))
+      if (!Number.isFinite(retries) || retries < 0 || retries > 32) {
+        toast.error("失败换号次数须在 0–32")
+        return
+      }
+      await api.saveConfig({ proxy, headless, max_concurrent: n, max_retries: retries })
       setMaxConcurrent(n)
+      setMaxRetries(retries)
       toast.success("运行环境已保存")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存失败")
@@ -185,6 +193,21 @@ export function SettingsPage() {
                     onChange={(e) => setMaxConcurrent(Number(e.target.value))}
                   />
                   <p className="text-xs text-muted-foreground">同时打开多少个浏览器去提取链接，最少 1，没有上限。改完立即生效。</p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="max-retries">失败换号次数</Label>
+                  <Input
+                    id="max-retries"
+                    type="number"
+                    min={0}
+                    max={32}
+                    step={1}
+                    value={maxRetries}
+                    onChange={(e) => setMaxRetries(Number(e.target.value))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    上游 429/5xx 时再换几个号，0 表示不换号。5 小时 / 周 / 月已经 100% 的账号不会参与转发和重试。
+                  </p>
                 </div>
                 <Button type="submit" disabled={pending} className="w-fit">
                   保存运行环境

@@ -72,8 +72,8 @@ func (s *Store) UpdateRequestLog(l model.RequestLog) error {
 		stream = 1
 	}
 	errMsg := l.Error
-	if len(errMsg) > 500 {
-		errMsg = errMsg[:500]
+	if len(errMsg) > 1000 {
+		errMsg = errMsg[:1000]
 	}
 	_, err := s.db.Exec(`
 UPDATE request_logs SET

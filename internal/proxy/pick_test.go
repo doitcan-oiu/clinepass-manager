@@ -27,6 +27,18 @@ func TestRankSkipsLimitedAndPicksLeastUsed(t *testing.T) {
 	}
 }
 
+func TestRankSkipsRoundedHundredPercent(t *testing.T) {
+	resetBalancer()
+	rolling := acc("r@x.com", "k", win("ok", 99.5), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	weekly := acc("w@x.com", "k", win("ok", 10), win("ok", 99.6), win("ok", 10), "glm-5.3", 1)
+	monthly := acc("m@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 100), "glm-5.3", 1)
+	ok := acc("ok@x.com", "k", win("ok", 99.4), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	got := Rank([]model.PoolAccount{rolling, weekly, monthly, ok}, "glm-5.3")
+	if len(got) != 1 || got[0].Email != "ok@x.com" {
+		t.Fatalf("got %v", emails(got))
+	}
+}
+
 func TestRankUnknownModelUsesPackageOnly(t *testing.T) {
 	resetBalancer()
 	a := acc("a@x.com", "k", win("ok", 50), win("ok", 10), win("ok", 10), "glm-5.3", 2)

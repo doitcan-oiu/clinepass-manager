@@ -12,7 +12,8 @@ import (
 	"opencode-go-manager/internal/model"
 )
 
-const maxFailover = 32
+const defaultMaxRetries = 3
+const maxRetryCap = 32
 
 type balancer struct {
 	mu       sync.Mutex
@@ -159,14 +160,6 @@ func parseRetryAfter(h http.Header) time.Duration {
 	return d
 }
 
-func windowBlocked(w model.UsageWindow) bool {
-	s := strings.ToLower(strings.TrimSpace(w.Status))
-	if s == "rate-limited" || s == "exhausted" || s == "limited" {
-		return true
-	}
-	return w.UsagePercent >= 100
-}
-
 func totalSpend(u model.AccountUsage) float64 {
 	var n float64
 	for _, m := range u.Models {
@@ -193,7 +186,7 @@ func canServeQuota(a model.PoolAccount, modelID string, now time.Time) bool {
 		return false
 	}
 	u := a.Usage
-	if windowBlocked(u.Rolling) || windowBlocked(u.Weekly) || windowBlocked(u.Monthly) {
+	if u.QuotaExhausted() {
 		return false
 	}
 	poolLeft := gomodel.MonthlyUSD - totalSpend(u)
@@ -244,9 +237,6 @@ func (b *balancer) rankLocked(accounts []model.PoolAccount, modelID string, skip
 		}
 		return a.Email < c.Email
 	})
-	if len(out) > maxFailover {
-		out = out[:maxFailover]
-	}
 	return out
 }
 
@@ -269,5 +259,44 @@ func retryableStatus(code int) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func maxAttemptsFromSettings(retries int) int {
+	if retries < 0 {
+		retries = defaultMaxRetries
+	}
+	if retries > maxRetryCap {
+		retries = maxRetryCap
+	}
+	return retries + 1
+}
+
+func markQuotaFromStatus(u *model.AccountUsage, status int) bool {
+	if u == nil {
+		return false
+	}
+	switch status {
+	case http.StatusPaymentRequired:
+		if u.Monthly.Exhausted() {
+			return false
+		}
+		markWindowFull(&u.Monthly)
+		return true
+	case http.StatusTooManyRequests:
+		if u.Rolling.Exhausted() {
+			return false
+		}
+		markWindowFull(&u.Rolling)
+		return true
+	default:
+		return false
+	}
+}
+
+func markWindowFull(w *model.UsageWindow) {
+	w.Status = "rate-limited"
+	if w.UsagePercent < 100 {
+		w.UsagePercent = 100
 	}
 }
