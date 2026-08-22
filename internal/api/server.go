@@ -59,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/batches/{id}/refresh", s.refreshBatch)
 	mux.HandleFunc("POST /api/batches/{id}/dispatch", s.dispatchBatch)
 	mux.HandleFunc("POST /api/batches/{id}/paid", s.markBatchPaid)
+	mux.HandleFunc("DELETE /api/batches/{id}/radar-denied", s.deleteRadarDenied)
 	mux.HandleFunc("POST /api/accounts/{id}/refresh", s.refreshAccount)
 	mux.HandleFunc("GET /api/pool/accounts", s.listPoolAccounts)
 	mux.HandleFunc("GET /api/pool/batches", s.listPaidBatches)
@@ -286,6 +287,28 @@ func (s *Server) getBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"batch":    sum,
 		"accounts": accounts,
+	})
+}
+
+func (s *Server) deleteRadarDenied(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.store.GetBatch(id); err != nil {
+		writeErr(w, http.StatusNotFound, "批次不存在")
+		return
+	}
+	n, err := s.store.DeleteRadarDenied(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sum, err := s.store.GetBatchSummary(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": n,
+		"batch":   sum,
 	})
 }
 

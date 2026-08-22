@@ -9,6 +9,14 @@ import (
 	"opencode-go-manager/internal/model"
 )
 
+func isRadarDeniedError(msg string) bool {
+	msg = strings.ToLower(msg)
+	if strings.Contains(msg, "policy_denied") {
+		return true
+	}
+	return strings.Contains(msg, "authkit radar") && strings.Contains(msg, "拦截")
+}
+
 func DefaultBatchName() string {
 	return "批次-" + time.Now().Format("0102-150405")
 }
@@ -163,6 +171,27 @@ func (s *Store) GetBatchSummary(id string) (model.BatchSummary, error) {
 		return model.BatchSummary{}, err
 	}
 	return b, nil
+}
+
+func (s *Store) DeleteRadarDenied(batchID string) (int, error) {
+	if _, err := s.GetBatch(batchID); err != nil {
+		return 0, err
+	}
+	list, err := s.ListByBatch(batchID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, a := range list {
+		if a.Status != "failed" || !isRadarDeniedError(a.LastError) {
+			continue
+		}
+		if err := s.Delete(a.ID); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 func (s *Store) DeleteBatch(id string) error {

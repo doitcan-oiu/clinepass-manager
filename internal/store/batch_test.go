@@ -101,3 +101,59 @@ func TestCreateBatchMicrosoftProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteRadarDenied(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	b, _, err := s.CreateBatch(model.CreateBatchInput{
+		Name: "雷达批次",
+		Text: "radar@x.com----pw\nbanned@x.com----pw\nok@x.com----pw\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListByBatch(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byEmail := map[string]string{}
+	for _, a := range list {
+		byEmail[a.Email] = a.ID
+	}
+	if err := s.UpdateStatus(byEmail["radar@x.com"], "failed", "AuthKit Radar 拦截（policy_denied），已跳过"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateStatus(byEmail["banned@x.com"], "failed", "账号已被封禁，已跳过"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateStatus(byEmail["ok@x.com"], "ready", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := s.DeleteRadarDenied(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("deleted %d", n)
+	}
+	left, err := s.ListByBatch(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 2 {
+		t.Fatalf("left %d", len(left))
+	}
+	for _, a := range left {
+		if a.Email == "radar@x.com" {
+			t.Fatal("radar account should be gone")
+		}
+	}
+	if _, err := s.DeleteRadarDenied("missing"); err == nil {
+		t.Fatal("expected missing batch error")
+	}
+}

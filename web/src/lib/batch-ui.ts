@@ -1,4 +1,14 @@
-import type { Batch } from "@/lib/types"
+import type { Account, Batch } from "@/lib/types"
+
+export function isRadarDeniedAccount(a: Account) {
+  if (a.status !== "failed") return false
+  const msg = (a.last_error || "").toLowerCase()
+  return msg.includes("policy_denied") || (msg.includes("authkit radar") && msg.includes("拦截"))
+}
+
+export function radarDeniedCount(accounts: Account[]) {
+  return accounts.filter(isRadarDeniedAccount).length
+}
 
 export function waitingCount(b: Batch) {
   return Math.max(0, b.pending - b.failed)

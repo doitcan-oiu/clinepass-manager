@@ -172,6 +172,24 @@ func TestIsAuthkitFailure(t *testing.T) {
 	}
 }
 
+func TestIsRadarDeniedMessage(t *testing.T) {
+	if !IsRadarDeniedMessage(ErrRadarDenied.Error()) {
+		t.Fatal("sentinel")
+	}
+	if !IsRadarDeniedMessage("AuthKit Radar 拦截，跳过") {
+		t.Fatal("short log")
+	}
+	if !IsRadarDeniedMessage("error=policy_denied") {
+		t.Fatal("policy_denied")
+	}
+	if IsRadarDeniedMessage(ErrAccountBanned.Error()) {
+		t.Fatal("banned is not radar")
+	}
+	if IsRadarDeniedMessage("AuthKit 页面异常") {
+		t.Fatal("stuck is not radar")
+	}
+}
+
 func TestAuthkitCallbackError(t *testing.T) {
 	u := "https://authkit.cline.bot/?error=policy_denied&authorization_session_id=01ABC"
 	if got := authkitCallbackError(u); got != "policy_denied" {

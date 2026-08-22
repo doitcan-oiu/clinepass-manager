@@ -14,6 +14,14 @@ var (
 	ErrRadarDenied    = errors.New("AuthKit Radar 拦截（policy_denied），已跳过")
 )
 
+func IsRadarDeniedMessage(msg string) bool {
+	msg = strings.ToLower(msg)
+	if strings.Contains(msg, "policy_denied") {
+		return true
+	}
+	return strings.Contains(msg, "authkit radar") && strings.Contains(msg, "拦截")
+}
+
 func IsAuthkitFailure(err error) bool {
 	if err == nil || errors.Is(err, ErrAccountBanned) || errors.Is(err, ErrRadarDenied) {
 		return false

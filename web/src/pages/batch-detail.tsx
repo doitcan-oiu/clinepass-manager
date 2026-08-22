@@ -7,7 +7,7 @@ import { AccountTable } from "@/components/accounts/account-table"
 import { DetailDialog } from "@/components/accounts/detail-dialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { batchStatus, waitingCount } from "@/lib/batch-ui"
+import { batchStatus, radarDeniedCount, waitingCount } from "@/lib/batch-ui"
 import { downloadText } from "@/lib/download"
 import {
   AlertDialog,
@@ -26,8 +26,11 @@ export function BatchDetailPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [detail, setDetail] = useState<Account | null>(null)
   const [remove, setRemove] = useState<Account | null>(null)
+  const [removeRadar, setRemoveRadar] = useState(false)
+  const [removingRadar, setRemovingRadar] = useState(false)
   const [logs, setLogs] = useState<JobEvent[]>([])
   const esRef = useRef<{ close: () => void } | null>(null)
+  const radarCount = radarDeniedCount(accounts)
 
   async function reload() {
     if (!id) return
@@ -158,6 +161,25 @@ export function BatchDetailPage() {
     await reload()
   }
 
+  async function confirmRemoveRadar() {
+    if (!id) return
+    setRemovingRadar(true)
+    try {
+      const res = await api.deleteRadarDenied(id)
+      setRemoveRadar(false)
+      if (res.deleted === 0) {
+        toast.message("这批没有 AuthKit Radar 拦截账户")
+      } else {
+        toast.success(`已删除 ${res.deleted} 个 AuthKit Radar 拦截账户`)
+      }
+      await reload()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "删除失败")
+    } finally {
+      setRemovingRadar(false)
+    }
+  }
+
   async function exportPay() {
     if (!id) return
     try {
@@ -232,6 +254,15 @@ export function BatchDetailPage() {
         >
           {batch && batch.paid_count >= batch.total && batch.total ? "已付款" : "确认付款"}
         </Button>
+        <Button
+          variant="destructive"
+          disabled={radarCount === 0 || removingRadar}
+          onClick={() => setRemoveRadar(true)}
+        >
+          {radarCount
+            ? `一键删除 AuthKit Radar 拦截账户（${radarCount}）`
+            : "一键删除 AuthKit Radar 拦截账户"}
+        </Button>
       </div>
 
       <AccountTable
@@ -267,6 +298,23 @@ export function BatchDetailPage() {
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={confirmRemove}>
               删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={removeRadar} onOpenChange={(v) => !v && !removingRadar && setRemoveRadar(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除 AuthKit Radar 拦截账户</AlertDialogTitle>
+            <AlertDialogDescription>
+              将删除本批 {radarCount} 个因 AuthKit Radar 拦截（policy_denied）失败的账户，其它账户不受影响。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removingRadar}>取消</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={removingRadar} onClick={confirmRemoveRadar}>
+              {removingRadar ? "删除中…" : "确认删除"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

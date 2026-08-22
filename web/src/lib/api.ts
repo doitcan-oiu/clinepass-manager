@@ -64,6 +64,10 @@ export const api = {
     fetch(`/api/batches/${id}`).then((r) => json<{ batch: Batch; accounts: Account[] }>(r)),
   deleteBatch: (id: string) =>
     fetch(`/api/batches/${id}`, { method: "DELETE" }).then((r) => json<null>(r)),
+  deleteRadarDenied: (id: string) =>
+    fetch(`/api/batches/${id}/radar-denied`, { method: "DELETE" }).then((r) =>
+      json<{ deleted: number; batch: Batch }>(r)
+    ),
   loginBatch: (id: string) =>
     fetch(`/api/batches/${id}/login`, { method: "POST" }).then((r) => json<Job[]>(r)),
   refreshBatch: (id: string) =>
