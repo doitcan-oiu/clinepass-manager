@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>设置 · opencode Go 监控</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style type="text/tailwindcss">
+    @theme {
+      --color-canvas: #101010; --color-canvas-soft: #1a1a1a; --color-hairline: #3d3a39;
+      --color-primary: #00d992; --color-primary-soft: #2fd6a1;
+      --color-ink: #f2f2f2; --color-ink-strong: #ffffff; --color-body: #bdbdbd; --color-mute: #8b949e;
+      --color-warn: #f5a623; --color-danger: #ff5c5c;
+      --font-mono: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+    body { background: var(--color-canvas); color: var(--color-ink); }
+    ::selection { background: rgba(0,217,146,.25); }
+    [v-cloak] { display: none; }
+    /* 细滚动条 */
+    * { scrollbar-width: thin; scrollbar-color: #2e2b2a transparent; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2726; border-radius: 9999px; border: 2px solid var(--color-canvas); }
+    ::-webkit-scrollbar-thumb:hover { background: #46413f; }
+    /* 弹窗动画 */
+    @keyframes ocFade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ocPop  { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+    .oc-overlay { animation: ocFade .18s ease-out; }
+    .oc-pop { animation: ocPop .22s cubic-bezier(.2,.8,.2,1); }
+    @media (prefers-reduced-motion: reduce) {
+      .oc-overlay, .oc-pop { animation: none !important; }
+    }
+    @layer components {
+      .oc-input { @apply w-full rounded-sm border border-hairline bg-canvas-soft px-3 py-2 text-sm text-ink outline-none transition focus:border-primary; }
+    }
+  </style>
+  <script src="/static/common.js"></script>
+</head>
+<body class="min-h-screen antialiased">
+<div id="app" v-cloak>
+  <header class="sticky top-0 z-20 border-b border-hairline bg-canvas/95 backdrop-blur">
+    <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-y-2 px-4 py-3 sm:px-6">
+      <div class="flex items-center gap-3 sm:gap-5">
+        <div class="flex items-center gap-2 sm:gap-3">
+          <span class="grid size-6 place-items-center border-2 border-primary text-primary text-xs font-bold">◨</span>
+          <div class="text-sm font-semibold text-ink-strong">opencode Go 监控</div>
+        </div>
+        <nav class="flex items-center gap-1 text-sm">
+          <a href="/" class="cursor-pointer rounded-sm px-3 py-1.5 text-body transition hover:text-ink">监控</a>
+          <a href="/settings" class="rounded-sm bg-canvas-soft px-3 py-1.5 font-semibold text-ink">设置</a>
+        </nav>
+      </div>
+      <span v-if="msg" class="text-xs" :class="msg.includes('失败')||msg.includes('错误') ? 'text-danger' : 'text-primary-soft'">{{ msg }}</span>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6">
+    <!-- 监控设置 + 转发设置：双栏 -->
+    <div class="grid items-start gap-6 lg:grid-cols-2">
+      <!-- 监控设置 -->
+      <section class="rounded-md border border-hairline bg-canvas p-6">
+        <h2 class="mb-1 text-base font-semibold text-ink-strong">监控设置</h2>
+        <p class="mb-5 text-xs text-mute">自动刷新间隔修改后立即生效，无需重启。</p>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="block"><span class="mb-1 block text-xs text-body">自动刷新间隔</span>
+            <input v-model="s.refreshInterval" placeholder="30m" class="oc-input font-mono" />
+            <span class="mt-1 block text-[11px] text-mute">格式：30m / 1h / 90s</span></label>
+          <label class="block"><span class="mb-1 block text-xs text-body">请求超时</span>
+            <input v-model="s.requestTimeout" placeholder="25s" class="oc-input font-mono" /></label>
+          <label class="block"><span class="mb-1 block text-xs text-body">并发抓取数</span>
+            <input v-model.number="s.concurrency" type="number" min="1" max="32" class="oc-input font-mono" /></label>
+          <label class="block"><span class="mb-1 block text-xs text-body">额度紧张阈值 (%)</span>
+            <input v-model.number="s.warnPercent" type="number" min="1" max="100" class="oc-input font-mono" /></label>
+          <label class="block sm:col-span-2"><span class="mb-1 block text-xs text-body">即将到期天数</span>
+            <input v-model.number="s.expirySoonDays" type="number" min="0" class="oc-input font-mono" /></label>
+        </div>
+      </section>
+
+      <!-- 转发设置 -->
+      <section class="rounded-md border border-hairline bg-canvas p-6">
+        <h2 class="mb-1 text-base font-semibold text-ink-strong">转发接口（New API 渠道）</h2>
+        <p class="mb-5 text-xs text-mute">自动挑选「用量最少」且有 API Key 的账号并转发；失败则改用其它 Key 重试。</p>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="block sm:col-span-2"><span class="mb-1 block text-xs text-body">转发 Key（可选，鉴权 /v1 请求）</span>
+            <input v-model="s.proxyKey" placeholder="留空则不校验" class="oc-input font-mono" />
+            <span class="mt-1 block text-[11px] text-mute">在 New API 渠道密钥里填这个值；留空则不校验（仅建议内网）。</span></label>
+          <label class="block sm:col-span-2"><span class="mb-1 block text-xs text-body">失败自动重试次数</span>
+            <input v-model.number="s.maxRetries" type="number" min="0" max="10" class="oc-input font-mono" />
+            <span class="mt-1 block text-[11px] text-mute">上游 429/5xx 或连接失败时，最多改用几个其它 Key 重试（0–10）。</span></label>
+        </div>
+      </section>
+    </div>
+
+    <div class="flex items-center justify-end gap-3">
+      <button @click="save" :disabled="busy" class="rounded-sm bg-primary px-5 py-2 text-sm font-semibold text-canvas hover:bg-primary-soft disabled:opacity-50">保存设置</button>
+    </div>
+
+    <!-- New API 接入说明（全宽） -->
+    <section class="rounded-md border border-hairline bg-canvas p-6">
+      <h2 class="mb-3 text-base font-semibold text-ink-strong">New API 接入</h2>
+      <div class="grid gap-2 text-xs sm:grid-cols-2">
+        <div class="flex flex-wrap items-center gap-2"><span class="w-36 text-mute">OpenAI 兼容 Base URL</span><code class="rounded-sm bg-canvas-soft px-2 py-1 font-mono text-primary-soft">{{ base }}/v1</code></div>
+        <div class="flex flex-wrap items-center gap-2"><span class="w-36 text-mute">Anthropic Base URL</span><code class="rounded-sm bg-canvas-soft px-2 py-1 font-mono text-primary-soft">{{ base }}</code></div>
+        <div class="flex flex-wrap items-center gap-2"><span class="w-36 text-mute">模型列表</span><code class="rounded-sm bg-canvas-soft px-2 py-1 font-mono text-primary-soft">GET {{ base }}/v1/models</code></div>
+        <div class="flex flex-wrap items-center gap-2"><span class="w-36 text-mute">端点</span><span class="text-mute">chat→<code class="font-mono text-body">/v1/chat/completions</code>，Anthropic→<code class="font-mono text-body">/v1/messages</code>，其余 <code class="font-mono text-body">/v1/*</code> 自动透传</span></div>
+      </div>
+    </section>
+
+    <!-- 模型管理 -->
+    <section class="rounded-md border border-hairline bg-canvas p-6">
+      <h2 class="mb-1 text-base font-semibold text-ink-strong">模型管理</h2>
+       <p class="mb-5 text-xs text-mute">模型和每月美元额度来自 OpenCode Go 文档，可手动刷新。</p>
+
+      <div class="mb-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto]">
+        <input v-model="nm.id" placeholder="模型 ID，如 grok-5" class="oc-input font-mono" />
+        <input v-model="nm.name" placeholder="展示名（可选）" class="oc-input" />
+        <select v-model="nm.protocol" class="oc-input">
+          <option value="openai">openai (chat/completions)</option>
+          <option value="anthropic">anthropic (messages)</option>
+        </select>
+        <button @click="addModel" class="rounded-sm bg-primary px-4 py-2 text-sm font-semibold text-canvas hover:bg-primary-soft">添加</button>
+        <button @click="refreshModels" :disabled="modelBusy" class="rounded-sm border border-hairline px-4 py-2 text-sm text-body hover:text-ink disabled:opacity-50">{{ modelBusy ? '获取中…' : '从文档刷新' }}</button>
+      </div>
+
+      <div class="overflow-hidden rounded-sm border border-hairline">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-canvas-soft text-xs text-mute">
+            <tr><th class="px-3 py-2">模型 ID</th><th class="px-3 py-2">名称</th><th class="px-3 py-2">协议</th><th class="px-3 py-2">每月额度</th><th class="px-3 py-2 text-right">操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in models" :key="m.id" class="border-t border-hairline">
+              <td class="px-3 py-2 font-mono text-ink">{{ m.id }}</td>
+              <td class="px-3 py-2 text-body">{{ m.name }}</td>
+              <td class="px-3 py-2"><span class="rounded-full px-2 py-0.5 text-xs" :class="m.protocol==='anthropic' ? 'bg-warn/15 text-warn' : 'bg-primary/15 text-primary'">{{ m.protocol }}</span></td>
+              <td class="px-3 py-2 text-body">{{ m.monthlyCredits == null ? '—' : '$' + m.monthlyCredits }}</td>
+              <td class="px-3 py-2 text-right"><button @click="delModel(m)" class="text-danger/80 hover:text-danger">删除</button></td>
+            </tr>
+            <tr v-if="models.length===0"><td colspan="5" class="px-3 py-6 text-center text-mute">暂无模型</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="rounded-md border border-hairline bg-canvas p-6">
+      <div class="mb-4 flex items-center justify-between"><div><h2 class="text-base font-semibold text-ink-strong">访问日志</h2><p class="text-xs text-mute">记录 HTTP 请求、状态、耗时和响应大小，不记录请求体与凭据。</p></div><button @click="loadLogs" class="text-sm text-primary hover:text-primary-soft">刷新</button></div>
+      <div class="max-h-96 overflow-auto rounded-sm border border-hairline"><table class="w-full text-left text-xs"><thead class="sticky top-0 bg-canvas-soft text-mute"><tr><th class="px-3 py-2">时间</th><th class="px-3 py-2">请求</th><th class="px-3 py-2">状态</th><th class="px-3 py-2">耗时</th><th class="px-3 py-2">来源</th></tr></thead><tbody><tr v-for="l in logs" :key="l.id" class="border-t border-hairline"><td class="whitespace-nowrap px-3 py-2">{{ formatLogDate(l.createdAt) }}</td><td class="px-3 py-2 font-mono">{{ l.method }} {{ l.path }}</td><td class="px-3 py-2" :class="l.status >= 400 ? 'text-danger' : 'text-primary'">{{ l.status }}</td><td class="px-3 py-2">{{ l.durationMs }} ms</td><td class="px-3 py-2 text-mute">{{ l.remoteAddr }}</td></tr><tr v-if="logs.length===0"><td colspan="5" class="px-3 py-6 text-center text-mute">暂无访问日志</td></tr></tbody></table></div>
+    </section>
+  </main>
+</div>
+<script src="/static/settings.js"></script>
+</body>
+</html>

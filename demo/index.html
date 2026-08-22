@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>opencode Go 额度监控</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style type="text/tailwindcss">
+    @theme {
+      --color-canvas: #101010; --color-canvas-soft: #1a1a1a; --color-hairline: #3d3a39;
+      --color-primary: #00d992; --color-primary-soft: #2fd6a1;
+      --color-ink: #f2f2f2; --color-ink-strong: #ffffff; --color-body: #bdbdbd; --color-mute: #8b949e;
+      --color-warn: #f5a623; --color-danger: #ff5c5c;
+      --font-mono: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+    body { background: var(--color-canvas); color: var(--color-ink); }
+    ::selection { background: rgba(0,217,146,.25); }
+    [v-cloak] { display: none; }
+
+    /* 美化滚动条：暗色细滚动条，与主题统一 */
+    * { scrollbar-width: thin; scrollbar-color: #2e2b2a transparent; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2726; border-radius: 9999px; border: 2px solid var(--color-canvas); }
+    ::-webkit-scrollbar-thumb:hover { background: #46413f; }
+
+    /* 动画关键帧 */
+    @keyframes ocFade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ocPop  { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+    @keyframes ocShine { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(320%); } }
+    .oc-overlay { animation: ocFade .18s ease-out; }
+    .oc-pop { animation: ocPop .22s cubic-bezier(.2,.8,.2,1); }
+    @media (prefers-reduced-motion: reduce) {
+      .oc-overlay, .oc-pop, .oc-bar { animation: none !important; }
+      .oc-card { transition: none !important; }
+    }
+  </style>
+  <script src="/static/common.js"></script>
+</head>
+<body class="min-h-screen antialiased">
+<div id="app" v-cloak>
+  <!-- 顶部导航 -->
+  <header class="sticky top-0 z-20 border-b border-hairline bg-canvas/95 backdrop-blur">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6">
+      <div class="flex flex-wrap items-center justify-between gap-y-2 py-3">
+        <div class="flex items-center gap-3 sm:gap-5">
+          <div class="flex items-center gap-2 sm:gap-3">
+            <span class="grid size-6 place-items-center border-2 border-primary text-primary text-xs font-bold">◨</span>
+            <div class="text-sm font-semibold text-ink-strong">opencode Go 监控</div>
+          </div>
+          <nav class="flex items-center gap-1 text-sm">
+            <a href="/" class="cursor-pointer rounded-sm bg-canvas-soft px-3 py-1.5 font-semibold text-ink transition">监控</a>
+            <a href="/settings" class="cursor-pointer rounded-sm px-3 py-1.5 text-body transition hover:text-ink">设置</a>
+          </nav>
+        </div>
+        <div class="flex items-center gap-2 sm:gap-3">
+          <span class="hidden text-xs text-mute sm:inline"><span v-if="lastSync">更新于 {{ fmtClock(lastSync) }}</span></span>
+          <button @click="refreshAll" :disabled="refreshing"
+            class="cursor-pointer rounded-sm border border-hairline bg-canvas px-3 py-2 text-sm font-semibold text-ink transition hover:border-mute active:scale-95 disabled:opacity-50 sm:px-4">
+            {{ refreshing ? '刷新中…' : '刷新全部' }}
+          </button>
+          <button @click="exportBackup" class="cursor-pointer rounded-sm border border-hairline bg-canvas px-3 py-2 text-sm font-semibold text-ink transition hover:border-mute active:scale-95">导出</button>
+          <button @click="openImport" class="cursor-pointer rounded-sm border border-hairline bg-canvas px-3 py-2 text-sm font-semibold text-ink transition hover:border-mute active:scale-95">导入</button>
+          <button @click="openAdd" class="cursor-pointer rounded-sm bg-primary px-3 py-2 text-sm font-semibold text-canvas transition hover:bg-primary-soft active:scale-95 sm:px-4">+ 添加账号</button>
+        </div>
+      </div>
+      <!-- 统计 + 总额度 -->
+      <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-hairline py-2.5">
+        <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+          <span v-for="s in stats" :key="s.label" class="flex items-center gap-1.5">
+            <span class="text-mute">{{ s.label }}</span>
+            <span class="font-mono text-sm font-semibold" :class="s.cls">{{ s.value }}</span>
+          </span>
+        </div>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span class="text-[11px] uppercase tracking-wide text-mute">总额度(均值)</span>
+          <div v-for="u in aggRows" :key="u.label" class="flex items-center gap-1.5">
+            <span class="text-[11px] text-body">{{ u.label }}</span>
+            <div class="h-1.5 w-14 overflow-hidden rounded-full bg-canvas-soft">
+              <div class="oc-bar" :class="barClsN(u.pct)" :style="{ width: (barReady ? (u.pct==null?0:Math.min(u.pct,100)) : 0) + '%' }"></div>
+            </div>
+            <span class="w-8 font-mono text-[11px]" :class="pctTextN(u.pct)">{{ u.pct==null ? '—' : u.pct + '%' }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+    <!-- 骨架屏：首次加载占位 -->
+    <div v-if="!loaded" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      <div v-for="n in 8" :key="n" class="oc-card animate-pulse">
+        <div class="oc-skel mb-2 h-4 w-2/3"></div>
+        <div class="mb-3 flex gap-1.5">
+          <div class="oc-skel h-4 w-14 rounded-full"></div>
+          <div class="oc-skel h-4 w-10 rounded-full"></div>
+        </div>
+        <div class="space-y-3">
+          <div class="oc-skel h-1.5 w-full rounded-full"></div>
+          <div class="oc-skel h-1.5 w-full rounded-full"></div>
+          <div class="oc-skel h-1.5 w-full rounded-full"></div>
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="accounts.length===0" class="rounded-md border border-dashed border-hairline bg-canvas-soft p-12 text-center text-mute">
+      还没有账号，点击右上角「添加账号」开始监控。
+    </div>
+
+    <div v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      <article v-for="a in pagedAccounts" :key="a.id" @contextmenu.prevent="openMenu($event, a)"
+        class="oc-card group" :class="a.status==='error' ? 'oc-card--error' : ''">
+        <!-- 悬浮提示：右键操作 -->
+        <span class="pointer-events-none absolute right-2.5 top-2.5 rounded-full bg-canvas-soft/90 px-2 py-0.5 text-[10px] text-mute opacity-0 transition-opacity duration-200 group-hover:opacity-100">右键操作</span>
+        <!-- 顶部：邮箱 -->
+        <button @click="openInfo(a)" :title="a.account" class="mb-2 block w-full cursor-pointer truncate pr-16 text-left text-sm font-semibold text-ink-strong transition-colors hover:text-primary">
+          {{ a.account || a.reportEmail || '未命名账号' }}
+        </button>
+
+        <!-- 徽标：邀请奖励 / 已订阅 / 状态 / 剩余天数 -->
+        <div class="mb-3 flex flex-wrap items-center gap-1">
+          <button v-if="a.unclaimedRewards > 0 || (a.referrals && a.referrals.length)" @click.stop="openReferrals(a)"
+            :title="a.unclaimedRewards > 0 ? '有 '+a.unclaimedRewards+' 个邀请奖励待领取，点击查看' : '查看邀请奖励'"
+            class="cursor-pointer rounded-full px-2 py-0.5 text-[11px] font-semibold transition active:scale-95"
+            :class="a.unclaimedRewards > 0 ? 'bg-warn/20 text-warn hover:bg-warn/30' : 'bg-canvas-soft text-mute hover:text-body'">🎁 {{ a.unclaimedRewards }}</button>
+          <span v-if="a.subscribed" class="rounded-full border border-primary/40 px-1.5 py-0.5 text-[11px] text-primary-soft">已订阅</span>
+          <span class="rounded-full px-2 py-0.5 text-[11px] font-semibold" :class="health(a).cls">{{ health(a).label }}</span>
+          <span v-if="a.expiresAt" class="rounded-full px-2 py-0.5 text-[11px] font-semibold" :class="expiryBadgeCls(a)">{{ expiryLabel(a) }}</span>
+        </div>
+
+        <div class="space-y-2">
+          <div v-for="u in usageRows(a)" :key="u.key">
+            <div class="mb-0.5 flex items-center justify-between text-[11px]">
+              <span class="text-body">{{ u.label }}</span>
+              <span class="font-mono" :class="pctText(u.data)">{{ u.data ? u.data.usagePercent + '%' : '—' }}</span>
+            </div>
+            <div class="h-1.5 w-full overflow-hidden rounded-full bg-canvas-soft">
+              <div class="oc-bar" :class="barCls(u.data)" :style="{ width: (barReady && u.data ? Math.min(u.data.usagePercent,100) : 0) + '%' }"></div>
+            </div>
+          </div>
+        </div>
+
+        <p v-if="a.error" class="mt-2 truncate text-[11px] text-danger" :title="a.error">⚠ {{ a.error }}</p>
+      </article>
+    </div>
+
+    <!-- 分页 -->
+    <div v-if="accounts.length" class="mt-8 flex flex-col items-center gap-4 sm:flex-row sm:justify-between">
+      <div class="order-2 text-xs text-mute sm:order-1">
+        共 <span class="font-mono text-body">{{ accounts.length }}</span> 个账号 · 每页
+        <select v-model.number="pageSize" class="ml-1 rounded-md border border-hairline bg-canvas-soft px-2 py-1 text-ink outline-none focus:border-primary">
+          <option :value="12">12</option><option :value="24">24</option><option :value="48">48</option><option :value="96">96</option>
+        </select>
+      </div>
+
+      <nav v-if="totalPages>1" class="order-1 flex items-center gap-1.5 sm:order-2">
+        <button @click="page--" :disabled="page===1" class="oc-pg" aria-label="上一页">‹</button>
+        <template v-for="p in pageList" :key="p">
+          <span v-if="p==='...'" class="grid h-9 w-6 place-items-center text-mute">…</span>
+          <button v-else @click="page=p" class="oc-pg"
+            :class="p===page ? '!border-primary !bg-primary !text-canvas font-semibold' : ''">{{ p }}</button>
+        </template>
+        <button @click="page++" :disabled="page===totalPages" class="oc-pg" aria-label="下一页">›</button>
+      </nav>
+
+      <div class="order-3 hidden text-xs text-mute lg:block">右键卡片可操作</div>
+    </div>
+  </main>
+
+  <!-- 右键菜单 -->
+  <template v-if="menu.show">
+    <div class="fixed inset-0 z-40" @click="menu.show=false" @contextmenu.prevent="menu.show=false"></div>
+    <div class="oc-pop fixed z-50 w-60 overflow-hidden rounded-xl border border-white/10 bg-[#171918]/95 p-1.5 text-sm shadow-[0_18px_50px_rgba(0,0,0,.55)] ring-1 ring-primary/10 backdrop-blur-xl" :style="{ top: menu.y+'px', left: menu.x+'px' }">
+      <div class="border-b border-white/10 px-3 pb-2 pt-2"><div class="truncate text-xs font-semibold text-ink-strong">{{ menu.acc.account || menu.acc.workspaceID }}</div><div class="mt-0.5 text-[10px] text-mute">账号操作</div></div>
+      <button @click="menuAction('refresh')" class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-primary-soft transition hover:bg-primary/10"><span class="grid size-6 place-items-center rounded-md bg-primary/10">↻</span><span>刷新额度</span></button>
+      <button @click="menuAction('china')" class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-body transition hover:bg-white/5"><span class="flex items-center gap-3"><span class="grid size-6 place-items-center rounded-md bg-white/5">中</span><span>中国模型</span></span><span class="text-[10px]" :class="menu.acc.useChinaProviders ? 'text-primary' : 'text-mute'">{{ menu.acc.useChinaProviders ? '已开启' : '已关闭' }}</span></button>
+      <button @click="menuAction('info')" class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-body transition hover:bg-white/5"><span class="grid size-6 place-items-center rounded-md bg-white/5">i</span><span>账号信息</span></button>
+      <button @click="menuAction('auth')" class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-body transition hover:bg-white/5"><span class="grid size-6 place-items-center rounded-md bg-white/5">钥</span><span>修改 Auth</span></button>
+      <button @click="menuAction('key')" class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-body transition hover:bg-white/5"><span class="grid size-6 place-items-center rounded-md bg-white/5">键</span><span>修改 API Key</span></button>
+      <button @click="menuAction('del')" class="mt-1 flex w-full items-center gap-3 rounded-lg border-t border-white/10 px-3 py-2.5 pt-3 text-left text-danger transition hover:bg-danger/10"><span class="grid size-6 place-items-center rounded-md bg-danger/10">×</span><span>删除账号</span></button>
+    </div>
+  </template>
+
+  <!-- 账号信息弹窗 -->
+  <div v-if="infoAcc" class="oc-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:p-10" @click.self="infoAcc=null">
+    <div class="oc-pop w-full max-w-md rounded-md border border-hairline bg-canvas shadow-2xl ring-1 ring-white/5">
+      <div class="flex items-center justify-between border-b border-hairline px-5 py-4">
+        <span class="text-sm font-semibold text-ink-strong">账号信息</span>
+        <button @click="infoAcc=null" class="text-lg leading-none text-mute hover:text-ink">✕</button>
+      </div>
+      <div class="space-y-2.5 p-5 text-sm">
+        <div v-for="row in infoRows" :key="row.k" class="flex items-start justify-between gap-4">
+          <span class="shrink-0 text-mute">{{ row.k }}</span>
+          <span class="min-w-0 break-all text-right font-mono" :class="row.cls || 'text-ink'">{{ row.v }}</span>
+        </div>
+      </div>
+      <div class="flex justify-end gap-3 border-t border-hairline px-5 py-4">
+        <button @click="refreshOne(infoAcc)" class="rounded-sm border border-hairline bg-canvas px-4 py-2 text-sm font-semibold text-ink hover:border-mute">刷新</button>
+        <button @click="infoAcc=null" class="rounded-sm bg-primary px-4 py-2 text-sm font-semibold text-canvas hover:bg-primary-soft">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 邀请奖励弹窗 -->
+  <div v-if="referralAcc" class="oc-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:p-10" @click.self="referralAcc=null">
+    <div class="oc-pop w-full max-w-lg rounded-md border border-hairline bg-canvas shadow-2xl ring-1 ring-white/5">
+      <div class="flex items-center justify-between border-b border-hairline px-5 py-4">
+        <span class="text-sm font-semibold text-ink-strong">邀请奖励 · {{ referralAcc.account || referralAcc.reportEmail || '账号' }}</span>
+        <button @click="referralAcc=null" class="text-lg leading-none text-mute hover:text-ink">✕</button>
+      </div>
+      <div class="max-h-[60vh] overflow-y-auto p-5">
+        <div v-if="!referralAcc.referrals || !referralAcc.referrals.length" class="rounded-md border border-dashed border-hairline bg-canvas-soft p-6 text-center text-xs text-mute">
+          待领取 <span class="font-mono text-warn">{{ referralAcc.unclaimedRewards }}</span> 条，明细尚未抓取。点下方「刷新」加载。
+        </div>
+        <p v-else class="mb-3 text-xs text-mute">
+          共 {{ referralAcc.referrals.length }} 条 · 待领取
+          <span class="font-mono text-warn">{{ referralAcc.unclaimedRewards }}</span> 条。
+        </p>
+        <div class="space-y-2">
+          <div v-for="(ref, i) in referralAcc.referrals" :key="i"
+            class="flex items-center gap-3 rounded-md border border-hairline bg-canvas-soft px-3 py-2.5">
+            <span class="font-mono text-sm font-semibold text-primary-soft">{{ ref.amount || '—' }}</span>
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-xs text-ink" :title="ref.source">{{ ref.source || '—' }}</div>
+              <div class="text-[11px] text-mute">{{ ref.date || '—' }}</div>
+            </div>
+            <button v-if="ref.status==='available'" @click="claimReferral(referralAcc, ref, i)" :disabled="ref._busy"
+              class="shrink-0 rounded-sm bg-warn px-3 py-1.5 text-xs font-semibold text-canvas hover:opacity-90 disabled:opacity-50">
+              {{ ref._busy ? '领取中…' : '领取' }}
+            </button>
+            <span v-else class="shrink-0 rounded-full bg-canvas px-2 py-0.5 text-[11px] text-mute">已使用</span>
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end gap-3 border-t border-hairline px-5 py-4">
+        <button @click="refreshOne(referralAcc)" class="rounded-sm border border-hairline bg-canvas px-4 py-2 text-sm font-semibold text-ink hover:border-mute">刷新</button>
+        <button @click="referralAcc=null" class="rounded-sm bg-primary px-4 py-2 text-sm font-semibold text-canvas hover:bg-primary-soft">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 提示 toast -->
+  <div v-if="msg && !showAdd" class="fixed bottom-6 right-6 z-50 rounded-md border border-hairline bg-canvas px-4 py-3 text-sm text-primary-soft shadow-2xl">{{ msg }}</div>
+
+  <!-- 添加账号弹窗 -->
+  <div v-if="showImport" class="oc-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:p-10" @click.self="closeImport">
+    <div class="oc-pop w-full max-w-2xl rounded-md border border-hairline bg-canvas shadow-2xl ring-1 ring-white/5">
+      <div class="flex items-center justify-between border-b border-hairline px-5 py-4">
+        <span class="text-sm font-semibold text-ink-strong">导入备份</span>
+        <button @click="closeImport" class="text-lg leading-none text-mute hover:text-ink">✕</button>
+      </div>
+      <div class="p-5">
+        <p class="mb-3 text-xs text-mute">选择之前导出的 JSON 备份。相同工作空间 ID 会更新账号凭据，不会重复创建；备份中的设置也会一并恢复。</p>
+        <input ref="importFile" type="file" accept="application/json,.json" @change="readImportFile" class="block w-full text-sm text-body file:mr-3 file:rounded-sm file:border-0 file:bg-primary file:px-3 file:py-2 file:font-semibold file:text-canvas" />
+        <p v-if="importName" class="mt-2 text-xs text-primary-soft">已选择：{{ importName }}</p>
+        <p v-if="importError" class="mt-2 text-xs text-danger">{{ importError }}</p>
+      </div>
+      <div class="flex justify-end gap-3 border-t border-hairline px-5 py-4">
+        <button @click="closeImport" class="rounded-sm border border-hairline bg-canvas px-4 py-2 text-sm font-semibold text-ink hover:border-mute">取消</button>
+        <button @click="importBackup" :disabled="busy || !importText" class="rounded-sm bg-primary px-4 py-2 text-sm font-semibold text-canvas hover:bg-primary-soft disabled:opacity-50">导入并刷新</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="showAdd" class="oc-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:p-10" @click.self="closeAdd">
+    <div class="oc-pop w-full max-w-2xl rounded-md border border-hairline bg-canvas shadow-2xl ring-1 ring-white/5">
+      <div class="flex items-center justify-between border-b border-hairline px-5 py-4">
+        <span class="text-sm font-semibold text-ink-strong">添加账号</span>
+        <button @click="closeAdd" class="text-lg leading-none text-mute hover:text-ink">✕</button>
+      </div>
+      <div class="p-5">
+        <div class="mb-5 inline-flex rounded-sm border border-hairline p-0.5 text-sm">
+          <button @click="mode='single'" :class="tabCls(mode==='single')" class="rounded-sm px-3 py-1.5">单个添加</button>
+          <button @click="mode='bulk'" :class="tabCls(mode==='bulk')" class="rounded-sm px-3 py-1.5">批量导入</button>
+        </div>
+
+        <div v-if="mode==='single'" class="grid gap-4 md:grid-cols-2">
+          <label class="block"><span class="mb-1 block text-xs text-body">账号 / 组合串</span>
+            <input v-model="form.account" placeholder="邮箱，或 账号----密码----辅助邮箱" class="oc-input" /></label>
+          <label class="block"><span class="mb-1 block text-xs text-body">密码</span>
+            <input v-model="form.password" class="oc-input" /></label>
+          <label class="block"><span class="mb-1 block text-xs text-body">辅助邮箱</span>
+            <input v-model="form.auxEmail" class="oc-input" /></label>
+          <label class="block"><span class="mb-1 block text-xs text-body">工作空间 ID <span class="text-danger">*</span></span>
+            <input v-model="form.workspaceID" placeholder="wrk_xxxxxxxx" class="oc-input font-mono" /></label>
+          <label class="block md:col-span-2"><span class="mb-1 block text-xs text-body">API Key（用于转发）</span>
+            <input v-model="form.apiKey" placeholder="opencode Go API Key" class="oc-input font-mono" /></label>
+          <label class="block md:col-span-2"><span class="mb-1 block text-xs text-body">Auth（浏览器 Cookie 头，用于监控额度）</span>
+            <textarea v-model="form.auth" rows="2" placeholder="从开发者工具复制的整段 Cookie" class="oc-input font-mono"></textarea></label>
+        </div>
+
+        <div v-else>
+          <p class="mb-2 text-xs text-mute">每行一个账号：<code class="rounded-sm bg-canvas-soft px-1 font-mono text-primary-soft">凭据 | 工作空间ID | Auth | APIKey</code>，凭据可为 <code class="rounded-sm bg-canvas-soft px-1 font-mono text-primary-soft">账号----密码----辅助邮箱</code>。</p>
+          <textarea v-model="bulkText" rows="7" spellcheck="false" placeholder="a@x.us----pw----b@163.com | wrk_01KXMN... | session=xxx; foo=bar | sk-opencode-xxxx" class="oc-input font-mono"></textarea>
+        </div>
+        <p v-if="msg" class="mt-3 text-sm text-primary-soft">{{ msg }}</p>
+      </div>
+      <div class="flex items-center justify-end gap-3 border-t border-hairline px-5 py-4">
+        <button @click="closeAdd" class="rounded-sm border border-hairline bg-canvas px-4 py-2 text-sm font-semibold text-ink hover:border-mute">取消</button>
+        <button v-if="mode==='single'" @click="addSingle" :disabled="busy" class="rounded-sm bg-primary px-4 py-2 text-sm font-semibold text-canvas hover:bg-primary-soft disabled:opacity-50">添加并抓取</button>
+        <button v-else @click="addBulk" :disabled="busy" class="rounded-sm bg-primary px-4 py-2 text-sm font-semibold text-canvas hover:bg-primary-soft disabled:opacity-50">导入并抓取</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style type="text/tailwindcss">
+  @layer components {
+    .oc-input { @apply w-full rounded-sm border border-hairline bg-canvas-soft px-3 py-2 text-sm text-ink outline-none transition focus:border-primary; }
+    .oc-pg { @apply grid h-9 min-w-9 cursor-pointer place-items-center rounded-md border border-hairline bg-canvas px-2.5 text-sm text-body transition hover:border-mute hover:text-ink disabled:pointer-events-none disabled:opacity-40; }
+
+    /* 账号卡片：默认干净，悬浮上浮 + 主色辉光 ring */
+    .oc-card { @apply relative flex flex-col rounded-md border border-hairline bg-canvas p-4 transition duration-200 ease-out; }
+    .oc-card:hover {
+      @apply -translate-y-0.5 border-primary/70;
+      box-shadow: 0 0 0 1px rgba(0,217,146,.35), 0 14px 30px -16px rgba(0,217,146,.6);
+    }
+    .oc-card--error { @apply border-danger/45; }
+    .oc-card--error:hover {
+      border-color: rgba(255,92,92,.7);
+      box-shadow: 0 0 0 1px rgba(255,92,92,.35), 0 14px 30px -16px rgba(255,92,92,.55);
+    }
+
+    /* 用量条：宽度平滑增长，悬浮卡片时一道微光扫过 */
+    .oc-bar { @apply relative h-full overflow-hidden rounded-full; transition: width .7s cubic-bezier(.2,.8,.2,1); }
+    .oc-bar::after {
+      content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent);
+    }
+    .oc-card:hover .oc-bar::after { animation: ocShine 1.1s ease-out; }
+
+    /* 骨架屏占位块 */
+    .oc-skel { @apply rounded bg-canvas-soft; }
+  }
+</style>
+<script src="/static/dashboard.js"></script>
+</body>
+</html>

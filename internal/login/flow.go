@@ -1,0 +1,664 @@
+package login
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	neturl "net/url"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/mxschmitt/playwright-go"
+
+	"opencode-go-manager/internal/browser"
+	"opencode-go-manager/internal/cline"
+	"opencode-go-manager/internal/config"
+	"opencode-go-manager/internal/model"
+)
+
+type Logger func(format string, args ...any)
+
+type Result struct {
+	WorkspaceID  string
+	APIKey       string
+	UserID       string
+	Email        string
+	CookiesJSON  string
+	CookieHeader string
+	PaymentURL   string
+}
+
+func Run(cfg config.Config, acc model.Account, log Logger) (Result, error) {
+	if log == nil {
+		log = func(string, ...any) {}
+	}
+	profile := ""
+	shotDir := cfg.ScreenshotsDir()
+	sess, err := browser.Launch(cfg, browser.LaunchOptions{
+		UserDataDir: profile,
+		Seed:        acc.FingerprintSeed,
+		Headless:    cfg.Headless,
+		SlowMo:      cfg.SlowMo,
+		Proxy:       cfg.Proxy,
+	}, log)
+	if err != nil {
+		return Result{}, err
+	}
+	defer sess.Close()
+
+	page := sess.Page
+	var result Result
+	defer func() {
+		if result.WorkspaceID == "" && result.APIKey == "" {
+			_ = screenshot(page, filepath.Join(shotDir, acc.ID+".png"))
+		}
+	}()
+
+	invite := cfg.InviteURL
+	if invite == "" {
+		invite = cline.AuthURL
+	}
+
+	log("无头模式=%v", cfg.Headless)
+	if cfg.Proxy != "" {
+		log("使用全局代理")
+	}
+	log("打开邀请链接 %s", invite)
+	if _, err := page.Goto(invite, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		Timeout:   playwright.Float(60000),
+	}); err != nil {
+		return Result{}, fmt.Errorf("打开邀请链接失败: %w", err)
+	}
+	sleep(1200)
+
+	if onClineApp(page.URL()) && !strings.Contains(page.URL(), "radar-challenge") {
+		log("当前已在 Cline，跳过谷歌登录")
+	} else {
+		if !strings.Contains(page.URL(), "accounts.google.com") {
+			if err := clickOneOf(page, []string{
+				`a[data-method="google"]`,
+				`a[href*="provider=GoogleOAuth"]`,
+				`a[href*="GoogleOAuth"]`,
+			}, 20000, log, "选择 Google 登录"); err != nil {
+				if !strings.Contains(page.URL(), "accounts.google.com") && !onCline(page.URL()) {
+					return Result{}, err
+				}
+				log("已在授权相关页面，继续")
+			}
+			sleep(800)
+		}
+		if err := waitAnyURL(page, []string{"accounts.google.com", "radar-challenge", "app.cline.bot"}, 45000); err != nil {
+			log("等待授权页超时，当前 URL=%s", page.URL())
+		}
+		if strings.Contains(page.URL(), "accounts.google.com") || visible(page, `input#identifierId, input[name="identifier"], input[name="Passwd"]`) {
+			if err := googleLogin(page, acc, log); err != nil {
+				return Result{}, CompactError(err)
+			}
+		}
+		log("等待进入 Cline")
+		if err := waitCline(page, 180000, log); err != nil {
+			return Result{}, err
+		}
+		if err := handleRadar(page, cfg, log); err != nil {
+			return Result{}, CompactError(err)
+		}
+		if err := handleTerms(page, log); err != nil {
+			return Result{}, CompactError(err)
+		}
+		if err := waitCline(page, 60000, log); err != nil {
+			return Result{}, err
+		}
+	}
+
+	if _, err := page.Goto(cline.AppBase+"/dashboard", playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		Timeout:   playwright.Float(60000),
+	}); err != nil {
+		log("打开 dashboard 失败: %v", err)
+	}
+	sleep(800)
+	if cookieExpired(page.URL()) {
+		return Result{}, fmt.Errorf("登录后没有进入 Cline，当前 URL=%s", page.URL())
+	}
+
+	cookies, err := sess.Context.Cookies()
+	if err != nil {
+		return Result{}, fmt.Errorf("读取 Cookie 失败: %w", err)
+	}
+	result.CookiesJSON, result.CookieHeader = serializeCookies(cookies)
+	log("已保存 %d 条 Cookie", len(cookies))
+
+	key, userID, err := createClineKey(cfg, result.CookieHeader, "", "", log)
+	if err != nil {
+		return Result{}, err
+	}
+	result.APIKey = key
+	result.UserID = userID
+	result.WorkspaceID = userID
+	result.Email = acc.Email
+	log("用户 ID: %s", userID)
+
+	pay, err := captureClinePayment(page, log)
+	if err != nil {
+		log("获取支付链接失败: %v", err)
+	} else {
+		result.PaymentURL = pay
+		log("支付链接: %s", pay)
+	}
+	return result, nil
+}
+
+func RefreshPayment(cfg config.Config, acc model.Account, log Logger) (Result, error) {
+	if log == nil {
+		log = func(string, ...any) {}
+	}
+	if strings.TrimSpace(acc.CookiesJSON) == "" && strings.TrimSpace(acc.CookieHeader) == "" {
+		return Result{}, fmt.Errorf("没有可用 Cookie，需要先完整登录")
+	}
+	cookies, err := toOptionalCookies(acc.CookiesJSON)
+	if err != nil {
+		return Result{}, fmt.Errorf("Cookie 无效: %w", err)
+	}
+
+	shotDir := cfg.ScreenshotsDir()
+	sess, err := browser.Launch(cfg, browser.LaunchOptions{
+		Seed:     acc.FingerprintSeed,
+		Headless: cfg.Headless,
+		SlowMo:   cfg.SlowMo,
+		Proxy:    cfg.Proxy,
+	}, log)
+	if err != nil {
+		return Result{}, err
+	}
+	defer sess.Close()
+
+	page := sess.Page
+	var result Result
+	result.WorkspaceID = acc.WorkspaceID
+	result.APIKey = acc.APIKey
+	result.UserID = acc.UserID
+	result.Email = acc.Email
+	defer func() {
+		if result.PaymentURL == "" {
+			_ = screenshot(page, filepath.Join(shotDir, acc.ID+"-pay.png"))
+		}
+	}()
+
+	if err := sess.Context.AddCookies(cookies); err != nil {
+		return Result{}, fmt.Errorf("写入 Cookie 失败: %w", err)
+	}
+	log("已注入 %d 条 Cookie，跳过谷歌登录", len(cookies))
+
+	pay, err := captureClinePayment(page, log)
+	if err != nil {
+		return Result{}, CompactError(err)
+	}
+	result.PaymentURL = pay
+	log("支付链接: %s", pay)
+
+	fresh, err := sess.Context.Cookies()
+	if err == nil && len(fresh) > 0 {
+		result.CookiesJSON, result.CookieHeader = serializeCookies(fresh)
+		log("已更新 %d 条 Cookie", len(fresh))
+	} else {
+		result.CookiesJSON = acc.CookiesJSON
+		result.CookieHeader = acc.CookieHeader
+	}
+	return result, nil
+}
+
+func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
+	deadline := time.Now().Add(3 * time.Minute)
+	accountChooser := fmt.Sprintf(`div[data-identifier="%s"]`, acc.Email)
+	recoverySel := `input[name="knowledgePreregisteredEmailResponse"], input#knowledge-preregistered-email-response`
+	emailSel := `input#identifierId:not([aria-hidden="true"])`
+	passSel := `input[name="Passwd"], #password input[type="password"]`
+	emailDone := false
+	tosDone := false
+	consentDone := false
+
+	for time.Now().Before(deadline) {
+		rawURL := page.URL()
+		if loggedIn(page) {
+			return nil
+		}
+		step := classifyGoogle(rawURL)
+		if step == "password" {
+			emailDone = true
+		}
+
+		if step == "tos" && !tosDone {
+			log("检测到服务条款页，点击同意")
+			if err := waitVisible(page, `#gaplustosNext button`, 15000); err != nil {
+				return stepErr(err)
+			}
+			if err := clickOneOf(page, []string{`#gaplustosNext button`}, 15000, log, "同意服务条款"); err != nil {
+				return stepErr(err)
+			}
+			tosDone = true
+			log("等待离开服务条款页")
+			_ = waitPathLeft(page, "workspacetermsofservice", 20000)
+			continue
+		}
+		if step == "consent" && !consentDone {
+			log("检测到授权页，点击同意授权")
+			consentSels := []string{
+				`div[jsname="uRHG6"] button`,
+				`#submit_approve_access`,
+				`div.BbN10e button`,
+				`button[data-idom-class*="P62QJc"]`,
+			}
+			if err := clickOneOf(page, consentSels, 25000, log, "同意授权"); err != nil {
+				return stepErr(err)
+			}
+			consentDone = true
+			log("等待离开授权页")
+			_ = waitPathLeft(page, "/signin/oauth", 30000)
+			continue
+		}
+		if visible(page, recoverySel) && acc.RecoveryEmail != "" {
+			log("填写辅助邮箱")
+			if err := fillField(page, recoverySel, acc.RecoveryEmail); err != nil {
+				return stepErr(err)
+			}
+			if err := clickFirst(page, []string{`#idvPreregisteredEmailNext button`, `div[id$="Next"] button`}, 15000, log, "辅助邮箱下一步"); err != nil {
+				return stepErr(err)
+			}
+			sleep(1200)
+			continue
+		}
+		if visible(page, accountChooser) {
+			log("选择已列出的账号")
+			_ = clickFirst(page, []string{accountChooser}, 8000, log, "点击账号卡片")
+			sleep(1000)
+			continue
+		}
+
+		if step == "password" || (emailDone && visible(page, passSel)) {
+			if !visible(page, passSel) {
+				log("已到密码页，等待密码框出现")
+				if err := waitVisible(page, passSel, 20000); err != nil {
+					if errors.Is(err, errLoggedIn) {
+						return nil
+					}
+					sleep(500)
+					continue
+				}
+			}
+			log("填写 Google 密码")
+			waitOverlayGone(page)
+			if err := fillField(page, passSel, acc.Password); err != nil {
+				return stepErr(err)
+			}
+			if err := clickFirst(page, []string{`#passwordNext button`}, 15000, log, "密码下一步"); err != nil {
+				return stepErr(err)
+			}
+			log("等待离开密码页")
+			_ = waitPathLeft(page, "/challenge/pwd", 30000)
+			if leftGoogle(page) {
+				return nil
+			}
+			continue
+		}
+
+		if !emailDone && (step == "email" || (step == "" && visible(page, emailSel) && !visible(page, passSel))) {
+			log("填写 Google 账号")
+			waitOverlayGone(page)
+			if err := fillField(page, emailSel, acc.Email); err != nil {
+				return stepErr(err)
+			}
+			if err := clickFirst(page, []string{`#identifierNext button`}, 15000, log, "账号下一步"); err != nil {
+				return stepErr(err)
+			}
+			emailDone = true
+			log("等待跳转到密码页")
+			if err := waitPathContains(page, "/challenge/pwd", 30000); err != nil {
+				log("尚未进入密码页，当前 %s", page.URL())
+			}
+			continue
+		}
+		if captchaVisible(page) {
+			log("检测到验证码/安全检查，请在打开的浏览器中手动完成后等待")
+			sleep(3000)
+			continue
+		}
+		sleep(500)
+	}
+	if leftGoogle(page) {
+		return nil
+	}
+	return fmt.Errorf("Google 登录未完成，当前 URL=%s", page.URL())
+}
+
+func classifyGoogle(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	p := u.Path
+	switch {
+	case strings.Contains(p, "workspacetermsofservice"):
+		return "tos"
+	case strings.Contains(p, "/challenge/pwd"):
+		return "password"
+	case strings.Contains(p, "/signin/identifier"), strings.Contains(p, "/v3/signin/identifier"):
+		return "email"
+	case strings.Contains(p, "/signin/oauth"):
+		return "consent"
+	default:
+		return ""
+	}
+}
+
+func isStripe(u string) bool {
+	return strings.Contains(u, "stripe.com") || strings.Contains(u, "checkout.stripe.com")
+}
+
+func waitCline(page playwright.Page, timeout float64, log Logger) error {
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if onCline(page.URL()) {
+			return nil
+		}
+		if classifyGoogle(page.URL()) == "tos" && visible(page, `#gaplustosNext button`) {
+			_ = clickOneOf(page, []string{`#gaplustosNext button`}, 8000, log, "同意服务条款")
+		}
+		if classifyGoogle(page.URL()) == "consent" && (visible(page, `div[jsname="uRHG6"] button`) || visible(page, `#submit_approve_access`) || visible(page, `div.BbN10e button`)) {
+			_ = clickOneOf(page, []string{
+				`div[jsname="uRHG6"] button`,
+				`#submit_approve_access`,
+				`div.BbN10e button`,
+				`button[data-idom-class*="P62QJc"]`,
+			}, 8000, log, "同意授权")
+		}
+		sleep(500)
+	}
+	return fmt.Errorf("等待进入 Cline 超时，当前 URL=%s", page.URL())
+}
+
+func clickFirst(page playwright.Page, selectors []string, timeout float64, log Logger, step string) error {
+	return clickOneOf(page, selectors, timeout, log, step)
+}
+
+func clickOneOf(page playwright.Page, selectors []string, timeout float64, log Logger, step string) error {
+	waitOverlayGone(page)
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		for _, sel := range selectors {
+			loc := page.Locator(sel).First()
+			ok, err := loc.IsVisible()
+			if err != nil || !ok {
+				continue
+			}
+			if err := loc.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(8000)}); err != nil {
+				lastErr = err
+				continue
+			}
+			log("%s 成功", step)
+			return nil
+		}
+		sleep(250)
+	}
+	if lastErr != nil {
+		return CompactError(fmt.Errorf("%s 失败: %w", step, lastErr))
+	}
+	return fmt.Errorf("%s 失败: 未找到可点击按钮", step)
+}
+
+func fillField(page playwright.Page, selector, value string) error {
+	return fillFieldOpt(page, selector, value, true)
+}
+
+func fillAny(page playwright.Page, selector, value string) error {
+	return fillFieldOpt(page, selector, value, false)
+}
+
+func fillFieldOpt(page playwright.Page, selector, value string, stopIfCline bool) error {
+	if err := waitVisibleOpt(page, selector, 20000, stopIfCline); err != nil {
+		return err
+	}
+	loc := page.Locator(selector).First()
+	waitOverlayGone(page)
+	if err := loc.Fill(value, playwright.LocatorFillOptions{Timeout: playwright.Float(10000)}); err != nil {
+		if stopIfCline && loggedIn(page) {
+			return errLoggedIn
+		}
+		_ = loc.Focus()
+		if ferr := loc.Fill(value, playwright.LocatorFillOptions{
+			Force:   playwright.Bool(true),
+			Timeout: playwright.Float(8000),
+		}); ferr != nil {
+			return CompactError(err)
+		}
+	}
+	return nil
+}
+
+func waitVisible(page playwright.Page, selector string, timeout float64) error {
+	return waitVisibleOpt(page, selector, timeout, true)
+}
+
+func waitVisibleOpt(page playwright.Page, selector string, timeout float64, stopIfCline bool) error {
+	loc := page.Locator(selector).First()
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if stopIfCline && leftGoogle(page) {
+			return errLoggedIn
+		}
+		ok, err := loc.IsVisible()
+		if err == nil && ok {
+			return nil
+		}
+		sleep(200)
+	}
+	if stopIfCline && leftGoogle(page) {
+		return errLoggedIn
+	}
+	return fmt.Errorf("等待元素超时")
+}
+
+func waitOverlayGone(page playwright.Page) {
+	loc := page.Locator(`div[jsname="OQ2Y6"]`)
+	_ = loc.First().WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateHidden,
+		Timeout: playwright.Float(8000),
+	})
+}
+
+func waitPathContains(page playwright.Page, part string, timeout float64) error {
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if strings.Contains(googlePath(page.URL()), part) {
+			return nil
+		}
+		sleep(200)
+	}
+	return fmt.Errorf("等待 path 包含 %s 超时", part)
+}
+
+func waitPathLeft(page playwright.Page, part string, timeout float64) error {
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if leftGoogle(page) {
+			return nil
+		}
+		if !strings.Contains(googlePath(page.URL()), part) {
+			return nil
+		}
+		sleep(200)
+	}
+	if leftGoogle(page) {
+		return nil
+	}
+	return fmt.Errorf("等待离开 %s 超时", part)
+}
+
+func googlePath(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return u.Path
+}
+
+func loggedIn(page playwright.Page) bool {
+	return leftGoogle(page)
+}
+
+func leftGoogle(page playwright.Page) bool {
+	u := page.URL()
+	if strings.Contains(u, "accounts.google.com") {
+		return false
+	}
+	return onCline(u)
+}
+
+func onCline(u string) bool {
+	return strings.Contains(u, "app.cline.bot") ||
+		strings.Contains(u, "radar-challenge") ||
+		strings.Contains(u, "authkit.cline.bot/radar")
+}
+
+func onClineApp(u string) bool {
+	return strings.Contains(u, "app.cline.bot")
+}
+
+func cookieExpired(u string) bool {
+	return strings.Contains(u, "authkit.cline.bot") && !strings.Contains(u, "radar-challenge") ||
+		strings.Contains(u, "accounts.google.com")
+}
+
+func stepErr(err error) error {
+	if err == nil || errors.Is(err, errLoggedIn) {
+		return nil
+	}
+	return CompactError(err)
+}
+
+var errLoggedIn = errors.New("已离开谷歌登录")
+
+func visible(page playwright.Page, selector string) bool {
+	ok, err := page.Locator(selector).First().IsVisible()
+	return err == nil && ok
+}
+
+func captchaVisible(page playwright.Page) bool {
+	return visible(page, `iframe[src*="recaptcha"], iframe[src*="challenge"], #captcha, div[id*="captcha"]`)
+}
+
+func waitAnyURL(page playwright.Page, parts []string, timeout float64) error {
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		u := page.URL()
+		for _, p := range parts {
+			if strings.Contains(u, p) {
+				return nil
+			}
+		}
+		sleep(300)
+	}
+	return fmt.Errorf("等待 URL 超时")
+}
+
+func waitForHTML(page playwright.Page, needles []string, timeout float64) error {
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		html, err := page.Content()
+		if err == nil {
+			for _, n := range needles {
+				if strings.Contains(html, n) {
+					return nil
+				}
+			}
+		}
+		sleep(400)
+	}
+	return fmt.Errorf("页面内容未出现期望片段")
+}
+
+func screenshot(page playwright.Page, path string) error {
+	if page == nil {
+		return nil
+	}
+	_, err := page.Screenshot(playwright.PageScreenshotOptions{
+		Path:     playwright.String(path),
+		FullPage: playwright.Bool(true),
+	})
+	return err
+}
+
+func serializeCookies(cookies []playwright.Cookie) (jsonStr, header string) {
+	b, _ := json.Marshal(cookies)
+	parts := make([]string, 0, len(cookies))
+	for _, c := range cookies {
+		if c.Name == "" {
+			continue
+		}
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	return string(b), strings.Join(parts, "; ")
+}
+
+func toOptionalCookies(raw string) ([]playwright.OptionalCookie, error) {
+	var cookies []playwright.Cookie
+	if err := json.Unmarshal([]byte(raw), &cookies); err != nil {
+		return nil, err
+	}
+	out := make([]playwright.OptionalCookie, 0, len(cookies))
+	for _, c := range cookies {
+		if c.Name == "" {
+			continue
+		}
+		oc := playwright.OptionalCookie{
+			Name:     c.Name,
+			Value:    c.Value,
+			HttpOnly: playwright.Bool(c.HttpOnly),
+			Secure:   playwright.Bool(c.Secure),
+			SameSite: c.SameSite,
+		}
+		if c.Expires > 0 {
+			oc.Expires = playwright.Float(c.Expires)
+		}
+		if c.Domain != "" {
+			oc.Domain = playwright.String(c.Domain)
+		}
+		if c.Path != "" {
+			oc.Path = playwright.String(c.Path)
+		} else {
+			oc.Path = playwright.String("/")
+		}
+		if c.PartitionKey != nil && *c.PartitionKey != "" {
+			oc.PartitionKey = c.PartitionKey
+		}
+		out = append(out, oc)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("Cookie 为空")
+	}
+	return out, nil
+}
+
+var wsRe = regexp.MustCompile(`opencode\.ai/workspace/(wrk_[A-Za-z0-9]+)`)
+
+func workspaceIDFromURL(u string) string {
+	m := wsRe.FindStringSubmatch(u)
+	if len(m) == 2 {
+		return m[1]
+	}
+	return ""
+}
+
+func sleep(ms int) {
+	time.Sleep(time.Duration(ms) * time.Millisecond)
+}
+
+func maskKey(k string) string {
+	if len(k) <= 10 {
+		return k
+	}
+	return k[:6] + "..." + k[len(k)-4:]
+}
