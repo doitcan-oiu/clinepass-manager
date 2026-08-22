@@ -249,22 +249,9 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 		}
 
 		if urlHost(rawURL) == "authkit.cline.bot" {
-			if onRadarFlow(page) || onCline(rawURL) {
-				log("已进入手机验证或 Cline，当前 URL=%s", rawURL)
+			if handleAuthkitWait(page, log, &lastAuthkitClick) {
 				return nil
 			}
-			log("到达 AuthKit，先等是否跳到手机验证页，当前 URL=%s", rawURL)
-			if waitAuthkitAdvance(page, 8000) {
-				continue
-			}
-			after := page.URL()
-			log("AuthKit 8 秒内未跳到手机验证，当前 URL=%s", after)
-			if onAuthkitLogin(after) && visibleGoogleAuth(page) && time.Since(lastAuthkitClick) > 12*time.Second {
-				log("AuthKit 仍是登录页，再次选择 Google")
-				_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
-				lastAuthkitClick = time.Now()
-			}
-			sleep(500)
 			continue
 		}
 		if step == "tos" {
@@ -561,16 +548,10 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 			_ = clickOneOf(page, consentSelectors(), 8000, log, "同意授权")
 		}
 		if urlHost(page.URL()) == "authkit.cline.bot" && !onRadarFlow(page) {
-			if waitAuthkitAdvance(page, 8000) {
-				continue
+			if handleAuthkitWait(page, log, &lastAuthkitClick) {
+				return nil
 			}
-			after := page.URL()
-			log("AuthKit 8 秒内未跳到手机验证，当前 URL=%s", after)
-			if onAuthkitLogin(after) && time.Since(lastAuthkitClick) > 12*time.Second && visibleGoogleAuth(page) {
-				log("AuthKit 仍是登录页，再次选择 Google")
-				_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
-				lastAuthkitClick = time.Now()
-			}
+			continue
 		}
 		if time.Since(last) > 8*time.Second {
 			log("仍在等待进入 Cline，当前 URL=%s", page.URL())
@@ -750,6 +731,54 @@ func onRadarFlow(page playwright.Page) bool {
 		visible(page, `input[name="country_code"]`) ||
 		visible(page, `input[data-test="otp-input"]`) ||
 		visible(page, `.ak-Otp`)
+}
+
+func handleAuthkitWait(page playwright.Page, log Logger, lastClick *time.Time) bool {
+	rawURL := page.URL()
+	if onRadarFlow(page) || onCline(rawURL) {
+		log("已进入手机验证或 Cline，当前 URL=%s", rawURL)
+		return true
+	}
+	sid := authkitSessionID(rawURL)
+	log("到达 AuthKit，当前 URL=%s title=%q session=%s google按钮=%v", rawURL, pageTitle(page), sid, visibleGoogleAuth(page))
+	waitMS := 8000.0
+	if sid != "" {
+		waitMS = 45000
+		log("OAuth 已回到 AuthKit（有 authorization_session_id），先等跳到接码页，不点 Google")
+	}
+	if waitAuthkitAdvance(page, waitMS) {
+		return onRadarFlow(page) || onCline(page.URL())
+	}
+	after := page.URL()
+	log("AuthKit 等待后仍未进入接码，当前 URL=%s title=%q google按钮=%v", after, pageTitle(page), visibleGoogleAuth(page))
+	if authkitSessionID(after) != "" {
+		log("仍有 authorization_session_id，继续等，避免再点 Google 打断跳转")
+		sleep(500)
+		return false
+	}
+	if onAuthkitLogin(after) && visibleGoogleAuth(page) && time.Since(*lastClick) > 12*time.Second {
+		log("AuthKit 仍是登录页，再次选择 Google")
+		_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
+		*lastClick = time.Now()
+	}
+	sleep(500)
+	return false
+}
+
+func pageTitle(page playwright.Page) string {
+	t, err := page.Title()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(t)
+}
+
+func authkitSessionID(u string) string {
+	parsed, err := neturl.Parse(u)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(parsed.Query().Get("authorization_session_id"))
 }
 
 func waitAuthkitAdvance(page playwright.Page, timeout float64) bool {

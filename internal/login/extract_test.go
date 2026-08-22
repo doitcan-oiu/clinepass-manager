@@ -105,6 +105,15 @@ func TestLeftGoogleURL(t *testing.T) {
 	if onAuthkitLogin("https://authkit.cline.bot/radar-challenge/verify") {
 		t.Fatal("otp page is not login")
 	}
+	if authkitSessionID(login) != "01ABC" {
+		t.Fatalf("session id=%q", authkitSessionID(login))
+	}
+	if authkitSessionID("https://authkit.cline.bot/") != "" {
+		t.Fatal("bare authkit login has no session")
+	}
+	if authkitSessionID(chooser) != "" {
+		t.Fatal("google chooser must not take authkit session from query")
+	}
 }
 
 func TestRadarSendURL(t *testing.T) {

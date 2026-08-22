@@ -52,9 +52,17 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 		return nil, fmt.Errorf("启动 Playwright 失败: %w", err)
 	}
 
+	wantedHeadless := opt.Headless
+	if err := EnsureVirtualDisplay(logf); err != nil && !hasDisplay() {
+		logf("%v", err)
+	}
+	if virtualDisplay() != "" && wantedHeadless {
+		opt.Headless = false
+		logf("本机无头能过是因为本机有 DISPLAY；服务器改用 Xvfb %s 有界面模式，避免 AuthKit 把无头会话卡住", virtualDisplay())
+	}
 	if !opt.Headless && !hasDisplay() {
 		opt.Headless = true
-		logf("服务器没有图形界面，已改为无头模式")
+		logf("服务器没有图形界面且没有 Xvfb，只能继续无头")
 	}
 	args := DefaultStealthArgs(opt.Seed)
 	args = append(args, "--disable-setuid-sandbox", "--disable-dev-shm-usage")
