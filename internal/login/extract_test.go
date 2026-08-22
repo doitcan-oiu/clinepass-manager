@@ -2,6 +2,7 @@ package login
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -101,6 +102,9 @@ func TestIsNoSMS(t *testing.T) {
 	}
 	if !isNoSMS(herosms.ErrCancelled) {
 		t.Fatal("cancelled")
+	}
+	if !isNoSMS(fmt.Errorf("%w: HTTP 503", herosms.ErrUnavailable)) {
+		t.Fatal("unavailable")
 	}
 	if isNoSMS(errors.New("填写区号失败")) {
 		t.Fatal("other error")

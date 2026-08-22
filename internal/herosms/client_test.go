@@ -1,11 +1,14 @@
 package herosms
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestParsePricesAndOffers(t *testing.T) {
@@ -104,6 +107,42 @@ func TestGetNumberV2JSON(t *testing.T) {
 	}
 	if n.ID != "635468024" || n.Phone != "628123456789" || n.LocalNumber != "8123456789" || n.PhoneCode != 62 {
 		t.Fatalf("%+v", n)
+	}
+}
+
+func TestWaitCodeRetriesUnavailable(t *testing.T) {
+	prev := pollInterval
+	pollInterval = time.Millisecond
+	t.Cleanup(func() { pollInterval = prev })
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if n.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, "503 Service Unavailable")
+			return
+		}
+		_, _ = io.WriteString(w, "STATUS_OK:654321")
+	}))
+	t.Cleanup(srv.Close)
+	c := New("k", "ot")
+	c.base = srv.URL
+	code, err := c.WaitCode("1", time.Second)
+	if err != nil || code != "654321" {
+		t.Fatalf("%q %v", code, err)
+	}
+}
+
+func TestHandlerUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "503")
+	}))
+	t.Cleanup(srv.Close)
+	c := New("k", "ot")
+	c.base = srv.URL
+	_, err := c.handler("getStatus", nil)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("%v", err)
 	}
 }
 

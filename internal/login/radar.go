@@ -49,6 +49,7 @@ func handleRadar(page playwright.Page, cfg config.Config, log Logger) error {
 		log("第 %d/%d 次未收到验证码: %v", i, radarPhoneAttempts, err)
 		if i < radarPhoneAttempts {
 			log("返回手机号输入页，换一个 Hero SMS 号码重试")
+			sleep(2000)
 			if err := gotoRadarSend(page, sendURL, log); err != nil {
 				return err
 			}
@@ -70,6 +71,7 @@ func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Clie
 		}
 	}()
 	log("已取号 +%d %s id=%s", num.PhoneCode, num.LocalNumber, num.ID)
+	sleep(1500)
 
 	if num.PhoneCode <= 0 || num.LocalNumber == "" {
 		return fmt.Errorf("取到的号码无法拆分区号: %s", num.Phone)
@@ -78,9 +80,11 @@ func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Clie
 	if err := fillAuthkitField(page, `input[name="country_code"]`, cc); err != nil {
 		return fmt.Errorf("填写区号失败: %w", err)
 	}
+	sleep(800)
 	if err := fillAuthkitField(page, `input[name="local_number"]`, num.LocalNumber); err != nil {
 		return fmt.Errorf("填写手机号失败: %w", err)
 	}
+	sleep(1200)
 	if err := clickOneOf(page, []string{
 		`button[data-hak-cta][type="submit"]`,
 		`button.ak-PrimaryButton[type="submit"]`,
@@ -91,6 +95,7 @@ func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Clie
 	if err := waitAnyURL(page, []string{"radar-challenge/verify"}, 30000); err != nil {
 		return fmt.Errorf("没有进入验证码页: %w", err)
 	}
+	sleep(1200)
 
 	log("等待短信验证码")
 	code, err := sms.WaitCode(num.ID, 2*time.Minute)
@@ -98,9 +103,11 @@ func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Clie
 		return err
 	}
 	log("收到验证码")
+	sleep(800)
 	if err := fillOTP(page, code); err != nil {
 		return err
 	}
+	sleep(1000)
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		if !strings.Contains(page.URL(), "radar-challenge") {
@@ -137,7 +144,7 @@ func gotoRadarSend(page playwright.Page, sendURL string, log Logger) error {
 	} else {
 		_, _ = page.GoBack()
 	}
-	sleep(800)
+	sleep(1500)
 	if onRadarSend(page.URL()) || visible(page, `input[name="local_number"]`) {
 		return nil
 	}
@@ -156,7 +163,9 @@ func isNoSMS(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.Is(err, herosms.ErrWaitCodeTimeout) || errors.Is(err, herosms.ErrCancelled)
+	return errors.Is(err, herosms.ErrWaitCodeTimeout) ||
+		errors.Is(err, herosms.ErrCancelled) ||
+		errors.Is(err, herosms.ErrUnavailable)
 }
 
 func fillOTP(page playwright.Page, code string) error {
@@ -181,7 +190,7 @@ func fillOTP(page playwright.Page, code string) error {
 		if err := loc.Fill(string(code[i]), playwright.LocatorFillOptions{Timeout: playwright.Float(3000)}); err != nil {
 			_ = loc.Press(string(code[i]), playwright.LocatorPressOptions{Timeout: playwright.Float(2000)})
 		}
-		sleep(80)
+		sleep(150)
 	}
 	return nil
 }

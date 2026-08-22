@@ -15,6 +15,9 @@ import (
 var (
 	ErrWaitCodeTimeout = errors.New("等待验证码超时")
 	ErrCancelled       = errors.New("接码已取消或失败")
+	ErrUnavailable     = errors.New("Hero SMS 暂时不可用")
+	pollInterval       = 8 * time.Second
+	getNumberTries     = 3
 )
 
 const (
@@ -142,7 +145,7 @@ func (c *Client) GetNumber(country int, maxPrice float64) (Number, error) {
 		q.Set("maxPrice", formatPrice(maxPrice))
 		q.Set("fixedPrice", "true")
 	}
-	body, err := c.handler("getNumberV2", q)
+	body, err := c.handlerRetry("getNumberV2", q, getNumberTries)
 	if err != nil {
 		return Number{}, err
 	}
@@ -182,10 +185,18 @@ func (c *Client) WaitCode(id string, timeout time.Duration) (string, error) {
 		timeout = 2 * time.Minute
 	}
 	deadline := time.Now().Add(timeout)
+	var last error
 	for time.Now().Before(deadline) {
 		code, wait, err := c.Status(id)
 		if err != nil {
-			return "", err
+			if !errors.Is(err, ErrUnavailable) {
+				return "", err
+			}
+			last = err
+			if !sleepUntil(deadline, pollInterval) {
+				return "", last
+			}
+			continue
 		}
 		if code != "" {
 			return code, nil
@@ -193,9 +204,30 @@ func (c *Client) WaitCode(id string, timeout time.Duration) (string, error) {
 		if !wait {
 			return "", ErrCancelled
 		}
-		time.Sleep(5 * time.Second)
+		if !sleepUntil(deadline, pollInterval) {
+			break
+		}
+	}
+	if last != nil {
+		return "", last
 	}
 	return "", ErrWaitCodeTimeout
+}
+
+func sleepUntil(deadline time.Time, d time.Duration) bool {
+	if d <= 0 {
+		d = time.Second
+	}
+	remain := time.Until(deadline)
+	if remain <= 0 {
+		return false
+	}
+	if d > remain {
+		time.Sleep(remain)
+		return false
+	}
+	time.Sleep(d)
+	return time.Now().Before(deadline)
 }
 
 func (c *Client) Status(id string) (code string, waiting bool, err error) {
@@ -320,6 +352,27 @@ func (c *Client) restOffers() ([]Country, error) {
 	return parseOffers(b, c.Service)
 }
 
+func (c *Client) handlerRetry(action string, extra url.Values, tries int) ([]byte, error) {
+	if tries < 1 {
+		tries = 1
+	}
+	var last error
+	for i := 0; i < tries; i++ {
+		body, err := c.handler(action, extra)
+		if err == nil {
+			return body, nil
+		}
+		if !errors.Is(err, ErrUnavailable) {
+			return nil, err
+		}
+		last = err
+		if i+1 < tries {
+			time.Sleep(pollInterval)
+		}
+	}
+	return nil, last
+}
+
 func (c *Client) handler(action string, extra url.Values) ([]byte, error) {
 	u, err := url.Parse(c.base)
 	if err != nil {
@@ -349,6 +402,9 @@ func (c *Client) handler(action string, extra url.Values) ([]byte, error) {
 	}
 	text := strings.TrimSpace(string(b))
 	if resp.StatusCode >= 400 {
+		if transientHTTP(resp.StatusCode) {
+			return nil, fmt.Errorf("%w: HTTP %d", ErrUnavailable, resp.StatusCode)
+		}
 		return nil, fmt.Errorf("Hero SMS HTTP %d: %s", resp.StatusCode, clip(text, 200))
 	}
 	if err := asSMSError(text); err != nil {
@@ -635,6 +691,11 @@ func sortCountries(list []Country) {
 func localNumber(phone string, phoneCode int) string {
 	_, local := SplitPhone(phone, phoneCode)
 	return local
+}
+
+func transientHTTP(code int) bool {
+	return code == http.StatusTooManyRequests || code == http.StatusBadGateway ||
+		code == http.StatusServiceUnavailable || code == http.StatusGatewayTimeout
 }
 
 func asSMSError(text string) error {

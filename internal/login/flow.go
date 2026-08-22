@@ -93,7 +93,7 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 	}); err != nil {
 		return Result{}, fmt.Errorf("打开邀请链接失败: %w", err)
 	}
-	sleep(1200)
+	sleep(2000)
 
 	if onClineApp(page.URL()) && !strings.Contains(page.URL(), "radar-challenge") {
 		log("当前已在 Cline，跳过谷歌登录")
@@ -323,6 +323,7 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			if err := fillField(page, passSel, acc.Password); err != nil {
 				return stepErr(err)
 			}
+			sleep(800)
 			if err := clickFirst(page, []string{`#passwordNext button`}, 15000, log, "密码下一步"); err != nil {
 				return stepErr(err)
 			}
@@ -340,6 +341,7 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			if err := fillField(page, emailSel, acc.Email); err != nil {
 				return stepErr(err)
 			}
+			sleep(800)
 			if err := clickFirst(page, []string{`#identifierNext button`}, 15000, log, "账号下一步"); err != nil {
 				return stepErr(err)
 			}
@@ -595,6 +597,7 @@ func clickOneOf(page playwright.Page, selectors []string, timeout float64, log L
 				continue
 			}
 			log("%s 成功", step)
+			sleep(1200)
 			return nil
 		}
 		sleep(250)
