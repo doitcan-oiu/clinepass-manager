@@ -65,9 +65,13 @@ export function BatchDetailPage() {
     if (!jobs.length) return
     const sources: EventSource[] = []
     let pending = jobs.length
+    const poll = window.setInterval(() => {
+      reload().catch(() => {})
+    }, 3000)
     const finishOne = () => {
       pending -= 1
-      if (pending <= 0) reload().catch(() => {})
+      reload().catch(() => {})
+      if (pending <= 0) window.clearInterval(poll)
     }
     const seen = new Set<string>()
     for (const job of jobs) {
@@ -79,6 +83,9 @@ export function BatchDetailPage() {
         if (seen.has(key)) return
         seen.add(key)
         setLogs((cur) => [...cur, data].sort((a, b) => a.time - b.time))
+        if (/开始登录|开始刷新/.test(data.message || "")) {
+          reload().catch(() => {})
+        }
         if (data.level === "error" || /完成/.test(data.message || "")) {
           es.close()
           finishOne()
@@ -88,7 +95,13 @@ export function BatchDetailPage() {
         if (es.readyState === EventSource.CLOSED) finishOne()
       }
     }
-    esRef.current = { close: () => sources.forEach((s) => s.close()) }
+    esRef.current = {
+      close: () => {
+        window.clearInterval(poll)
+        sources.forEach((s) => s.close())
+      },
+    }
+    reload().catch(() => {})
   }
 
   async function loginBatch() {
