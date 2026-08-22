@@ -68,6 +68,16 @@ func TestLeftGoogleURL(t *testing.T) {
 	if !leftGoogleURL("https://app.cline.bot/dashboard") {
 		t.Fatal("app should leave google")
 	}
+	login := "https://authkit.cline.bot/?redirect_uri=https%3A%2F%2Fapi.cline.bot%2Fapi%2Fv1%2Fauth%2Fcallback&authorization_session_id=01ABC"
+	if leftGoogleURL(login) {
+		t.Fatal("authkit login page is not finished login")
+	}
+	if !onAuthkitLogin(login) {
+		t.Fatal("should detect authkit login bounce")
+	}
+	if onAuthkitLogin("https://authkit.cline.bot/radar-challenge/send") {
+		t.Fatal("radar is not login page")
+	}
 }
 
 func TestRadarSendURL(t *testing.T) {

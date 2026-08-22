@@ -99,11 +99,7 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 		log("当前已在 Cline，跳过谷歌登录")
 	} else {
 		if !strings.Contains(page.URL(), "accounts.google.com") {
-			if err := clickOneOf(page, []string{
-				`a[data-method="google"]`,
-				`a[href*="provider=GoogleOAuth"]`,
-				`a[href*="GoogleOAuth"]`,
-			}, 20000, log, "选择 Google 登录"); err != nil {
+			if err := clickOneOf(page, googleAuthSelectors(), 20000, log, "选择 Google 登录"); err != nil {
 				if !strings.Contains(page.URL(), "accounts.google.com") && !onCline(page.URL()) {
 					return Result{}, err
 				}
@@ -239,6 +235,7 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 	passSel := `input[name="Passwd"], #password input[type="password"]`
 	emailDone := false
 	lastUnknown := time.Time{}
+	lastAuthkitClick := time.Time{}
 
 	for time.Now().Before(deadline) {
 		rawURL := page.URL()
@@ -251,6 +248,15 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			emailDone = true
 		}
 
+		if onAuthkitLogin(rawURL) {
+			if time.Since(lastAuthkitClick) > 5*time.Second && visibleGoogleAuth(page) {
+				log("OAuth 后回到 AuthKit 登录页，再次选择 Google")
+				_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
+				lastAuthkitClick = time.Now()
+			}
+			sleep(500)
+			continue
+		}
 		if step == "tos" {
 			if err := acceptWorkspaceTos(page, log); err != nil {
 				if loggedIn(page) {
@@ -474,6 +480,7 @@ func consentSelectors() []string {
 func waitCline(page playwright.Page, timeout float64, log Logger) error {
 	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
 	last := time.Time{}
+	lastAuthkitClick := time.Time{}
 	for time.Now().Before(deadline) {
 		if onCline(page.URL()) {
 			return nil
@@ -484,6 +491,11 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 		if classifyGoogle(page.URL()) == "consent" && (visible(page, `div[jsname="uRHG6"] button`) || visible(page, `#submit_approve_access`)) {
 			_ = clickOneOf(page, consentSelectors(), 8000, log, "同意授权")
 		}
+		if onAuthkitLogin(page.URL()) && time.Since(lastAuthkitClick) > 5*time.Second && visibleGoogleAuth(page) {
+			log("仍停在 AuthKit 登录页，再次选择 Google")
+			_ = clickOneOf(page, googleAuthSelectors(), 8000, log, "再次选择 Google 登录")
+			lastAuthkitClick = time.Now()
+		}
 		if time.Since(last) > 8*time.Second {
 			log("仍在等待进入 Cline，当前 URL=%s", page.URL())
 			last = time.Now()
@@ -491,6 +503,23 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 		sleep(500)
 	}
 	return fmt.Errorf("等待进入 Cline 超时，当前 URL=%s", page.URL())
+}
+
+func googleAuthSelectors() []string {
+	return []string{
+		`a[data-method="google"]`,
+		`a[href*="provider=GoogleOAuth"]`,
+		`a[href*="GoogleOAuth"]`,
+	}
+}
+
+func visibleGoogleAuth(page playwright.Page) bool {
+	for _, sel := range googleAuthSelectors() {
+		if visible(page, sel) {
+			return true
+		}
+	}
+	return false
 }
 
 func clickFirst(page playwright.Page, selectors []string, timeout float64, log Logger, step string) error {
@@ -647,7 +676,23 @@ func leftGoogleURL(u string) bool {
 	if strings.Contains(u, "accounts.google.com") {
 		return false
 	}
-	return strings.Contains(u, "cline.bot") || strings.Contains(u, "radar-challenge")
+	if onAuthkitLogin(u) {
+		return false
+	}
+	return onCline(u) || strings.Contains(u, "api.cline.bot")
+}
+
+func onAuthkitLogin(u string) bool {
+	if !strings.Contains(u, "authkit.cline.bot") {
+		return false
+	}
+	if strings.Contains(u, "radar-challenge") || strings.Contains(u, "/radar") {
+		return false
+	}
+	if strings.Contains(u, "/api/callback") || strings.Contains(u, "/api/login") {
+		return false
+	}
+	return true
 }
 
 func onCline(u string) bool {
