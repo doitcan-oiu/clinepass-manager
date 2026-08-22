@@ -29,8 +29,8 @@ func Open(dbPath string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(0)
+	db.SetMaxIdleConns(16)
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()
@@ -358,6 +358,32 @@ const accountSelect = `SELECT a.id, a.email, a.password, a.recovery_email, a.pro
 	a.workspace_id, a.api_key, a.user_id, a.cookies_json, a.cookie_header, a.payment_url,
 	a.last_error, a.last_login_at, a.created_at, a.updated_at, a.batch_id, IFNULL(b.name, ''), IFNULL(a.paid_at, 0),
 	IFNULL(NULLIF(a.login_provider, ''), 'google')`
+
+const accountMetaSelect = `SELECT a.id, a.email, a.recovery_email, a.proxy, a.fingerprint_seed, a.status,
+	a.workspace_id, a.user_id, a.payment_url,
+	a.last_error, a.last_login_at, a.created_at, a.updated_at, a.batch_id, IFNULL(b.name, ''), IFNULL(a.paid_at, 0),
+	IFNULL(NULLIF(a.login_provider, ''), 'google'),
+	CASE WHEN IFNULL(a.cookie_header,'') != '' OR IFNULL(a.cookies_json,'') != '' THEN 1 ELSE 0 END,
+	CASE WHEN IFNULL(a.api_key,'') != '' THEN 1 ELSE 0 END,
+	CASE WHEN IFNULL(a.password,'') != '' THEN 1 ELSE 0 END`
+
+func scanAccountMeta(sc rowScanner) (model.Account, error) {
+	var a model.Account
+	var hasCookies, hasKey, hasPassword int
+	err := sc.Scan(
+		&a.ID, &a.Email, &a.RecoveryEmail, &a.Proxy, &a.FingerprintSeed, &a.Status,
+		&a.WorkspaceID, &a.UserID, &a.PaymentURL,
+		&a.LastError, &a.LastLoginAt, &a.CreatedAt, &a.UpdatedAt, &a.BatchID, &a.BatchName, &a.PaidAt, &a.LoginProvider,
+		&hasCookies, &hasKey, &hasPassword,
+	)
+	a.LoginProvider = model.NormalizeLoginProvider(a.LoginProvider)
+	a.HasCookies = hasCookies != 0
+	a.HasAPIKey = hasKey != 0
+	if hasPassword != 0 {
+		a.Password = "*"
+	}
+	return a, err
+}
 
 func scanAccount(sc rowScanner) (model.Account, error) {
 	var a model.Account

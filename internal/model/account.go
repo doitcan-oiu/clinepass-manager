@@ -22,6 +22,8 @@ type Account struct {
 	BatchID         string `json:"batch_id"`
 	BatchName       string `json:"batch_name,omitempty"`
 	LoginProvider   string `json:"login_provider"`
+	HasCookies      bool   `json:"has_cookies,omitempty"`
+	HasAPIKey       bool   `json:"has_api_key,omitempty"`
 }
 
 type AccountPublic struct {
@@ -46,6 +48,8 @@ type AccountPublic struct {
 	BatchID         string `json:"batch_id"`
 	BatchName       string `json:"batch_name,omitempty"`
 	LoginProvider   string `json:"login_provider"`
+	HasCookies      bool   `json:"has_cookies,omitempty"`
+	HasAPIKey       bool   `json:"has_api_key,omitempty"`
 }
 
 func (a Account) Public() AccountPublic {
@@ -71,7 +75,17 @@ func (a Account) Public() AccountPublic {
 		BatchID:         a.BatchID,
 		BatchName:       a.BatchName,
 		LoginProvider:   NormalizeLoginProvider(a.LoginProvider),
+		HasCookies:      a.HasCookies || a.CookieHeader != "" || a.CookiesJSON != "",
+		HasAPIKey:       a.HasAPIKey || a.APIKey != "",
 	}
+}
+
+func (a Account) ListPublic() AccountPublic {
+	p := a.Public()
+	p.CookiesJSON = ""
+	p.CookieHeader = ""
+	p.APIKey = ""
+	return p
 }
 
 type CreateAccountInput struct {

@@ -19,6 +19,10 @@ func virtualDisplay() string {
 	return xvfbDisplay
 }
 
+func VirtualDisplay() string {
+	return xvfbDisplay
+}
+
 func EnsureVirtualDisplay(logf func(string, ...any)) error {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -60,6 +64,7 @@ func startXvfb(logf func(string, ...any)) error {
 			continue
 		}
 		cmd := exec.Command(bin, display, "-screen", "0", "1920x1080x24", "-ac", "-nolisten", "tcp")
+		IsolateProcess(cmd)
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		if err := cmd.Start(); err != nil {

@@ -105,6 +105,18 @@ ensure_venv_module() {
 	exit 1
 }
 
+ensure_browser_deps() {
+	if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+		return 0
+	fi
+	if have Xvfb; then
+		echo "==> Xvfb: $(command -v Xvfb)"
+		return 0
+	fi
+	echo "==> 服务器没有显示器且未安装 Xvfb，开始安装浏览器依赖"
+	(cd "$ROOT" && make browser-deps)
+}
+
 ensure_worker() {
 	if [[ -x "$VENV/bin/python" ]] && "$VENV/bin/python" -c "import cloakbrowser" >/dev/null 2>&1; then
 		echo "==> 登录工人已就绪：$VENV"
@@ -128,3 +140,4 @@ ensure_python
 ensure_uv
 ensure_venv_module
 ensure_worker
+ensure_browser_deps

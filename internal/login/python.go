@@ -46,6 +46,7 @@ type workerSettings struct {
 	CloakCacheDir   string  `json:"cloak_cache_dir"`
 	CloakBinaryPath string  `json:"cloak_binary_path"`
 	LicenseKey      string  `json:"license_key"`
+	VirtualDisplay  bool    `json:"virtual_display"`
 }
 
 type workerMsg struct {
@@ -108,6 +109,7 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 			CloakCacheDir:   cfg.CloakCacheDir,
 			CloakBinaryPath: cfg.CloakBinaryPath,
 			LicenseKey:      cfg.LicenseKey,
+			VirtualDisplay:  browser.VirtualDisplay() != "",
 		},
 	}
 	payload, err := json.Marshal(job)
@@ -116,6 +118,7 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 	}
 	log("登录引擎=python cloak humanize/geoip")
 	cmd := exec.Command(python, script)
+	browser.IsolateProcess(cmd)
 	cmd.Dir = filepath.Dir(filepath.Dir(script))
 	cmd.Stdin = strings.NewReader(string(payload))
 	cmd.Env = workerEnv(cfg)
@@ -210,7 +213,7 @@ func mapWorkerCode(code, msg string) error {
 }
 
 func findWorker() (python, script string, err error) {
-	root, err := findRepoRoot()
+	root, err := FindRepoRoot()
 	if err != nil {
 		return "", "", err
 	}
@@ -231,7 +234,7 @@ func findWorker() (python, script string, err error) {
 	return "", "", fmt.Errorf("未找到 Python，请先执行 make worker-venv")
 }
 
-func findRepoRoot() (string, error) {
+func FindRepoRoot() (string, error) {
 	var starts []string
 	if cwd, err := os.Getwd(); err == nil {
 		starts = append(starts, cwd)

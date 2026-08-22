@@ -40,6 +40,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => json<AppConfig>(r)),
+  account: (id: string) => fetch(`/api/accounts/${id}`).then((r) => json<Account>(r)),
   deleteAccount: (id: string) => fetch(`/api/accounts/${id}`, { method: "DELETE" }).then((r) => json<null>(r)),
   loginAccount: (id: string) =>
     fetch(`/api/accounts/${id}/login`, { method: "POST" }).then((r) => json<Job>(r)),

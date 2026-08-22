@@ -3,6 +3,7 @@ package login
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -48,5 +49,15 @@ func TestFindWorker(t *testing.T) {
 	}
 	if python == "" {
 		t.Fatal("empty python")
+	}
+}
+
+func TestFindRepoRoot(t *testing.T) {
+	root, err := FindRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "worker", "login.py")); err != nil {
+		t.Fatal(root, err)
 	}
 }

@@ -48,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/config", s.patchConfig)
 	mux.HandleFunc("GET /api/herosms/catalog", s.heroSMSCatalog)
 	mux.HandleFunc("POST /api/accounts", s.createPaidAccount)
+	mux.HandleFunc("GET /api/accounts/{id}", s.getAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.deleteAccount)
 	mux.HandleFunc("POST /api/accounts/{id}/login", s.loginAccount)
 	mux.HandleFunc("POST /api/accounts/{id}/usage", s.refreshAccountUsage)
@@ -204,6 +205,15 @@ func maskSecret(s string) string {
 	return s[:4] + "********" + s[len(s)-4:]
 }
 
+func (s *Server) getAccount(w http.ResponseWriter, r *http.Request) {
+	a, err := s.store.Get(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "账号不存在")
+		return
+	}
+	writeJSON(w, http.StatusOK, a.Public())
+}
+
 func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Delete(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusNotFound, "账号不存在")
@@ -275,14 +285,14 @@ func (s *Server) getBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "批次不存在")
 		return
 	}
-	list, err := s.store.ListByBatch(id)
+	list, err := s.store.ListByBatchMeta(id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	accounts := make([]model.AccountPublic, 0, len(list))
 	for _, a := range list {
-		accounts = append(accounts, a.Public())
+		accounts = append(accounts, a.ListPublic())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"batch":    sum,
@@ -321,7 +331,7 @@ func (s *Server) deleteBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) loginBatch(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.ListByBatch(r.PathValue("id"))
+	list, err := s.store.ListByBatchMeta(r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -353,7 +363,7 @@ func (s *Server) refreshBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "批次不存在")
 		return
 	}
-	list, err := s.store.ListByBatch(id)
+	list, err := s.store.ListByBatchMeta(id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

@@ -95,6 +95,27 @@ func (s *Store) GetBatch(id string) (model.Batch, error) {
 	return b, err
 }
 
+func (s *Store) ListByBatchMeta(batchID string) ([]model.Account, error) {
+	rows, err := s.db.Query(accountMetaSelect+`
+FROM accounts a
+LEFT JOIN batches b ON b.id = a.batch_id
+WHERE a.batch_id = ?
+ORDER BY a.created_at DESC`, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.Account{}
+	for rows.Next() {
+		a, err := scanAccountMeta(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListByBatch(batchID string) ([]model.Account, error) {
 	rows, err := s.db.Query(accountSelect+`
 FROM accounts a

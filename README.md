@@ -33,7 +33,7 @@ bin/server       生产二进制（make build 生成）
 
 已经装好的会跳过。用 `apt` 时需要 sudo。
 
-首次登录会下载 CloakBrowser 到 `~/.cloakbrowser/`（约 200MB）。systemd 开了 `ProtectHome` 时，`/root` 只读，进程会自动改用 `data/home/.cloakbrowser`。也可在设置里填 `CLOAKBROWSER_LICENSE_KEY`。
+首次启动会在后台下载 CloakBrowser 到缓存目录（约 200MB），HTTP 先起来，不会因此 502。systemd 开了 `ProtectHome` 时，缓存和运行目录在 `data/` 下。也可在设置里填 `CLOAKBROWSER_LICENSE_KEY`。
 
 ## 常用命令
 
@@ -42,7 +42,8 @@ bin/server       生产二进制（make build 生成）
 | 命令 | 做什么 |
 |---|---|
 | `make` / `make dev` | 先 `ensure-env`，再 `go mod tidy`、装前端依赖，同时起后端 `:8080` 和 Vite `:5173` |
-| `make build` | 先 `ensure-env`，构建 `web/dist`，再编译 `bin/server`（生产）。systemd 安装见下方四条命令 |
+| `make build` | 先 `ensure-env`，构建 `web/dist`，再编译 `bin/server`（生产） |
+| `make start` | `make build` 后生成 systemd 单元并启动。没有 systemd 则前台跑 `bin/server` |
 | `make ensure-env` | 只检查/安装 Python、uv、工人虚拟环境，不启动服务 |
 | `make worker-venv` | 与 `ensure-env` 相同（兼容旧名字） |
 | `make api` | 只起后端，开发端口 `:8080`（不跑 ensure-env，不启前端） |
@@ -51,7 +52,7 @@ bin/server       生产二进制（make build 生成）
 | `make build-web` | `cd web && npm run build` |
 | `make tidy` | `go mod tidy` |
 | `make browser-deps` | `apt` 安装 Xvfb 和 Chromium 运行库（需要 sudo） |
-| `make worker-test` | 跑工人单测（`test_urls`、`test_herosms`） |
+| `make worker-test` | 跑工人单测（`test_urls`、`test_herosms`、`test_cloak`） |
 | `make install-pw` | 安装 Playwright-Go 驱动（仅 `LOGIN_ENGINE=go` 回退时需要） |
 
 单独补环境、不启动：
@@ -88,21 +89,24 @@ make web    # 仅前端，:5173
 
 ## 生产
 
-必须在项目根目录构建并启动，工人脚本和 `web/dist` 按相对路径查找：
+在项目根目录一行启动（补环境、装 Xvfb、编前端/后端、按当前目录生成 systemd 单元并重启）：
+
+```bash
+make start
+```
+
+然后打开 **http://127.0.0.1:9999**。单元里的路径按仓库实际位置生成，不必手写 `/data/...`。没有 systemd 时，`make start` 会前台跑 `./bin/server`。
+
+只构建、不装服务：
 
 ```bash
 make build
 ./bin/server
 ```
 
-`make build` 会先 `ensure-env`，再打包前端、编译 `bin/server`。然后打开 **http://127.0.0.1:9999**。
+`bin/server` 会自己切到项目根目录，再找 `worker/login.py`、`worker/.venv`、`web/dist`。HTTP 先监听，Cloak 二进制在后台下载。
 
-改过 Go 或前端后，要重新 `make build` 并重启 `./bin/server`。只改 Python 工人时，重启进程或再跑一次任务即可，不必重编。不要把开发态的 `:8080` 当生产。
-
-启动时要能找到：
-
-- `worker/login.py` 和 `worker/.venv/bin/python`
-- `web/dist`
+改过 Go 或前端后，再执行一次 `make start`。只改 Python 工人时 `sudo systemctl restart clinepass-manager` 即可。不要把开发态的 `:8080` 当生产。
 
 指定解释器或回退旧引擎：
 
@@ -111,31 +115,7 @@ LOGIN_PYTHON=./worker/.venv/bin/python ./bin/server
 LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 humanize/geoip
 ```
 
-无图形界面的服务器会自动起 Xvfb，按有界面方式跑 Chrome。本机已有 `DISPLAY` 时，设置里的「无头」仍然生效。
-
-### systemd
-
-示例单元在 `deploy/clinepass-manager.service`。`ProtectHome=true` 和 `ProtectSystem=strict` 可以留着，但不要让 Cloak 再写 `/root/.cloakbrowser`。单元里要带：
-
-```ini
-Environment=HOME=/data/clinepass-manager/data/home
-Environment=DATA_DIR=/data/clinepass-manager/data
-Environment=CLOAKBROWSER_CACHE_DIR=/data/clinepass-manager/data/cloakbrowser
-ReadWritePaths=/data/clinepass-manager
-```
-
-路径按实际安装目录改。构建并安装/更新服务：
-
-```bash
-make build
-sudo cp deploy/clinepass-manager.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl restart clinepass-manager
-```
-
-首次安装若要开机自启，再执行 `sudo systemctl enable clinepass-manager`。
-
-新二进制启动时若发现 `HOME` 不可写，也会自动改到 `data/home`，不必关 `ProtectHome`。
+无图形界面的服务器会自动起 Xvfb，按有界面方式跑 Chrome。本机已有 `DISPLAY` 时，设置里的「无头」仍然生效。`ProtectHome` 可保留，HOME / 缓存 / `XDG_RUNTIME_DIR` 都落在 `data/`。
 
 ## 账号格式
 

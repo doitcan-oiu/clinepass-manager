@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := dev
 
-.PHONY: dev api web build tidy install-web build-web install-pw browser-deps ensure-env worker-venv worker-test
+.PHONY: dev api web build start tidy install-web build-web install-pw browser-deps ensure-env worker-venv worker-test
 
 dev: ensure-env
 	@echo "==> 安装依赖"
@@ -55,7 +55,10 @@ ensure-env worker-venv:
 	@bash scripts/ensure-worker-env.sh
 
 worker-test:
-	cd worker && python3 -m unittest test_urls test_herosms -v
+	cd worker && python3 -m unittest test_urls test_herosms test_cloak -v
 
 build: ensure-env build-web
 	go build -o bin/server ./cmd/server
+
+start: build
+	@bash scripts/install-service.sh

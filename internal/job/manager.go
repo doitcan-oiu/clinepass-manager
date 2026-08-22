@@ -137,6 +137,22 @@ func (m *Manager) Pump() {
 	m.pump()
 }
 
+func (m *Manager) snapshotConfig() config.Config {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg
+}
+
+func (m *Manager) SetCloakBinaryPath(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	m.mu.Lock()
+	m.cfg.CloakBinaryPath = path
+	m.mu.Unlock()
+}
+
 func (m *Manager) maxConcurrentLocked() int {
 	if st, err := m.store.GetSettings(); err == nil && st.MaxConcurrent >= 1 {
 		return st.MaxConcurrent
@@ -185,7 +201,7 @@ func (m *Manager) run(job *model.Job) {
 	}
 	m.logf(job, "info", startMsg, acc.Email)
 
-	cfg := m.cfg
+	cfg := m.snapshotConfig()
 	if st, err := m.store.GetSettings(); err == nil {
 		cfg = store.ApplySettings(cfg, st)
 	}

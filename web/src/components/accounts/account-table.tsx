@@ -89,7 +89,7 @@ export function AccountTable({
                       ) : (
                         <>
                           <DropdownMenuItem onClick={() => onLogin(a)}>重新登录并生成链接</DropdownMenuItem>
-                          {onRefresh && a.cookie_header ? (
+                          {onRefresh && (a.has_cookies || a.cookie_header) ? (
                             <DropdownMenuItem onClick={() => onRefresh(a)}>刷新过期的支付链接</DropdownMenuItem>
                           ) : null}
                         </>

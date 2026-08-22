@@ -66,45 +66,52 @@ export function BatchDetailPage() {
     esRef.current?.close()
     if (reset) setLogs([])
     if (!jobs.length) return
-    const sources: EventSource[] = []
-    let pending = jobs.length
-    const poll = window.setInterval(() => {
-      reload().catch(() => {})
-    }, 3000)
-    const finishOne = () => {
-      pending -= 1
-      reload().catch(() => {})
-      if (pending <= 0) window.clearInterval(poll)
-    }
+    const ids = new Set(jobs.map((j) => j.id))
     const seen = new Set<string>()
-    for (const job of jobs) {
-      const es = new EventSource(`/api/jobs/${job.id}/events`)
-      sources.push(es)
-      es.onmessage = (ev) => {
-        const data = JSON.parse(ev.data) as JobEvent
-        const key = `${data.job_id}:${data.time}:${data.message}`
-        if (seen.has(key)) return
-        seen.add(key)
-        setLogs((cur) => [...cur, data].sort((a, b) => a.time - b.time))
-        if (/开始登录|开始刷新/.test(data.message || "")) {
+    let reloadTimer = 0
+    const scheduleReload = () => {
+      if (reloadTimer) return
+      reloadTimer = window.setTimeout(() => {
+        reloadTimer = 0
+        reload().catch(() => {})
+      }, 800)
+    }
+    const tick = async () => {
+      try {
+        const all = await api.jobs()
+        const mine = all.filter((j) => ids.has(j.id))
+        const next: JobEvent[] = []
+        for (const j of mine) {
+          for (const ev of j.logs || []) {
+            const key = `${ev.job_id}:${ev.time}:${ev.message}`
+            if (seen.has(key)) continue
+            seen.add(key)
+            next.push(ev)
+          }
+        }
+        if (next.length) {
+          setLogs((cur) => [...cur, ...next].sort((a, b) => a.time - b.time))
+          scheduleReload()
+        }
+        if (mine.length && mine.every((j) => j.status === "success" || j.status === "failed")) {
+          window.clearInterval(poll)
           reload().catch(() => {})
         }
-        if (data.level === "error" || /完成/.test(data.message || "")) {
-          es.close()
-          finishOne()
-        }
-      }
-      es.onerror = () => {
-        if (es.readyState === EventSource.CLOSED) finishOne()
+      } catch {
+        /* 登录进行中接口偶发失败时下一秒再拉 */
       }
     }
+    const poll = window.setInterval(() => {
+      tick().catch(() => {})
+    }, 1000)
     esRef.current = {
       close: () => {
         window.clearInterval(poll)
-        sources.forEach((s) => s.close())
+        if (reloadTimer) window.clearTimeout(reloadTimer)
       },
     }
-    reload().catch(() => {})
+    tick().catch(() => {})
+    scheduleReload()
   }
 
   async function loginBatch() {

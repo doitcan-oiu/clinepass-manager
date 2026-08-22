@@ -29,9 +29,11 @@ export type Account = {
   workspace_id: string
   api_key: string
   user_id: string
-  cookies_json: string
-  cookie_header: string
+  cookies_json?: string
+  cookie_header?: string
   payment_url: string
+  has_cookies?: boolean
+  has_api_key?: boolean
   last_error: string
   last_login_at: number
   created_at: number

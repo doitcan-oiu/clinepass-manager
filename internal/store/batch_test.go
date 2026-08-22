@@ -62,6 +62,16 @@ func TestCreateBatchAndList(t *testing.T) {
 	if list[0].LoginProvider != model.LoginGoogle {
 		t.Fatalf("default provider %q", list[0].LoginProvider)
 	}
+	meta, err := s.ListByBatchMeta(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta) != 2 {
+		t.Fatalf("meta %d", len(meta))
+	}
+	if meta[0].CookiesJSON != "" || meta[0].CookieHeader != "" || meta[0].APIKey != "" {
+		t.Fatal("meta list must not load cookie blobs")
+	}
 }
 
 func TestCreateBatchMicrosoftProvider(t *testing.T) {
