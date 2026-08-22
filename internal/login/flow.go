@@ -218,11 +218,12 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 	passSel := `input[name="Passwd"], #password input[type="password"]`
 	emailDone := false
 	tosDone := false
-	consentDone := false
+	lastUnknown := time.Time{}
 
 	for time.Now().Before(deadline) {
 		rawURL := page.URL()
 		if loggedIn(page) {
+			log("已离开谷歌登录，当前 URL=%s", rawURL)
 			return nil
 		}
 		step := classifyGoogle(rawURL)
@@ -240,23 +241,21 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			}
 			tosDone = true
 			log("等待离开服务条款页")
-			_ = waitPathLeft(page, "workspacetermsofservice", 20000)
+			_ = waitLeaveLogged(page, "workspacetermsofservice", 20000, log, "服务条款页")
 			continue
 		}
-		if step == "consent" && !consentDone {
+		if step == "consent" {
 			log("检测到授权页，点击同意授权")
-			consentSels := []string{
-				`div[jsname="uRHG6"] button`,
-				`#submit_approve_access`,
-				`div.BbN10e button`,
-				`button[data-idom-class*="P62QJc"]`,
-			}
-			if err := clickOneOf(page, consentSels, 25000, log, "同意授权"); err != nil {
+			if err := clickOneOf(page, consentSelectors(), 25000, log, "同意授权"); err != nil {
+				if loggedIn(page) {
+					return nil
+				}
 				return stepErr(err)
 			}
-			consentDone = true
 			log("等待离开授权页")
-			_ = waitPathLeft(page, "/signin/oauth", 30000)
+			if err := waitLeaveLogged(page, "/signin/oauth", 45000, log, "授权页"); err != nil {
+				log("%v", err)
+			}
 			continue
 		}
 		if visible(page, recoverySel) && acc.RecoveryEmail != "" {
@@ -325,6 +324,10 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			sleep(3000)
 			continue
 		}
+		if strings.Contains(rawURL, "accounts.google.com") && time.Since(lastUnknown) > 8*time.Second {
+			log("谷歌页面未识别，当前 URL=%s", rawURL)
+			lastUnknown = time.Now()
+		}
 		sleep(500)
 	}
 	if leftGoogle(page) {
@@ -357,8 +360,17 @@ func isStripe(u string) bool {
 	return strings.Contains(u, "stripe.com") || strings.Contains(u, "checkout.stripe.com")
 }
 
+func consentSelectors() []string {
+	return []string{
+		`div[jsname="uRHG6"] button`,
+		`#submit_approve_access`,
+		`button[data-idom-class*="P62QJc"]`,
+	}
+}
+
 func waitCline(page playwright.Page, timeout float64, log Logger) error {
 	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	last := time.Time{}
 	for time.Now().Before(deadline) {
 		if onCline(page.URL()) {
 			return nil
@@ -366,13 +378,12 @@ func waitCline(page playwright.Page, timeout float64, log Logger) error {
 		if classifyGoogle(page.URL()) == "tos" && visible(page, `#gaplustosNext button`) {
 			_ = clickOneOf(page, []string{`#gaplustosNext button`}, 8000, log, "同意服务条款")
 		}
-		if classifyGoogle(page.URL()) == "consent" && (visible(page, `div[jsname="uRHG6"] button`) || visible(page, `#submit_approve_access`) || visible(page, `div.BbN10e button`)) {
-			_ = clickOneOf(page, []string{
-				`div[jsname="uRHG6"] button`,
-				`#submit_approve_access`,
-				`div.BbN10e button`,
-				`button[data-idom-class*="P62QJc"]`,
-			}, 8000, log, "同意授权")
+		if classifyGoogle(page.URL()) == "consent" && (visible(page, `div[jsname="uRHG6"] button`) || visible(page, `#submit_approve_access`)) {
+			_ = clickOneOf(page, consentSelectors(), 8000, log, "同意授权")
+		}
+		if time.Since(last) > 8*time.Second {
+			log("仍在等待进入 Cline，当前 URL=%s", page.URL())
+			last = time.Now()
 		}
 		sleep(500)
 	}
@@ -481,20 +492,33 @@ func waitPathContains(page playwright.Page, part string, timeout float64) error 
 }
 
 func waitPathLeft(page playwright.Page, part string, timeout float64) error {
+	return waitLeaveLogged(page, part, timeout, nil, "")
+}
+
+func waitLeaveLogged(page playwright.Page, part string, timeout float64, log Logger, name string) error {
 	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	last := time.Time{}
 	for time.Now().Before(deadline) {
-		if leftGoogle(page) {
+		u := page.URL()
+		if leftGoogleURL(u) {
+			if log != nil {
+				log("已离开谷歌，当前 URL=%s", u)
+			}
 			return nil
 		}
-		if !strings.Contains(googlePath(page.URL()), part) {
+		if !strings.Contains(googlePath(u), part) {
 			return nil
+		}
+		if log != nil && name != "" && time.Since(last) > 8*time.Second {
+			log("仍在等待离开%s，当前 URL=%s", name, u)
+			last = time.Now()
 		}
 		sleep(200)
 	}
 	if leftGoogle(page) {
 		return nil
 	}
-	return fmt.Errorf("等待离开 %s 超时", part)
+	return fmt.Errorf("等待离开 %s 超时，当前 URL=%s", part, page.URL())
 }
 
 func googlePath(raw string) string {
@@ -510,11 +534,17 @@ func loggedIn(page playwright.Page) bool {
 }
 
 func leftGoogle(page playwright.Page) bool {
-	u := page.URL()
+	return leftGoogleURL(page.URL())
+}
+
+func leftGoogleURL(u string) bool {
+	if u == "" || u == "about:blank" || strings.HasPrefix(u, "chrome-error") || strings.HasPrefix(u, "chrome://") {
+		return false
+	}
 	if strings.Contains(u, "accounts.google.com") {
 		return false
 	}
-	return onCline(u)
+	return strings.Contains(u, "cline.bot") || strings.Contains(u, "radar-challenge")
 }
 
 func onCline(u string) bool {

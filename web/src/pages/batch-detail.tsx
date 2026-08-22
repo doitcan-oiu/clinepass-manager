@@ -27,7 +27,7 @@ export function BatchDetailPage() {
   const [detail, setDetail] = useState<Account | null>(null)
   const [remove, setRemove] = useState<Account | null>(null)
   const [logs, setLogs] = useState<JobEvent[]>([])
-  const esRef = useRef<EventSource | null>(null)
+  const esRef = useRef<{ close: () => void } | null>(null)
 
   async function reload() {
     if (!id) return
@@ -35,41 +35,60 @@ export function BatchDetailPage() {
     setBatch(data.batch)
     setAccounts(data.accounts)
     setDetail((cur) => (cur ? data.accounts.find((a) => a.id === cur.id) || null : null))
+    return data
   }
 
   useEffect(() => {
-    reload().catch((e) => toast.error(e.message))
-    return () => esRef.current?.close()
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await reload()
+        if (cancelled || !data) return
+        const jobs = await api.jobs()
+        if (cancelled) return
+        const ids = new Set(data.accounts.map((a) => a.id))
+        const mine = jobs.filter((j) => ids.has(j.account_id))
+        if (mine.length) followJobs(mine, false)
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "加载失败")
+      }
+    })()
+    return () => {
+      cancelled = true
+      esRef.current?.close()
+    }
   }, [id])
 
-  function followJobs(jobs: Job[]) {
+  function followJobs(jobs: Job[], reset = true) {
     esRef.current?.close()
-    setLogs([])
-    let i = 0
-    const run = () => {
-      if (i >= jobs.length) {
-        reload().catch(() => {})
-        return
-      }
-      const job = jobs[i++]
-      let done = false
-      const finish = () => {
-        if (done) return
-        done = true
-        es.close()
-        reload().catch(() => {})
-        run()
-      }
+    if (reset) setLogs([])
+    if (!jobs.length) return
+    const sources: EventSource[] = []
+    let pending = jobs.length
+    const finishOne = () => {
+      pending -= 1
+      if (pending <= 0) reload().catch(() => {})
+    }
+    const seen = new Set<string>()
+    for (const job of jobs) {
       const es = new EventSource(`/api/jobs/${job.id}/events`)
-      esRef.current = es
+      sources.push(es)
       es.onmessage = (ev) => {
         const data = JSON.parse(ev.data) as JobEvent
-        setLogs((cur) => [...cur, data])
-        if (data.level === "error" || /完成/.test(data.message || "")) finish()
+        const key = `${data.job_id}:${data.time}:${data.message}`
+        if (seen.has(key)) return
+        seen.add(key)
+        setLogs((cur) => [...cur, data].sort((a, b) => a.time - b.time))
+        if (data.level === "error" || /完成/.test(data.message || "")) {
+          es.close()
+          finishOne()
+        }
       }
-      es.onerror = () => finish()
+      es.onerror = () => {
+        if (es.readyState === EventSource.CLOSED) finishOne()
+      }
     }
-    run()
+    esRef.current = { close: () => sources.forEach((s) => s.close()) }
   }
 
   async function loginBatch() {
@@ -218,7 +237,7 @@ export function BatchDetailPage() {
           <pre className="max-h-80 min-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground">
             {logs.length
               ? logs.map((l) => `${new Date(l.time).toLocaleTimeString()} ${l.level === "error" ? "!" : "+"} ${l.message}`).join("\n")
-              : "还没有运行记录。点上面的按钮开始生成或刷新支付链接。"}
+              : "还没有运行记录。点上面的按钮开始生成或刷新支付链接；刷新页面会自动接上正在跑的任务。"}
           </pre>
         </CardContent>
       </Card>

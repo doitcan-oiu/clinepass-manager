@@ -49,6 +49,24 @@ func TestClassifyGooglePasswordPageNotConsent(t *testing.T) {
 	}
 }
 
+func TestLeftGoogleURL(t *testing.T) {
+	if leftGoogleURL("https://accounts.google.com/signin/oauth/id") {
+		t.Fatal("oauth page should stay in google login")
+	}
+	if leftGoogleURL("about:blank") {
+		t.Fatal("blank should not count as left")
+	}
+	if !leftGoogleURL("https://api.cline.bot/api/v1/auth/callback") {
+		t.Fatal("oauth callback should leave google")
+	}
+	if !leftGoogleURL("https://authkit.cline.bot/radar-challenge/send") {
+		t.Fatal("radar should leave google")
+	}
+	if !leftGoogleURL("https://app.cline.bot/dashboard") {
+		t.Fatal("app should leave google")
+	}
+}
+
 func TestCompactMessageStripsPlaywrightCallLog(t *testing.T) {
 	raw := `playwright: timeout: Timeout 20000ms exceeded.
 Call log:

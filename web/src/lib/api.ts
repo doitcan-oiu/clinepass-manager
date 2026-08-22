@@ -41,6 +41,7 @@ export const api = {
   deleteAccount: (id: string) => fetch(`/api/accounts/${id}`, { method: "DELETE" }).then((r) => json<null>(r)),
   loginAccount: (id: string) =>
     fetch(`/api/accounts/${id}/login`, { method: "POST" }).then((r) => json<Job>(r)),
+  jobs: () => fetch("/api/jobs").then((r) => json<Job[]>(r)),
   batches: (page = 1, pageSize = 30) =>
     fetch(`/api/batches?page=${page}&page_size=${pageSize}`).then((r) => json<BatchPage>(r)),
   createBatch: async (body: { name: string; text: string }) => {

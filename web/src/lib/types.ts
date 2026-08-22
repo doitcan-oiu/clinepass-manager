@@ -90,7 +90,13 @@ export type AppConfig = {
 export type Job = {
   id: string
   account_id: string
+  email?: string
+  kind?: string
   status: string
+  error?: string
+  logs?: JobEvent[]
+  started_at?: number
+  ended_at?: number
 }
 
 export type Batch = {
