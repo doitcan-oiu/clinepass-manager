@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -53,6 +54,76 @@ func (c Config) ProfilesDir() string {
 
 func (c Config) ScreenshotsDir() string {
 	return filepath.Join(c.DataDir, "screenshots")
+}
+
+func (c Config) RuntimeHome() string {
+	return filepath.Join(c.DataDir, "home")
+}
+
+func DirWritable(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".write-test-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
+func currentHome() string {
+	if v := strings.TrimSpace(os.Getenv("HOME")); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+// PrepareRuntime 保证数据目录可写。systemd ProtectHome 会把 /root、/home 挂成只读，
+// Cloak 默认写 $HOME/.cloakbrowser，这时改用 data/home。
+func (c Config) PrepareRuntime() (Config, string, error) {
+	for _, dir := range []string{c.DataDir, c.ProfilesDir(), c.ScreenshotsDir()} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return c, "", fmt.Errorf("创建目录失败: %w", err)
+		}
+	}
+	note := ""
+	home := currentHome()
+	if !DirWritable(home) {
+		runtimeHome := c.RuntimeHome()
+		if !DirWritable(runtimeHome) {
+			return c, "", fmt.Errorf("运行 HOME 不可写: %s", runtimeHome)
+		}
+		if err := os.Setenv("HOME", runtimeHome); err != nil {
+			return c, "", err
+		}
+		if home == "" {
+			note = "HOME 为空，已改用 " + runtimeHome
+		} else {
+			note = "HOME=" + home + " 不可写（常见于 systemd ProtectHome），已改用 " + runtimeHome
+		}
+		home = runtimeHome
+	}
+	if strings.TrimSpace(c.CloakCacheDir) == "" {
+		c.CloakCacheDir = filepath.Join(home, ".cloakbrowser")
+	}
+	if err := os.MkdirAll(c.CloakCacheDir, 0o755); err != nil {
+		return c, note, fmt.Errorf("创建 Cloak 缓存目录失败: %w", err)
+	}
+	if err := os.Setenv("CLOAKBROWSER_CACHE_DIR", c.CloakCacheDir); err != nil {
+		return c, note, err
+	}
+	return c, note, nil
 }
 
 func env(key, fallback string) string {

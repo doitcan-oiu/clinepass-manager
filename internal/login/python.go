@@ -268,6 +268,9 @@ func workerEnv(cfg config.Config) []string {
 		if !ok || browser.IsProxyEnv(k) {
 			continue
 		}
+		if strings.EqualFold(k, "CLOAKBROWSER_CACHE_DIR") {
+			continue
+		}
 		env = append(env, kv)
 	}
 	env = append(env, "PYTHONUNBUFFERED=1")
@@ -277,8 +280,12 @@ func workerEnv(cfg config.Config) []string {
 	if cfg.CloakVersion != "" {
 		env = append(env, "CLOAKBROWSER_VERSION="+cfg.CloakVersion)
 	}
-	if cfg.CloakCacheDir != "" {
-		env = append(env, "CLOAKBROWSER_CACHE_DIR="+cfg.CloakCacheDir)
+	cacheDir := strings.TrimSpace(cfg.CloakCacheDir)
+	if cacheDir == "" {
+		cacheDir = strings.TrimSpace(os.Getenv("CLOAKBROWSER_CACHE_DIR"))
+	}
+	if cacheDir != "" {
+		env = append(env, "CLOAKBROWSER_CACHE_DIR="+cacheDir)
 	}
 	if cfg.CloakBinaryPath != "" {
 		env = append(env, "CLOAKBROWSER_BINARY_PATH="+cfg.CloakBinaryPath)

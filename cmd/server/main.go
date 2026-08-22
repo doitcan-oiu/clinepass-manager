@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 
 	"opencode-go-manager/internal/api"
@@ -16,10 +15,13 @@ import (
 
 func main() {
 	cfg := config.Load()
-	for _, dir := range []string{cfg.DataDir, cfg.ProfilesDir(), cfg.ScreenshotsDir()} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			log.Fatalf("创建目录失败: %v", err)
-		}
+	prepared, note, err := cfg.PrepareRuntime()
+	if err != nil {
+		log.Fatalf("准备运行目录失败: %v", err)
+	}
+	cfg = prepared
+	if note != "" {
+		log.Print(note)
 	}
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {

@@ -33,7 +33,7 @@ bin/server       生产二进制（make build 生成）
 
 已经装好的会跳过。用 `apt` 时需要 sudo。
 
-首次登录会下载 CloakBrowser 到 `~/.cloakbrowser/`（约 200MB）。也可在设置里填 `CLOAKBROWSER_LICENSE_KEY`。
+首次登录会下载 CloakBrowser 到 `~/.cloakbrowser/`（约 200MB）。systemd 开了 `ProtectHome` 时，`/root` 只读，进程会自动改用 `data/home/.cloakbrowser`。也可在设置里填 `CLOAKBROWSER_LICENSE_KEY`。
 
 ## 常用命令
 
@@ -42,7 +42,7 @@ bin/server       生产二进制（make build 生成）
 | 命令 | 做什么 |
 |---|---|
 | `make` / `make dev` | 先 `ensure-env`，再 `go mod tidy`、装前端依赖，同时起后端 `:8080` 和 Vite `:5173` |
-| `make build` | 先 `ensure-env`，构建 `web/dist`，再编译 `bin/server`（生产） |
+| `make build` | 先 `ensure-env`，构建 `web/dist`，再编译 `bin/server`（生产）。systemd 安装见下方四条命令 |
 | `make ensure-env` | 只检查/安装 Python、uv、工人虚拟环境，不启动服务 |
 | `make worker-venv` | 与 `ensure-env` 相同（兼容旧名字） |
 | `make api` | 只起后端，开发端口 `:8080`（不跑 ensure-env，不启前端） |
@@ -113,6 +113,30 @@ LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 huma
 
 无图形界面的服务器会自动起 Xvfb，按有界面方式跑 Chrome。本机已有 `DISPLAY` 时，设置里的「无头」仍然生效。
 
+### systemd
+
+示例单元在 `deploy/clinepass-manager.service`。`ProtectHome=true` 和 `ProtectSystem=strict` 可以留着，但不要让 Cloak 再写 `/root/.cloakbrowser`。单元里要带：
+
+```ini
+Environment=HOME=/data/clinepass-manager/data/home
+Environment=DATA_DIR=/data/clinepass-manager/data
+Environment=CLOAKBROWSER_CACHE_DIR=/data/clinepass-manager/data/cloakbrowser
+ReadWritePaths=/data/clinepass-manager
+```
+
+路径按实际安装目录改。构建并安装/更新服务：
+
+```bash
+make build
+sudo cp deploy/clinepass-manager.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart clinepass-manager
+```
+
+首次安装若要开机自启，再执行 `sudo systemctl enable clinepass-manager`。
+
+新二进制启动时若发现 `HOME` 不可写，也会自动改到 `data/home`，不必关 `ProtectHome`。
+
 ## 账号格式
 
 - 谷歌：`邮箱----密码----辅助邮箱`
@@ -125,7 +149,8 @@ LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 huma
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `ADDR` | `:9999` | 生产监听地址。`make` / `make api` 开发固定 `:8080` |
-| `DATA_DIR` | `./data` | SQLite、浏览器配置目录、截图 |
+| `DATA_DIR` | `./data` | SQLite、浏览器配置目录、截图、HOME 不可写时的回退目录 |
+| `HOME` | 进程用户家目录 | systemd `ProtectHome` 时请指到 `DATA_DIR/home` |
 | `INVITE_URL` | `https://authkit.cline.bot` | 邀请链接，可在设置里改 |
 | `HEADLESS` | `true` | 无头初始值，可在设置里改 |
 | `PROXY` | 空 | 全局代理初始值，可在设置里改 |
@@ -133,7 +158,7 @@ LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 huma
 | `LOGIN_ENGINE` | `python` | `python` 走官方包装；`go` 走旧 Playwright-Go |
 | `LOGIN_PYTHON` | `worker/.venv/bin/python` | 工人解释器 |
 | `CLOAKBROWSER_VERSION` | `146.0.7680.177.5` | 二进制版本 |
-| `CLOAKBROWSER_CACHE_DIR` | `~/.cloakbrowser` | 缓存目录 |
+| `CLOAKBROWSER_CACHE_DIR` | `$HOME/.cloakbrowser` | 缓存目录。HOME 不可写时落到 `data/home/.cloakbrowser` |
 | `CLOAKBROWSER_BINARY_PATH` | 空 | 跳过下载，使用本地 chrome |
 | `CLOAKBROWSER_LICENSE_KEY` | 空 | Cloak key（可选） |
 

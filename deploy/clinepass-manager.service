@@ -1,0 +1,36 @@
+[Unit]
+Description=ClinePass Manager Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/data/clinepass-manager
+ExecStart=/data/clinepass-manager/bin/server
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=clinepass-manager
+
+# Cloak / Chrome 会写 $HOME/.cloakbrowser 和配置缓存。
+# ProtectHome 会把 /root 做成只读，必须把 HOME 指到工作目录里。
+Environment=HOME=/data/clinepass-manager/data/home
+Environment=DATA_DIR=/data/clinepass-manager/data
+Environment=CLOAKBROWSER_CACHE_DIR=/data/clinepass-manager/data/cloakbrowser
+
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data/clinepass-manager
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+LimitNOFILE=65535
+LimitNPROC=65535
+
+[Install]
+WantedBy=multi-user.target
