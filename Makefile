@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := dev
 
-.PHONY: dev api web build tidy install-web build-web install-pw
+.PHONY: dev api web build tidy install-web build-web install-pw browser-deps
 
 dev:
 	@echo "==> 安装依赖"
@@ -46,6 +46,10 @@ tidy:
 
 install-pw:
 	go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.0 install --with-deps
+
+browser-deps:
+	sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation libasound2t64 || \
+	sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation libasound2
 
 build: build-web
 	go build -o bin/server ./cmd/server

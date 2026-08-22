@@ -52,9 +52,15 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 		return nil, fmt.Errorf("启动 Playwright 失败: %w", err)
 	}
 
+	if !opt.Headless && !hasDisplay() {
+		opt.Headless = true
+		logf("服务器没有图形界面，已改为无头模式")
+	}
 	args := DefaultStealthArgs(opt.Seed)
 	args = append(args, "--disable-setuid-sandbox", "--disable-dev-shm-usage")
-	if !opt.Headless && strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != "" {
+	if opt.Headless {
+		args = append(args, "--ozone-platform=headless", "--disable-gpu")
+	} else if strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != "" {
 		args = append(args, "--ozone-platform=x11")
 		logf("有界面模式遇到 Wayland，改走 X11，避免 Chrome 启动即退出")
 	}
@@ -122,7 +128,7 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 			_ = os.RemoveAll(opt.UserDataDir)
 		}
 		cleanup()
-		return nil, fmt.Errorf("启动 CloakBrowser 失败: %w", err)
+		return nil, launchError(info.Path, err)
 	}
 	pages := ctx.Pages()
 	var page playwright.Page

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"opencode-go-manager/internal/api"
+	"opencode-go-manager/internal/browser"
 	"opencode-go-manager/internal/config"
 	"opencode-go-manager/internal/job"
 	"opencode-go-manager/internal/store"
@@ -37,6 +38,9 @@ func main() {
 
 	log.Printf("ClinePass Manager 监听 %s", cfg.Addr)
 	log.Printf("邀请链接: %s  headless=%v  concurrent=%d", cfg.InviteURL, cfg.Headless, cfg.MaxConcurrent)
+	if hint := browser.StartupHint(cfg); hint != "" {
+		log.Printf("浏览器环境: %s", hint)
+	}
 	if err := http.ListenAndServe(cfg.Addr, srv.Handler()); err != nil {
 		log.Fatal(err)
 	}
