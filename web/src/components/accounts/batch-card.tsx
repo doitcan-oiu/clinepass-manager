@@ -18,6 +18,29 @@ function formatTime(ts: number) {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+function statusTone(label: string) {
+  return (
+    {
+      已付款: "text-violet-600",
+      部分付款: "text-violet-600",
+      失败: "text-red-600",
+      待生成: "text-amber-600",
+      可下载: "text-emerald-600",
+      已下载: "text-sky-600",
+    } as Record<string, string>
+  )[label] || "text-muted-foreground"
+}
+
+function linkTone(batch: Batch) {
+  if (batch.unpaid_pay_count) return "text-amber-600"
+  if (batch.pay_count === batch.total && batch.total) return "text-emerald-600"
+  return "text-muted-foreground"
+}
+
+function Dot() {
+  return <span className="text-border select-none">·</span>
+}
+
 export function BatchCard({
   batch,
   onLogin,
@@ -43,15 +66,28 @@ export function BatchCard({
           <Link to={`/automation/${batch.id}`} className="block truncate font-medium hover:underline">
             {batch.name}
           </Link>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <span className={`inline-flex rounded-full px-1.5 py-0 text-[11px] font-medium leading-5 ${s.color}`}>{s.label}</span>
+          <p className="mt-1 flex min-w-0 items-baseline gap-1.5 overflow-hidden whitespace-nowrap text-[13px] leading-5">
+            <span className={`shrink-0 font-medium ${statusTone(s.label)}`}>{s.label}</span>
             {batch.failed ? (
-              <span className="inline-flex rounded-full bg-red-600 px-1.5 py-0 text-[11px] font-medium leading-5 text-white">
-                {batch.failed} 失败
-              </span>
+              <>
+                <Dot />
+                <span className="shrink-0 font-medium text-red-600">{batch.failed} 失败</span>
+              </>
             ) : null}
-            <span className="text-xs text-muted-foreground">{formatTime(batch.created_at)}</span>
-          </div>
+            <Dot />
+            <span className="shrink-0 tabular-nums text-muted-foreground">{formatTime(batch.created_at)}</span>
+            <Dot />
+            <span className={`shrink-0 tabular-nums font-medium ${linkTone(batch)}`}>
+              {batch.pay_count}/{batch.total}
+            </span>
+            <span className="shrink-0 text-muted-foreground">链接</span>
+            {batch.paid_count ? (
+              <>
+                <Dot />
+                <span className="shrink-0 text-violet-600">{batch.paid_count} 已付</span>
+              </>
+            ) : null}
+          </p>
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -70,21 +106,6 @@ export function BatchCard({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-
-      <p className="text-sm">
-        <span
-          className={
-            batch.unpaid_pay_count
-              ? "font-medium text-amber-600"
-              : batch.pay_count === batch.total && batch.total
-                ? "font-medium text-emerald-600"
-                : "text-muted-foreground"
-          }
-        >
-          {batch.pay_count}/{batch.total} 链接
-        </span>
-        {batch.paid_count ? <span className="ml-1.5 text-xs text-violet-600">{batch.paid_count} 已付</span> : null}
-      </p>
 
       <div className="mt-auto flex flex-wrap gap-1">
         <Button size="xs" variant={s.primary === "login" ? "default" : "outline"} disabled={!canLogin} onClick={() => onLogin(batch)}>
