@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import type { Account, Batch, Job, JobEvent } from "@/lib/types"
 import { AccountTable } from "@/components/accounts/account-table"
 import { DetailDialog } from "@/components/accounts/detail-dialog"
+import { JobLogPanel } from "@/components/accounts/job-log-panel"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { batchStatus, radarDeniedCount, waitingCount } from "@/lib/batch-ui"
+import { emailByAccount, jobStatusByAccount, latestStepByAccount } from "@/lib/job-log"
 import { downloadText } from "@/lib/download"
 import {
   AlertDialog,
@@ -29,8 +30,13 @@ export function BatchDetailPage() {
   const [removeRadar, setRemoveRadar] = useState(false)
   const [removingRadar, setRemovingRadar] = useState(false)
   const [logs, setLogs] = useState<JobEvent[]>([])
+  const [jobs, setJobs] = useState<Job[]>([])
+  const [logFilter, setLogFilter] = useState("")
   const esRef = useRef<{ close: () => void } | null>(null)
   const radarCount = radarDeniedCount(accounts)
+  const emails = useMemo(() => emailByAccount(accounts, jobs), [accounts, jobs])
+  const jobStatuses = useMemo(() => jobStatusByAccount(jobs), [jobs])
+  const currentSteps = useMemo(() => latestStepByAccount(logs), [logs])
 
   async function reload() {
     if (!id) return
@@ -38,6 +44,7 @@ export function BatchDetailPage() {
     setBatch(data.batch)
     setAccounts(data.accounts)
     setDetail((cur) => (cur ? data.accounts.find((a) => a.id === cur.id) || null : null))
+    setLogFilter((cur) => (cur && !data.accounts.some((a) => a.id === cur) ? "" : cur))
     return data
   }
 
@@ -62,11 +69,12 @@ export function BatchDetailPage() {
     }
   }, [id])
 
-  function followJobs(jobs: Job[], reset = true) {
+  function followJobs(nextJobs: Job[], reset = true) {
     esRef.current?.close()
     if (reset) setLogs([])
-    if (!jobs.length) return
-    const ids = new Set(jobs.map((j) => j.id))
+    setJobs(nextJobs)
+    if (!nextJobs.length) return
+    const ids = new Set(nextJobs.map((j) => j.id))
     const seen = new Set<string>()
     let reloadTimer = 0
     const scheduleReload = () => {
@@ -80,6 +88,7 @@ export function BatchDetailPage() {
       try {
         const all = await api.jobs()
         const mine = all.filter((j) => ids.has(j.id))
+        setJobs(mine)
         const next: JobEvent[] = []
         for (const j of mine) {
           for (const ev of j.logs || []) {
@@ -146,6 +155,7 @@ export function BatchDetailPage() {
 
   async function refreshOne(a: Account) {
     try {
+      setLogFilter(a.id)
       followJobs([await api.refreshAccount(a.id)])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "刷新失败")
@@ -154,6 +164,7 @@ export function BatchDetailPage() {
 
   async function loginOne(a: Account) {
     try {
+      setLogFilter(a.id)
       followJobs([await api.loginAccount(a.id)])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "登录失败")
@@ -278,20 +289,18 @@ export function BatchDetailPage() {
         onRefresh={refreshOne}
         onDetail={setDetail}
         onRemove={setRemove}
+        currentSteps={currentSteps}
+        selectedId={logFilter}
+        onSelect={(a) => setLogFilter((cur) => (cur === a.id ? "" : a.id))}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>任务日志</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="max-h-80 min-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground">
-            {logs.length
-              ? logs.map((l) => `${new Date(l.time).toLocaleTimeString()} ${l.level === "error" ? "!" : "+"} ${l.message}`).join("\n")
-              : "还没有运行记录。点上面的按钮开始生成或刷新支付链接；刷新页面会自动接上正在跑的任务。"}
-          </pre>
-        </CardContent>
-      </Card>
+      <JobLogPanel
+        logs={logs}
+        emails={emails}
+        statuses={jobStatuses}
+        filterId={logFilter}
+        onFilter={setLogFilter}
+      />
 
       <DetailDialog account={detail} open={!!detail} onOpenChange={(v) => !v && setDetail(null)} />
 

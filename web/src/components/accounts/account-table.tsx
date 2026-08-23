@@ -19,12 +19,18 @@ export function AccountTable({
   onDetail,
   onRemove,
   onRefresh,
+  currentSteps,
+  selectedId,
+  onSelect,
 }: {
   accounts: Account[]
   onLogin: (account: Account) => void
   onDetail: (account: Account) => void
   onRemove: (account: Account) => void
   onRefresh?: (account: Account) => void
+  currentSteps?: Record<string, string>
+  selectedId?: string
+  onSelect?: (account: Account) => void
 }) {
   return (
     <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
@@ -34,6 +40,7 @@ export function AccountTable({
             <TableHead>邮箱</TableHead>
             <TableHead>登录</TableHead>
             <TableHead>状态</TableHead>
+            <TableHead>当前步骤</TableHead>
             <TableHead>支付链接</TableHead>
             <TableHead className="w-12" />
           </TableRow>
@@ -41,23 +48,26 @@ export function AccountTable({
         <TableBody>
           {accounts.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+              <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
                 这批还没有账号。
               </TableCell>
             </TableRow>
           ) : (
             accounts.map((a) => (
-              <TableRow key={a.id}>
+              <TableRow
+                key={a.id}
+                data-state={selectedId === a.id ? "selected" : undefined}
+                className={onSelect ? "cursor-pointer" : undefined}
+                onClick={() => onSelect?.(a)}
+              >
                 <TableCell className="max-w-[18rem] whitespace-normal">
-                  <button type="button" className="block w-full max-w-full text-left" onClick={() => onDetail(a)}>
-                    <div className="truncate font-medium">{a.email}</div>
-                    <div className="truncate text-xs text-muted-foreground">{a.recovery_email || "无辅助邮箱"}</div>
-                    {a.last_error ? (
-                      <div className="mt-1 truncate text-xs text-destructive" title={a.last_error}>
-                        {a.last_error}
-                      </div>
-                    ) : null}
-                  </button>
+                  <div className="truncate font-medium">{a.email}</div>
+                  <div className="truncate text-xs text-muted-foreground">{a.recovery_email || "无辅助邮箱"}</div>
+                  {a.last_error ? (
+                    <div className="mt-1 truncate text-xs text-destructive" title={a.last_error}>
+                      {a.last_error}
+                    </div>
+                  ) : null}
                 </TableCell>
                 <TableCell>
                   <Badge variant={normalizeLoginProvider(a.login_provider) === "microsoft" ? "secondary" : "outline"}>
@@ -73,10 +83,13 @@ export function AccountTable({
                     )}
                   </div>
                 </TableCell>
+                <TableCell className="max-w-[16rem] truncate text-xs text-muted-foreground" title={currentSteps?.[a.id] || ""}>
+                  {currentSteps?.[a.id] || "—"}
+                </TableCell>
                 <TableCell className="max-w-[14rem] truncate text-xs text-muted-foreground" title={a.payment_url || ""}>
                   {a.payment_url ? "已生成" : "还没有"}
                 </TableCell>
-                <TableCell>
+                <TableCell onClick={(e) => e.stopPropagation()}>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon">
