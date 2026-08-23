@@ -35,6 +35,8 @@ export function SettingsPage() {
   const [headless, setHeadless] = useState(true)
   const [maxConcurrent, setMaxConcurrent] = useState(1)
   const [maxRetries, setMaxRetries] = useState(3)
+  const [providerMode, setProviderMode] = useState<"keep" | "hide" | "replace">("keep")
+  const [providerValue, setProviderValue] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [configured, setConfigured] = useState(false)
   const [service, setService] = useState("ot")
@@ -52,6 +54,8 @@ export function SettingsPage() {
         setHeadless(cfg.headless !== false)
         setMaxConcurrent(cfg.max_concurrent >= 1 ? cfg.max_concurrent : 1)
         setMaxRetries(Number.isFinite(cfg.max_retries) && cfg.max_retries >= 0 ? cfg.max_retries : 3)
+        setProviderMode(cfg.provider_mode === "hide" || cfg.provider_mode === "replace" ? cfg.provider_mode : "keep")
+        setProviderValue(cfg.provider_value || "")
         setApiKey(cfg.hero_sms_api_key || "")
         setConfigured(!!cfg.hero_sms_configured)
         setService(cfg.hero_sms_service || "ot")
@@ -112,7 +116,14 @@ export function SettingsPage() {
         toast.error("失败换号次数须在 0–32")
         return
       }
-      await api.saveConfig({ proxy, headless, max_concurrent: n, max_retries: retries })
+      await api.saveConfig({
+        proxy,
+        headless,
+        max_concurrent: n,
+        max_retries: retries,
+        provider_mode: providerMode,
+        provider_value: providerValue,
+      })
       setMaxConcurrent(n)
       setMaxRetries(retries)
       toast.success("运行环境已保存")
@@ -195,6 +206,30 @@ export function SettingsPage() {
                     onChange={(e) => setMaxConcurrent(Number(e.target.value))}
                   />
                   <p className="text-xs text-muted-foreground">同时打开多少个浏览器去提取链接，最少 1，没有上限。改完立即生效。</p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="provider-mode">响应里的 provider</Label>
+                  <select
+                    id="provider-mode"
+                    className={selectClass}
+                    value={providerMode}
+                    onChange={(e) => setProviderMode(e.target.value as "keep" | "hide" | "replace")}
+                  >
+                    <option value="keep">保留上游原值</option>
+                    <option value="hide">从响应中删除</option>
+                    <option value="replace">改成固定值</option>
+                  </select>
+                  {providerMode === "replace" ? (
+                    <Input
+                      id="provider-value"
+                      placeholder="例如 OpenAI"
+                      value={providerValue}
+                      onChange={(e) => setProviderValue(e.target.value)}
+                    />
+                  ) : null}
+                  <p className="text-xs text-muted-foreground">
+                    只改转发给客户端的 JSON，流式和非流式都生效。默认不改。
+                  </p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="max-retries">失败换号次数</Label>

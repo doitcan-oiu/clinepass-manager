@@ -72,7 +72,7 @@ func TestRewriteWrappedSSE(t *testing.T) {
 func TestCopyAndParseUnwrapsJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 	src := bytes.NewReader([]byte(`{"data":{"object":"chat.completion","usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25}},"success":true}`))
-	u, _, err := copyAndParse(rr, src, false)
+	u, _, err := copyAndParse(rr, src, false, providerPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestCopyAndParseUnwrapsJSON(t *testing.T) {
 func TestCopyAndParseUnwrapsSSE(t *testing.T) {
 	rr := httptest.NewRecorder()
 	src := io.NopCloser(strings.NewReader("data: {\"data\":{\"object\":\"chat.completion.chunk\",\"choices\":[]},\"success\":true}\n\ndata: {\"data\":{\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":1,\"total_tokens\":10}},\"success\":true}\n\ndata: [DONE]\n"))
-	u, _, err := copyAndParse(rr, src, true)
+	u, _, err := copyAndParse(rr, src, true, providerPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestCopyAndParseUnwrapsSSE(t *testing.T) {
 
 func TestUnwrapIgnoresStubTopLevelUsage(t *testing.T) {
 	raw := []byte(`{"success":true,"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0},"data":{"object":"chat.completion","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":278,"total_tokens":298}}}`)
-	got := normalizeCompletionJSON(raw)
+	got := normalizeCompletionJSON(raw, providerPolicy{})
 	var obj map[string]any
 	if json.Unmarshal(got, &obj) != nil {
 		t.Fatal(string(got))
@@ -128,7 +128,7 @@ func TestUnwrapIgnoresStubTopLevelUsage(t *testing.T) {
 
 func TestLiftUsageIfStillWrapped(t *testing.T) {
 	raw := []byte(`{"object":"chat.completion","choices":[],"data":{"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}}`)
-	got := normalizeCompletionJSON(raw)
+	got := normalizeCompletionJSON(raw, providerPolicy{})
 	if !hasTopLevelUsage(got) {
 		t.Fatalf("usage not lifted: %s", got)
 	}
@@ -145,7 +145,7 @@ func TestLiftUsageIfStillWrapped(t *testing.T) {
 func TestCopyAndParseNDJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 	src := strings.NewReader("{\"data\":{\"object\":\"chat.completion.chunk\",\"choices\":[]},\"success\":true}\n{\"data\":{\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":6,\"total_tokens\":10}},\"success\":true}\n")
-	u, _, err := copyAndParse(rr, src, true)
+	u, _, err := copyAndParse(rr, src, true, providerPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestCopyAndParseNDJSON(t *testing.T) {
 func TestCopyAndParseNonStreamSSE(t *testing.T) {
 	rr := httptest.NewRecorder()
 	src := strings.NewReader("data: {\"data\":{\"object\":\"chat.completion.chunk\",\"choices\":[]},\"success\":true}\n\ndata: {\"data\":{\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":8,\"total_tokens\":10}},\"success\":true}\n\ndata: [DONE]\n")
-	u, _, err := copyAndParse(rr, src, false)
+	u, _, err := copyAndParse(rr, src, false, providerPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestCopyAndParseNonStreamSSE(t *testing.T) {
 func TestCopyAndParseDoesNotInventUsage(t *testing.T) {
 	rr := httptest.NewRecorder()
 	src := strings.NewReader("data: {\"data\":{\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]},\"success\":true}\n\ndata: [DONE]\n")
-	_, _, err := copyAndParse(rr, src, true)
+	_, _, err := copyAndParse(rr, src, true, providerPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestCopyAndParseDoesNotInventUsage(t *testing.T) {
 func TestCopyAndParseSingleJSONStream(t *testing.T) {
 	rr := httptest.NewRecorder()
 	src := strings.NewReader(`{"data":{"object":"chat.completion","usage":{"prompt_tokens":20,"completion_tokens":278,"total_tokens":298}},"success":true}`)
-	u, _, err := copyAndParse(rr, src, true)
+	u, _, err := copyAndParse(rr, src, true, providerPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +218,45 @@ func TestCopyAndParseSingleJSONStream(t *testing.T) {
 	usage, ok := obj["usage"].(map[string]any)
 	if !ok || int(usage["prompt_tokens"].(float64)) != 20 {
 		t.Fatalf("top-level usage missing: %s", rr.Body.String())
+	}
+}
+
+func TestHideProvider(t *testing.T) {
+	raw := []byte(`{"object":"chat.completion","provider":"DeepInfra","usage":{"prompt_tokens":5,"completion_tokens":17,"total_tokens":22},"choices":[]}`)
+	got := normalizeCompletionJSON(raw, providerPolicy{Mode: "hide"})
+	var obj map[string]any
+	if json.Unmarshal(got, &obj) != nil {
+		t.Fatal(string(got))
+	}
+	if _, ok := obj["provider"]; ok {
+		t.Fatalf("provider still present: %s", got)
+	}
+	if !hasTopLevelUsage(got) {
+		t.Fatal("usage removed")
+	}
+}
+
+func TestReplaceProvider(t *testing.T) {
+	raw := []byte(`{"object":"chat.completion","provider":"DeepInfra","usage":{"prompt_tokens":5,"completion_tokens":17,"total_tokens":22},"choices":[]}`)
+	got := normalizeCompletionJSON(raw, providerPolicy{Mode: "replace", Value: "OpenAI"})
+	var obj map[string]any
+	if json.Unmarshal(got, &obj) != nil {
+		t.Fatal(string(got))
+	}
+	if obj["provider"] != "OpenAI" {
+		t.Fatalf("provider=%v body=%s", obj["provider"], got)
+	}
+}
+
+func TestCopyAndParseHidesProviderInSSE(t *testing.T) {
+	rr := httptest.NewRecorder()
+	src := strings.NewReader("data: {\"object\":\"chat.completion.chunk\",\"provider\":\"DeepInfra\",\"choices\":[]}\n\ndata: [DONE]\n")
+	_, _, err := copyAndParse(rr, src, true, providerPolicy{Mode: "hide"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rr.Body.String(), `"provider"`) {
+		t.Fatalf("provider leaked: %s", rr.Body.String())
 	}
 }
 

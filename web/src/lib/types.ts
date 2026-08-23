@@ -88,6 +88,8 @@ export type AppConfig = {
   hero_sms_service: string
   hero_sms_country: number
   hero_sms_max_price: number
+  provider_mode: "keep" | "hide" | "replace"
+  provider_value: string
 }
 
 export type Job = {

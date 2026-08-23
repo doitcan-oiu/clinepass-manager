@@ -119,6 +119,8 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		HeroSMSMaxPrice *float64 `json:"hero_sms_max_price"`
 		MaxConcurrent   *int     `json:"max_concurrent"`
 		MaxRetries      *int     `json:"max_retries"`
+		ProviderMode    *string  `json:"provider_mode"`
+		ProviderValue   *string  `json:"provider_value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 无效")
@@ -162,6 +164,12 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		cur.MaxRetries = *in.MaxRetries
 	}
+	if in.ProviderMode != nil {
+		cur.ProviderMode = strings.TrimSpace(*in.ProviderMode)
+	}
+	if in.ProviderValue != nil {
+		cur.ProviderValue = *in.ProviderValue
+	}
 	if err := s.store.SaveSettings(cur); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -191,6 +199,8 @@ func (s *Server) publicConfig() map[string]any {
 		"hero_sms_service":    st.HeroSMSService,
 		"hero_sms_country":    st.HeroSMSCountry,
 		"hero_sms_max_price":  st.HeroSMSMaxPrice,
+		"provider_mode":       st.ProviderMode,
+		"provider_value":      st.ProviderValue,
 	}
 }
 

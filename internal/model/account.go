@@ -130,4 +130,6 @@ type Settings struct {
 	MaxConcurrent        int      `json:"max_concurrent,omitempty"`
 	MaxRetries           int      `json:"max_retries"`
 	EmailSuffixBlacklist []string `json:"email_suffix_blacklist,omitempty"`
+	ProviderMode         string   `json:"provider_mode,omitempty"`
+	ProviderValue        string   `json:"provider_value,omitempty"`
 }

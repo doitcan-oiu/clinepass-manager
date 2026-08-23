@@ -141,4 +141,21 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if err != nil || len(again.EmailSuffixBlacklist) != 2 || again.EmailSuffixBlacklist[0] != "foxcroftp.us" || again.EmailSuffixBlacklist[1] != "mail.com" {
 		t.Fatalf("blacklist %+v %v", again.EmailSuffixBlacklist, err)
 	}
+	got.ProviderMode = "hide"
+	got.ProviderValue = "OpenAI"
+	if err := s.SaveSettings(got); err != nil {
+		t.Fatal(err)
+	}
+	again, err = s.GetSettings()
+	if err != nil || again.ProviderMode != "hide" || again.ProviderValue != "OpenAI" {
+		t.Fatalf("provider %+v %v", again, err)
+	}
+	got.ProviderMode = "replace"
+	if err := s.SaveSettings(got); err != nil {
+		t.Fatal(err)
+	}
+	again, err = s.GetSettings()
+	if err != nil || again.ProviderMode != "replace" {
+		t.Fatalf("provider mode %+v %v", again, err)
+	}
 }

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 )
 
 func unwrapClineEnvelope(raw []byte) []byte {
@@ -56,9 +57,61 @@ func completionLike(raw []byte) bool {
 	return false
 }
 
-func normalizeCompletionJSON(raw []byte) []byte {
+type providerPolicy struct {
+	Mode  string
+	Value string
+}
+
+func providerPolicyFromSettings(mode, value string) providerPolicy {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case "hide", "remove", "delete":
+		return providerPolicy{Mode: "hide"}
+	case "replace", "set", "fixed":
+		return providerPolicy{Mode: "replace", Value: value}
+	default:
+		return providerPolicy{Mode: "keep"}
+	}
+}
+
+func applyProviderPolicy(raw []byte, pol providerPolicy) []byte {
+	if pol.Mode != "hide" && pol.Mode != "replace" {
+		return raw
+	}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '{' {
+		return raw
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return raw
+	}
+	_, hasProvider := obj["provider"]
+	if !hasProvider && !completionLike(raw) {
+		return raw
+	}
+	if pol.Mode == "hide" {
+		if !hasProvider {
+			return raw
+		}
+		delete(obj, "provider")
+	} else {
+		b, err := json.Marshal(pol.Value)
+		if err != nil {
+			return raw
+		}
+		obj["provider"] = b
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func normalizeCompletionJSON(raw []byte, pol providerPolicy) []byte {
 	out := unwrapClineEnvelope(raw)
-	return liftUsageToTop(out)
+	out = liftUsageToTop(out)
+	return applyProviderPolicy(out, pol)
 }
 
 func hasTopLevelUsage(raw []byte) bool {
@@ -110,7 +163,7 @@ func looksLikeSSE(raw []byte) bool {
 		bytes.Contains(t, []byte("\r\ndata:"))
 }
 
-func encodeSSEUsage(u tokenUsage) []byte {
+func encodeSSEUsage(u tokenUsage, pol providerPolicy) []byte {
 	u = u.withTotal()
 	payload, err := json.Marshal(map[string]any{
 		"usage": map[string]any{
@@ -122,6 +175,7 @@ func encodeSSEUsage(u tokenUsage) []byte {
 	if err != nil {
 		return nil
 	}
+	payload = applyProviderPolicy(payload, pol)
 	out := append([]byte("data: "), payload...)
 	return append(out, '\n', '\n')
 }
@@ -130,6 +184,7 @@ type sseUnwrapper struct {
 	pending  []byte
 	heldDONE []byte
 	sawUsage bool
+	pol      providerPolicy
 }
 
 func (s *sseUnwrapper) Transform(in []byte) []byte {
@@ -173,7 +228,7 @@ func (s *sseUnwrapper) Finish(u tokenUsage) []byte {
 	if len(s.pending) > 0 {
 		rest := bytes.TrimSpace(s.pending)
 		if len(rest) > 0 && rest[0] == '{' {
-			norm := normalizeCompletionJSON(s.pending)
+			norm := normalizeCompletionJSON(s.pending, s.pol)
 			if hasTopLevelUsage(norm) {
 				s.sawUsage = true
 			}
@@ -186,7 +241,7 @@ func (s *sseUnwrapper) Finish(u tokenUsage) []byte {
 		s.pending = nil
 	}
 	if !s.sawUsage && !u.empty() {
-		out = append(out, encodeSSEUsage(u)...)
+		out = append(out, encodeSSEUsage(u, s.pol)...)
 		s.sawUsage = true
 	}
 	if len(s.heldDONE) > 0 {
@@ -209,7 +264,7 @@ func (s *sseUnwrapper) rewriteLine(line []byte) ([]byte, bool) {
 		if isSSEDone(payload) {
 			return nil, true
 		}
-		norm := normalizeCompletionJSON(payload)
+		norm := normalizeCompletionJSON(payload, s.pol)
 		if hasTopLevelUsage(norm) {
 			s.sawUsage = true
 		}
@@ -219,7 +274,7 @@ func (s *sseUnwrapper) rewriteLine(line []byte) ([]byte, bool) {
 		return append([]byte("data: "), norm...), false
 	}
 	if len(trimmed) > 0 && trimmed[0] == '{' {
-		norm := normalizeCompletionJSON(trimmed)
+		norm := normalizeCompletionJSON(trimmed, s.pol)
 		if hasTopLevelUsage(norm) {
 			s.sawUsage = true
 		}

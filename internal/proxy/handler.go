@@ -145,7 +145,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Del("Content-Length")
 		w.WriteHeader(resp.StatusCode)
 		sse := stream || strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "event-stream")
-		usage, firstAt, _ := copyAndParse(w, resp.Body, sse)
+		usage, firstAt, _ := copyAndParse(w, resp.Body, sse, h.providerPolicy())
 		resp.Body.Close()
 		lb.end(keyID)
 		if !firstAt.IsZero() {
@@ -296,7 +296,18 @@ func (h *Handler) finishLog(rec *model.RequestLog, started time.Time, state logR
 	_ = h.store.UpdateRequestLog(*rec)
 }
 
-func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool) (tokenUsage, time.Time, error) {
+func (h *Handler) providerPolicy() providerPolicy {
+	if h == nil || h.store == nil {
+		return providerPolicy{Mode: "keep"}
+	}
+	st, err := h.store.GetSettings()
+	if err != nil {
+		return providerPolicy{Mode: "keep"}
+	}
+	return providerPolicyFromSettings(st.ProviderMode, st.ProviderValue)
+}
+
+func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool, pol providerPolicy) (tokenUsage, time.Time, error) {
 	var first time.Time
 	flusher, _ := w.(http.Flusher)
 	if !stream {
@@ -312,11 +323,11 @@ func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool) (tokenUsage
 		parse.Write(raw)
 		var out []byte
 		if looksLikeSSE(raw) {
-			uw := &sseUnwrapper{}
+			uw := &sseUnwrapper{pol: pol}
 			out = uw.Transform(raw)
 			out = append(out, uw.Finish(parse.Result())...)
 		} else {
-			out = normalizeCompletionJSON(raw)
+			out = normalizeCompletionJSON(raw, pol)
 		}
 		_, _ = w.Write(out)
 		if flusher != nil {
@@ -328,7 +339,7 @@ func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool) (tokenUsage
 		return parse.Result(), first, nil
 	}
 	parse := newUsageParser(true)
-	uw := &sseUnwrapper{}
+	uw := &sseUnwrapper{pol: pol}
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := src.Read(buf)
