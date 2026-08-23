@@ -142,6 +142,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		copyHeader(w.Header(), resp.Header)
+		w.Header().Del("Content-Length")
 		w.WriteHeader(resp.StatusCode)
 		sse := stream || strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "event-stream")
 		usage, firstAt, _ := copyAndParse(w, resp.Body, sse)
@@ -299,6 +300,22 @@ func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool) (tokenUsage
 	var first time.Time
 	parse := newUsageParser(stream)
 	flusher, _ := w.(http.Flusher)
+	if !stream {
+		raw, err := io.ReadAll(src)
+		if len(raw) > 0 {
+			first = time.Now()
+			parse.Write(raw)
+			_, _ = w.Write(unwrapClineEnvelope(raw))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if err != nil && err != io.EOF {
+			return parse.Result(), first, err
+		}
+		return parse.Result(), first, nil
+	}
+	uw := &sseUnwrapper{}
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := src.Read(buf)
@@ -307,12 +324,20 @@ func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool) (tokenUsage
 				first = time.Now()
 			}
 			parse.Write(buf[:n])
-			_, _ = w.Write(buf[:n])
-			if flusher != nil {
-				flusher.Flush()
+			if out := uw.Transform(buf[:n]); len(out) > 0 {
+				_, _ = w.Write(out)
+				if flusher != nil {
+					flusher.Flush()
+				}
 			}
 		}
 		if err != nil {
+			if rest := uw.Flush(); len(rest) > 0 {
+				_, _ = w.Write(rest)
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
 			if err == io.EOF {
 				return parse.Result(), first, nil
 			}

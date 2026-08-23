@@ -134,6 +134,14 @@ func usageFromMap(obj map[string]any) (tokenUsage, bool) {
 			return out, true
 		}
 	}
+	if data, ok := asMap(obj["data"]); ok {
+		if u, ok := asMap(data["usage"]); ok {
+			out := tokensFromUsageMap(u)
+			if !out.empty() {
+				return out, true
+			}
+		}
+	}
 	if msg, ok := asMap(obj["message"]); ok {
 		if u, ok := asMap(msg["usage"]); ok {
 			out := tokensFromUsageMap(u)

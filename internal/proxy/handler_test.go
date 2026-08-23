@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -93,6 +94,55 @@ func TestFailoverOn429ThenSucceeds(t *testing.T) {
 	}
 	if logs[0].Retries != 1 || logs[0].AccountEmail != "b@x.com" {
 		t.Fatalf("second log %+v", logs[0])
+	}
+}
+
+func TestForwardsUnwrappedClineUsage(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "a@x.com", APIKey: "sk-a", WorkspaceID: "ws", CookieHeader: "auth=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUsage(t, st, a.ID, 1, time.Now().Unix())
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "9999")
+		_, _ = w.Write([]byte(`{"data":{"object":"chat.completion","usage":{"prompt_tokens":20,"completion_tokens":278,"total_tokens":298}},"success":true}`))
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d", rr.Code)
+	}
+	if rr.Header().Get("Content-Length") == "9999" {
+		t.Fatal("stale Content-Length")
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &obj); err != nil {
+		t.Fatal(err)
+	}
+	u, ok := obj["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("top-level usage missing: %s", rr.Body.String())
+	}
+	if int(u["prompt_tokens"].(float64)) != 20 || int(u["completion_tokens"].(float64)) != 278 {
+		t.Fatalf("usage %+v", u)
+	}
+	logs, err := st.ListRequestLogs(model.RequestLogFilter{}, 1, 0)
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("logs %v", err)
+	}
+	if logs[0].InputTokens != 20 || logs[0].OutputTokens != 278 {
+		t.Fatalf("log %+v", logs[0])
 	}
 }
 
