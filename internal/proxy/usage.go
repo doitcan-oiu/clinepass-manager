@@ -92,15 +92,14 @@ func (p *usageParser) drainSSE() {
 }
 
 func (p *usageParser) consumeSSELine(line string) {
-	if line == "" || line == "data: [DONE]" {
+	line = strings.TrimSpace(line)
+	if line == "" || line == "[DONE]" || line == "data: [DONE]" {
 		return
 	}
 	if strings.HasPrefix(line, "data:") {
 		line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-	} else {
-		return
 	}
-	if line == "" || line == "[DONE]" {
+	if line == "" || line == "[DONE]" || !strings.HasPrefix(line, "{") {
 		return
 	}
 	if u, ok := parseUsageJSON([]byte(line)); ok {

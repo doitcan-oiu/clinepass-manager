@@ -23,6 +23,15 @@ func TestParseAnthropicUsage(t *testing.T) {
 	}
 }
 
+func TestParseNDJSONUsage(t *testing.T) {
+	p := newUsageParser(true)
+	p.Write([]byte("{\"data\":{\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":6,\"total_tokens\":10}},\"success\":true}\n"))
+	u := p.Result()
+	if u.Input != 4 || u.Output != 6 || u.Total != 10 {
+		t.Fatalf("%+v", u)
+	}
+}
+
 func TestParseSSEUsage(t *testing.T) {
 	p := newUsageParser(true)
 	p.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n"))

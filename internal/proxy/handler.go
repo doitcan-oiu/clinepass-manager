@@ -298,23 +298,36 @@ func (h *Handler) finishLog(rec *model.RequestLog, started time.Time, state logR
 
 func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool) (tokenUsage, time.Time, error) {
 	var first time.Time
-	parse := newUsageParser(stream)
 	flusher, _ := w.(http.Flusher)
 	if !stream {
 		raw, err := io.ReadAll(src)
-		if len(raw) > 0 {
-			first = time.Now()
-			parse.Write(raw)
-			_, _ = w.Write(unwrapClineEnvelope(raw))
-			if flusher != nil {
-				flusher.Flush()
+		if len(raw) == 0 {
+			if err != nil && err != io.EOF {
+				return tokenUsage{}, first, err
 			}
+			return tokenUsage{}, first, nil
+		}
+		first = time.Now()
+		parse := newUsageParser(looksLikeSSE(raw))
+		parse.Write(raw)
+		var out []byte
+		if looksLikeSSE(raw) {
+			uw := &sseUnwrapper{}
+			out = uw.Transform(raw)
+			out = append(out, uw.Finish(parse.Result())...)
+		} else {
+			out = normalizeCompletionJSON(raw)
+		}
+		_, _ = w.Write(out)
+		if flusher != nil {
+			flusher.Flush()
 		}
 		if err != nil && err != io.EOF {
 			return parse.Result(), first, err
 		}
 		return parse.Result(), first, nil
 	}
+	parse := newUsageParser(true)
 	uw := &sseUnwrapper{}
 	buf := make([]byte, 32*1024)
 	for {
@@ -332,7 +345,7 @@ func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool) (tokenUsage
 			}
 		}
 		if err != nil {
-			if rest := uw.Flush(); len(rest) > 0 {
+			if rest := uw.Finish(parse.Result()); len(rest) > 0 {
 				_, _ = w.Write(rest)
 				if flusher != nil {
 					flusher.Flush()

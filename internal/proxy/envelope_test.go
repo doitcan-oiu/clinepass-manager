@@ -53,6 +53,7 @@ func TestRewriteWrappedSSE(t *testing.T) {
 	out := uw.Transform([]byte("data: {\"data\":{\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]},\"success\":true}\n"))
 	out = append(out, uw.Transform([]byte("data: {\"data\":{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"total_tokens\":13}},\"success\":true}\n"))...)
 	out = append(out, uw.Transform([]byte("data: [DONE]\n"))...)
+	out = append(out, uw.Finish(tokenUsage{})...)
 	text := string(out)
 	if strings.Contains(text, `"success"`) {
 		t.Fatalf("wrapper left: %s", text)
@@ -106,6 +107,117 @@ func TestCopyAndParseUnwrapsSSE(t *testing.T) {
 	}
 	if !strings.Contains(body, `"usage":{"prompt_tokens":9`) {
 		t.Fatalf("usage not top-level: %s", body)
+	}
+}
+
+func TestUnwrapIgnoresStubTopLevelUsage(t *testing.T) {
+	raw := []byte(`{"success":true,"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0},"data":{"object":"chat.completion","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":278,"total_tokens":298}}}`)
+	got := normalizeCompletionJSON(raw)
+	var obj map[string]any
+	if json.Unmarshal(got, &obj) != nil {
+		t.Fatal(string(got))
+	}
+	if _, ok := obj["success"]; ok {
+		t.Fatal("wrapper left")
+	}
+	u, ok := obj["usage"].(map[string]any)
+	if !ok || int(u["prompt_tokens"].(float64)) != 20 {
+		t.Fatalf("usage %+v body=%s", u, got)
+	}
+}
+
+func TestLiftUsageIfStillWrapped(t *testing.T) {
+	raw := []byte(`{"object":"chat.completion","choices":[],"data":{"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}}`)
+	got := normalizeCompletionJSON(raw)
+	if !hasTopLevelUsage(got) {
+		t.Fatalf("usage not lifted: %s", got)
+	}
+	var obj map[string]any
+	if json.Unmarshal(got, &obj) != nil {
+		t.Fatal(string(got))
+	}
+	u := obj["usage"].(map[string]any)
+	if int(u["prompt_tokens"].(float64)) != 7 {
+		t.Fatalf("%+v", u)
+	}
+}
+
+func TestCopyAndParseNDJSON(t *testing.T) {
+	rr := httptest.NewRecorder()
+	src := strings.NewReader("{\"data\":{\"object\":\"chat.completion.chunk\",\"choices\":[]},\"success\":true}\n{\"data\":{\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":6,\"total_tokens\":10}},\"success\":true}\n")
+	u, _, err := copyAndParse(rr, src, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Input != 4 || u.Output != 6 {
+		t.Fatalf("usage %+v", u)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, `"success"`) {
+		t.Fatalf("wrapper left: %s", body)
+	}
+	if !strings.Contains(body, `"usage":{"prompt_tokens":4`) {
+		t.Fatalf("usage not top-level: %s", body)
+	}
+}
+
+func TestCopyAndParseNonStreamSSE(t *testing.T) {
+	rr := httptest.NewRecorder()
+	src := strings.NewReader("data: {\"data\":{\"object\":\"chat.completion.chunk\",\"choices\":[]},\"success\":true}\n\ndata: {\"data\":{\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":8,\"total_tokens\":10}},\"success\":true}\n\ndata: [DONE]\n")
+	u, _, err := copyAndParse(rr, src, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Input != 2 || u.Output != 8 {
+		t.Fatalf("usage %+v", u)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, `"success":true`) {
+		t.Fatalf("wrapper left: %s", body)
+	}
+	idxUsage := strings.Index(body, `"usage":{"prompt_tokens":2`)
+	idxDone := strings.Index(body, "[DONE]")
+	if idxUsage < 0 || idxDone < 0 || idxUsage > idxDone {
+		t.Fatalf("usage should be top-level and before DONE: %s", body)
+	}
+}
+
+func TestCopyAndParseDoesNotInventUsage(t *testing.T) {
+	rr := httptest.NewRecorder()
+	src := strings.NewReader("data: {\"data\":{\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]},\"success\":true}\n\ndata: [DONE]\n")
+	_, _, err := copyAndParse(rr, src, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, `"prompt_tokens"`) {
+		t.Fatal("should not invent usage when upstream had none")
+	}
+	if !strings.Contains(body, "[DONE]") {
+		t.Fatalf("missing DONE: %s", body)
+	}
+}
+
+func TestCopyAndParseSingleJSONStream(t *testing.T) {
+	rr := httptest.NewRecorder()
+	src := strings.NewReader(`{"data":{"object":"chat.completion","usage":{"prompt_tokens":20,"completion_tokens":278,"total_tokens":298}},"success":true}`)
+	u, _, err := copyAndParse(rr, src, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Input != 20 || u.Output != 278 {
+		t.Fatalf("usage %+v", u)
+	}
+	var obj map[string]any
+	if json.Unmarshal(rr.Body.Bytes(), &obj) != nil {
+		t.Fatalf("body %s", rr.Body.String())
+	}
+	if _, ok := obj["success"]; ok {
+		t.Fatal("wrapper left")
+	}
+	usage, ok := obj["usage"].(map[string]any)
+	if !ok || int(usage["prompt_tokens"].(float64)) != 20 {
+		t.Fatalf("top-level usage missing: %s", rr.Body.String())
 	}
 }
 
