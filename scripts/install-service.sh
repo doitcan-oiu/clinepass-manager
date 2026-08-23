@@ -40,12 +40,41 @@ install_systemd() {
 		systemctl restart clinepass-manager
 	fi
 	rm -f "$tmp"
+	echo "==> 已发出 restart，等待 http://127.0.0.1:9999/api/health"
+	if ! wait_http "http://127.0.0.1:9999/api/health" 60; then
+		echo "==> 服务没有在 60 秒内就绪"
+		if have journalctl; then
+			journalctl -u clinepass-manager -n 40 --no-pager || true
+		fi
+		systemctl --no-pager --full status clinepass-manager || true
+		exit 1
+	fi
 	echo "==> 已启动 clinepass-manager"
 	echo "==> 工作目录 $ROOT"
 	echo "==> 打开 http://127.0.0.1:9999"
-	if have systemctl; then
+	if have journalctl; then
+		journalctl -u clinepass-manager -n 15 --no-pager || true
+	elif have systemctl; then
 		systemctl --no-pager --full status clinepass-manager || true
 	fi
+}
+
+wait_http() {
+	local url="$1"
+	local seconds="$2"
+	local i
+	for i in $(seq 1 "$seconds"); do
+		if curl -sf "$url" >/dev/null 2>&1; then
+			echo "==> HTTP 已就绪（${i}s）"
+			return 0
+		fi
+		if have systemctl && ! systemctl is-active --quiet clinepass-manager; then
+			echo "==> clinepass-manager 已退出"
+			return 1
+		fi
+		sleep 1
+	done
+	return 1
 }
 
 ensure_browser_deps
