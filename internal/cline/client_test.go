@@ -9,6 +9,27 @@ import (
 	"time"
 )
 
+func TestParsePlanUsageLimits(t *testing.T) {
+	raw := []byte(`{"data":{"limits":[
+		{"type":"five_hour","percentUsed":90,"resetsAt":"2026-08-23T12:52:58.949548952Z"},
+		{"type":"weekly","percentUsed":91,"resetsAt":"2026-08-28T01:42:21.95113322Z"},
+		{"type":"monthly","percentUsed":45,"resetsAt":"2026-09-20T01:42:21.95249247Z"}
+	]},"success":true}`)
+	got, err := ParsePlanUsageLimits(raw)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if got[0].Type != "five_hour" || got[0].PercentUsed != 90 || got[0].ResetsAt.IsZero() {
+		t.Fatalf("%+v", got[0])
+	}
+	if got[1].Type != "weekly" || got[1].PercentUsed != 91 {
+		t.Fatalf("%+v", got[1])
+	}
+	if got[2].Type != "monthly" || got[2].PercentUsed != 45 {
+		t.Fatalf("%+v", got[2])
+	}
+}
+
 func TestParsePlansCaps(t *testing.T) {
 	raw := []byte(`{
 	  "data": [{

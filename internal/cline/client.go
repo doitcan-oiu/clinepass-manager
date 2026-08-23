@@ -194,6 +194,45 @@ func (c *Client) PlansCaps() (Caps, error) {
 	return caps, nil
 }
 
+type PlanUsageLimit struct {
+	Type        string
+	PercentUsed float64
+	ResetsAt    time.Time
+}
+
+func (c *Client) PlanUsageLimits() ([]PlanUsageLimit, error) {
+	raw, err := c.doJSON(http.MethodGet, c.base+"/api/v1/users/me/plan/usage-limits", nil)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePlanUsageLimits(raw)
+}
+
+func ParsePlanUsageLimits(raw []byte) ([]PlanUsageLimit, error) {
+	var wrap struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Limits []struct {
+				Type        string  `json:"type"`
+				PercentUsed float64 `json:"percentUsed"`
+				ResetsAt    string  `json:"resetsAt"`
+			} `json:"limits"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return nil, fmt.Errorf("套餐用量返回无效")
+	}
+	out := make([]PlanUsageLimit, 0, len(wrap.Data.Limits))
+	for _, it := range wrap.Data.Limits {
+		item := PlanUsageLimit{Type: strings.TrimSpace(it.Type), PercentUsed: it.PercentUsed}
+		if t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(it.ResetsAt)); err == nil {
+			item.ResetsAt = t
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
 func (c *Client) DailyUsages(userID string, start, end time.Time) ([]UsageItem, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {

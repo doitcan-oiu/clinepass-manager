@@ -40,6 +40,24 @@ func TestHydrateWith(t *testing.T) {
 	}
 }
 
+func TestWindowsFromPlanLimits(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	r, w, m := WindowsFromPlanLimits([]cline.PlanUsageLimit{
+		{Type: "five_hour", PercentUsed: 90, ResetsAt: now.Add(time.Hour)},
+		{Type: "weekly", PercentUsed: 91, ResetsAt: now.Add(2 * time.Hour)},
+		{Type: "monthly", PercentUsed: 100, ResetsAt: now.Add(3 * time.Hour)},
+	}, now)
+	if r.UsagePercent != 90 || r.Status != "ok" || r.ResetInSec != 3600 {
+		t.Fatalf("rolling %+v", r)
+	}
+	if w.UsagePercent != 91 || w.ResetInSec != 7200 {
+		t.Fatalf("weekly %+v", w)
+	}
+	if m.UsagePercent != 100 || m.Status != "rate-limited" {
+		t.Fatalf("monthly %+v", m)
+	}
+}
+
 func TestWindowsFromDays(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.FixedZone("CST", 8*3600))
 	days := []model.ModelDay{
