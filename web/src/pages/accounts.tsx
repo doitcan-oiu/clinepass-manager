@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react"
-import { ChartColumn, ChevronLeft, ChevronRight, Download, RefreshCw, Trash2, Upload } from "lucide-react"
+import { ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Download, RefreshCw, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { downloadJSON } from "@/lib/download"
 import type { Batch, ModelSpend, PoolAccount, PoolStats, UsageSyncStatus } from "@/lib/types"
-import { barClass, formatTime, health, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, usageRows } from "@/lib/quota"
+import { barClass, formatResetAt, formatTime, health, isWeeklyLimited, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, usageRows, windowPct } from "@/lib/quota"
 import { AddPaidDialog } from "@/components/accounts/add-paid-dialog"
 import { loginProviderLabel, normalizeLoginProvider } from "@/lib/login-provider"
 import { Button } from "@/components/ui/button"
@@ -28,6 +28,8 @@ const emptyStats: PoolStats = { total: 0, ok: 0, tight: 0, exhausted: 0, avg_rol
 
 export function AccountsPage() {
   const [items, setItems] = useState<PoolAccount[]>([])
+  const [weeklyLimited, setWeeklyLimited] = useState<PoolAccount[]>([])
+  const [weeklyOpen, setWeeklyOpen] = useState(false)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [batchId, setBatchId] = useState("")
@@ -53,10 +55,12 @@ export function AccountsPage() {
       setPage(last)
       const again = await api.poolAccounts(last, PAGE_SIZE, filter)
       setItems(again.items)
+      setWeeklyLimited(again.weekly_limited || [])
       setTotal(again.total)
       setStats(again.stats || emptyStats)
     } else {
       setItems(pool.items)
+      setWeeklyLimited(pool.weekly_limited || [])
       setTotal(pool.total)
       setStats(pool.stats || emptyStats)
     }
@@ -134,7 +138,13 @@ export function AccountsPage() {
     setBusyId(a.id)
     try {
       const got = await api.refreshAccountUsage(a.id)
-      setItems((cur) => cur.map((x) => (x.id === a.id ? { ...x, ...got } : x)))
+      const next = { ...a, ...got }
+      if (isWeeklyLimited(a) !== isWeeklyLimited(next)) {
+        await reload(page, batchId)
+        return
+      }
+      setItems((cur) => cur.map((x) => (x.id === a.id ? next : x)))
+      setWeeklyLimited((cur) => cur.map((x) => (x.id === a.id ? next : x)))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "刷新失败")
     } finally {
@@ -207,102 +217,48 @@ export function AccountsPage() {
         </div>
       </div>
 
-      {items.length === 0 ? (
+      {items.length === 0 && weeklyLimited.length === 0 ? (
         <div className="rounded-xl border border-dashed bg-card p-12 text-center text-muted-foreground">
           还没有已付款账号。在「提取支付链接」点确认付款后，有配额的号会出现在这里。
         </div>
+      ) : items.length === 0 ? (
+        <div className="rounded-xl border border-dashed bg-card p-8 text-center text-muted-foreground">
+          当前没有可调度的账号，周限已满的号收在下面。
+        </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-          {items.map((a) => {
-            const synced = !!a.usage?.synced_at
-            const h = health(a)
-            const expire = monthlyExpireLabel(a.usage)
-            return (
-              <article
-                key={a.id}
-                className={`group relative flex flex-col rounded-xl border bg-card p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-500/50 ${
-                  h.label === "异常" ? "border-red-500/40" : ""
-                }`}
-              >
-                <div className="mb-2 flex items-start gap-1">
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 truncate text-left text-sm font-semibold hover:text-emerald-600"
-                    onClick={() => setModelsOf(a)}
-                    title={`${a.email} · 查看本月模型`}
-                  >
-                    {a.email}
-                  </button>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    className="text-muted-foreground"
-                    title="本月模型"
-                    onClick={() => setModelsOf(a)}
-                  >
-                    <ChartColumn />
-                  </Button>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    className="text-muted-foreground"
-                    title="刷新用量"
-                    disabled={busyId === a.id}
-                    onClick={() => refreshOne(a)}
-                  >
-                    <RefreshCw className={busyId === a.id ? "animate-spin" : undefined} />
-                  </Button>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    className="text-muted-foreground hover:text-destructive"
-                    title="删除账号"
-                    onClick={() => setRemove(a)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-                <div className="mb-3 flex flex-wrap items-center gap-1">
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${h.className}`}>{h.label}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${normalizeLoginProvider(a.login_provider) === "microsoft" ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200" : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200"}`}>
-                    {loginProviderLabel(a.login_provider)}
-                  </span>
-                  {a.batch_name ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{a.batch_name}</span> : null}
-                  {expire ? (
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                      到期 {expire}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="space-y-2">
-                  {usageRows(a.usage, synced).map((row) => (
-                    <div key={row.key}>
-                      <div className="mb-0.5 flex items-center justify-between text-[11px]">
-                        <span className="text-muted-foreground">
-                          {row.label}
-                          {row.reset ? ` (${row.reset})` : ""}
-                        </span>
-                        <span className={`font-mono ${pctText(row.pct)}`}>{row.pct == null ? "—" : `${Math.round(row.pct)}%`}</span>
-                      </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className={`h-full rounded-full transition-[width] duration-700 ${barClass(row.pct)}`}
-                          style={{ width: `${barsOn && row.pct != null ? Math.min(row.pct, 100) : 0}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {a.usage?.error ? <p className="mt-2 truncate text-[11px] text-red-600" title={a.usage.error}>{a.usage.error}</p> : null}
-                <p className="mt-2 text-[11px] text-muted-foreground">{formatTime(a.usage?.synced_at || 0)}</p>
-              </article>
-            )
-          })}
+          {items.map((a) => (
+            <AccountCard
+              key={a.id}
+              a={a}
+              barsOn={barsOn}
+              busy={busyId === a.id}
+              onModels={() => setModelsOf(a)}
+              onRefresh={() => refreshOne(a)}
+              onRemove={() => setRemove(a)}
+            />
+          ))}
         </div>
       )}
 
+      {weeklyLimited.length > 0 ? (
+        <WeeklyLimitedFold
+          accounts={weeklyLimited}
+          open={weeklyOpen}
+          onOpenChange={setWeeklyOpen}
+          busyId={busyId}
+          onModels={setModelsOf}
+          onRefresh={refreshOne}
+          onRemove={setRemove}
+        />
+      ) : null}
+
       <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>共 {total} 个账号{sync.running && sync.message ? ` · ${sync.message}` : ""}</span>
+        <span>
+          共 {stats.total} 个账号
+          {weeklyLimited.length ? ` · 周限 ${weeklyLimited.length} 个已收起` : ""}
+          {sync.running && sync.message ? ` · ${sync.message}` : ""}
+        </span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             <ChevronLeft />
@@ -384,6 +340,150 @@ export function AccountsPage() {
           </Table>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+function AccountCard({
+  a,
+  barsOn,
+  busy,
+  onModels,
+  onRefresh,
+  onRemove,
+}: {
+  a: PoolAccount
+  barsOn: boolean
+  busy: boolean
+  onModels: () => void
+  onRefresh: () => void
+  onRemove: () => void
+}) {
+  const synced = !!a.usage?.synced_at
+  const h = health(a)
+  const expire = monthlyExpireLabel(a.usage)
+  return (
+    <article
+      className={`group relative flex flex-col rounded-xl border bg-card p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-500/50 ${
+        h.label === "异常" ? "border-red-500/40" : ""
+      }`}
+    >
+      <div className="mb-2 flex items-start gap-1">
+        <button
+          type="button"
+          className="min-w-0 flex-1 truncate text-left text-sm font-semibold hover:text-emerald-600"
+          onClick={onModels}
+          title={`${a.email} · 查看本月模型`}
+        >
+          {a.email}
+        </button>
+        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="本月模型" onClick={onModels}>
+          <ChartColumn />
+        </Button>
+        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="刷新用量" disabled={busy} onClick={onRefresh}>
+          <RefreshCw className={busy ? "animate-spin" : undefined} />
+        </Button>
+        <Button size="icon-sm" variant="ghost" className="text-muted-foreground hover:text-destructive" title="删除账号" onClick={onRemove}>
+          <Trash2 />
+        </Button>
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-1">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${h.className}`}>{h.label}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${normalizeLoginProvider(a.login_provider) === "microsoft" ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200" : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200"}`}>
+          {loginProviderLabel(a.login_provider)}
+        </span>
+        {a.batch_name ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{a.batch_name}</span> : null}
+        {expire ? (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+            到期 {expire}
+          </span>
+        ) : null}
+      </div>
+      <div className="space-y-2">
+        {usageRows(a.usage, synced).map((row) => (
+          <div key={row.key}>
+            <div className="mb-0.5 flex items-center justify-between text-[11px]">
+              <span className="text-muted-foreground">
+                {row.label}
+                {row.reset ? ` (${row.reset})` : ""}
+              </span>
+              <span className={`font-mono ${pctText(row.pct)}`}>{row.pct == null ? "—" : `${Math.round(row.pct)}%`}</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className={`h-full rounded-full transition-[width] duration-700 ${barClass(row.pct)}`}
+                style={{ width: `${barsOn && row.pct != null ? Math.min(row.pct, 100) : 0}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      {a.usage?.error ? <p className="mt-2 truncate text-[11px] text-red-600" title={a.usage.error}>{a.usage.error}</p> : null}
+      <p className="mt-2 text-[11px] text-muted-foreground">{formatTime(a.usage?.synced_at || 0)}</p>
+    </article>
+  )
+}
+
+function WeeklyLimitedFold({
+  accounts,
+  open,
+  onOpenChange,
+  busyId,
+  onModels,
+  onRefresh,
+  onRemove,
+}: {
+  accounts: PoolAccount[]
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  busyId: string
+  onModels: (a: PoolAccount) => void
+  onRefresh: (a: PoolAccount) => void
+  onRemove: (a: PoolAccount) => void
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+        onClick={() => onOpenChange(!open)}
+        aria-expanded={open}
+      >
+        <span className="text-sm font-medium">
+          周限额度已满
+          <span className="ml-2 text-muted-foreground">{accounts.length} 个账号，不参与调度</span>
+        </span>
+        <ChevronDown className={`size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open ? (
+        <ul className="divide-y border-t">
+          {accounts.map((a) => {
+            const pct = windowPct(a.usage?.weekly, !!a.usage?.synced_at)
+            const reset = formatResetAt(a.usage?.weekly?.reset_in_sec, a.usage?.synced_at || 0)
+            return (
+              <li key={a.id} className="flex items-center gap-3 px-4 py-2.5">
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 truncate text-left text-sm hover:text-emerald-600"
+                  onClick={() => onModels(a)}
+                  title={a.email}
+                >
+                  {a.email}
+                </button>
+                <span className="hidden text-[11px] text-muted-foreground sm:inline">{a.batch_name || ""}</span>
+                <span className={`font-mono text-[11px] ${pctText(pct)}`}>{pct == null ? "—" : `周限 ${Math.round(pct)}%`}</span>
+                <span className="hidden w-28 text-right text-[11px] text-muted-foreground md:inline">{reset ? `重置 ${reset}` : ""}</span>
+                <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="刷新用量" disabled={busyId === a.id} onClick={() => onRefresh(a)}>
+                  <RefreshCw className={busyId === a.id ? "animate-spin" : undefined} />
+                </Button>
+                <Button size="icon-sm" variant="ghost" className="text-muted-foreground hover:text-destructive" title="删除账号" onClick={() => onRemove(a)}>
+                  <Trash2 />
+                </Button>
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
     </div>
   )
 }

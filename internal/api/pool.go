@@ -43,24 +43,39 @@ func (s *Server) listPoolAccounts(w http.ResponseWriter, r *http.Request) {
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 30
 	}
-	total, err := s.store.CountPoolAccounts(batchID)
+	all, err := s.store.ListPoolAccounts(batchID, 100000, 0)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	list, err := s.store.ListPoolAccounts(batchID, pageSize, (page-1)*pageSize)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	active, weekly := model.SplitWeeklyLimited(all)
 	stats, _ := s.store.PoolStats(batchID)
 	writeJSON(w, http.StatusOK, model.PoolPage{
-		Items:    list,
-		Total:    total,
-		Page:     page,
-		PageSize: pageSize,
-		Stats:    stats,
+		Items:         pageAccounts(active, page, pageSize),
+		WeeklyLimited: weekly,
+		Total:         len(active),
+		Page:          page,
+		PageSize:      pageSize,
+		Stats:         stats,
 	})
+}
+
+func pageAccounts(list []model.PoolAccount, page, pageSize int) []model.PoolAccount {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 30
+	}
+	start := (page - 1) * pageSize
+	if start >= len(list) {
+		return []model.PoolAccount{}
+	}
+	end := start + pageSize
+	if end > len(list) {
+		end = len(list)
+	}
+	return list[start:end]
 }
 
 func (s *Server) listPaidBatches(w http.ResponseWriter, r *http.Request) {

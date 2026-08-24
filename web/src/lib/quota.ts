@@ -41,6 +41,16 @@ export function pctText(pct: number | null) {
   return "text-muted-foreground"
 }
 
+export function windowExhausted(w: UsageWindow | undefined): boolean {
+  const s = (w?.status || "").toLowerCase().trim()
+  if (s === "rate-limited" || s === "exhausted" || s === "limited") return true
+  return Math.round(w?.usage_percent ?? 0) >= 100
+}
+
+export function isWeeklyLimited(a: PoolAccount): boolean {
+  return windowExhausted(a.usage?.weekly)
+}
+
 export function windowPct(w: UsageWindow | undefined, synced: boolean): number | null {
   if (!synced || !w?.status) return null
   return w.usage_percent

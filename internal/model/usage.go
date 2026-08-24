@@ -57,17 +57,31 @@ func (u AccountUsage) QuotaExhausted() bool {
 	return u.Rolling.Exhausted() || u.Weekly.Exhausted() || u.Monthly.Exhausted()
 }
 
+func SplitWeeklyLimited(list []PoolAccount) (active, weekly []PoolAccount) {
+	active = make([]PoolAccount, 0, len(list))
+	weekly = make([]PoolAccount, 0)
+	for _, a := range list {
+		if a.Usage.Weekly.Exhausted() {
+			weekly = append(weekly, a)
+			continue
+		}
+		active = append(active, a)
+	}
+	return active, weekly
+}
+
 type PoolAccount struct {
 	AccountPublic
 	Usage AccountUsage `json:"usage"`
 }
 
 type PoolPage struct {
-	Items    []PoolAccount `json:"items"`
-	Total    int           `json:"total"`
-	Page     int           `json:"page"`
-	PageSize int           `json:"page_size"`
-	Stats    PoolStats     `json:"stats"`
+	Items         []PoolAccount `json:"items"`
+	WeeklyLimited []PoolAccount `json:"weekly_limited"`
+	Total         int           `json:"total"`
+	Page          int           `json:"page"`
+	PageSize      int           `json:"page_size"`
+	Stats         PoolStats     `json:"stats"`
 }
 
 type CreatePaidAccountInput struct {

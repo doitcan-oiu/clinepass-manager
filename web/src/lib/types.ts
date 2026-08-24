@@ -50,6 +50,7 @@ export type PoolAccount = Account & {
 
 export type PoolPage = {
   items: PoolAccount[]
+  weekly_limited: PoolAccount[]
   total: number
   page: number
   page_size: number
