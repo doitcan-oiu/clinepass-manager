@@ -76,6 +76,10 @@ export type UsageSyncStatus = {
   paid: number
   unpaid: number
   message: string
+  started_at?: number
+  finished_at?: number
+  interval_sec?: number
+  concurrency?: number
 }
 
 export type AppConfig = {
@@ -85,6 +89,8 @@ export type AppConfig = {
   invite_url: string
   max_concurrent: number
   max_retries: number
+  usage_refresh_sec: number
+  usage_refresh_concurrency: number
   hero_sms_api_key: string
   hero_sms_configured: boolean
   hero_sms_service: string

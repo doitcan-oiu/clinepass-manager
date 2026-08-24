@@ -40,7 +40,7 @@ func New(cfg config.Config, st *store.Store, jobs *job.Manager, webRoot string) 
 		webRoot: webRoot,
 	}
 	s.proxy.SetUsageRefresher(s.usage)
-	s.usage.StartLoop(usage.DefaultInterval)
+	s.usage.StartLoop()
 	go s.expireLoop()
 	return s
 }
@@ -114,17 +114,19 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		cur = model.Settings{Headless: true}
 	}
 	var in struct {
-		Proxy           *string  `json:"proxy"`
-		Headless        *bool    `json:"headless"`
-		InviteURL       *string  `json:"invite_url"`
-		HeroSMSAPIKey   *string  `json:"hero_sms_api_key"`
-		HeroSMSService  *string  `json:"hero_sms_service"`
-		HeroSMSCountry  *int     `json:"hero_sms_country"`
-		HeroSMSMaxPrice *float64 `json:"hero_sms_max_price"`
-		MaxConcurrent   *int     `json:"max_concurrent"`
-		MaxRetries      *int     `json:"max_retries"`
-		ProviderMode    *string  `json:"provider_mode"`
-		ProviderValue   *string  `json:"provider_value"`
+		Proxy                   *string  `json:"proxy"`
+		Headless                *bool    `json:"headless"`
+		InviteURL               *string  `json:"invite_url"`
+		HeroSMSAPIKey           *string  `json:"hero_sms_api_key"`
+		HeroSMSService          *string  `json:"hero_sms_service"`
+		HeroSMSCountry          *int     `json:"hero_sms_country"`
+		HeroSMSMaxPrice         *float64 `json:"hero_sms_max_price"`
+		MaxConcurrent           *int     `json:"max_concurrent"`
+		MaxRetries              *int     `json:"max_retries"`
+		UsageRefreshSec         *int     `json:"usage_refresh_sec"`
+		UsageRefreshConcurrency *int     `json:"usage_refresh_concurrency"`
+		ProviderMode            *string  `json:"provider_mode"`
+		ProviderValue           *string  `json:"provider_value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 无效")
@@ -168,6 +170,20 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		cur.MaxRetries = *in.MaxRetries
 	}
+	if in.UsageRefreshSec != nil {
+		if *in.UsageRefreshSec < 15 || *in.UsageRefreshSec > 86400 {
+			writeErr(w, http.StatusBadRequest, "用量刷新间隔须在 15–86400 秒")
+			return
+		}
+		cur.UsageRefreshSec = *in.UsageRefreshSec
+	}
+	if in.UsageRefreshConcurrency != nil {
+		if *in.UsageRefreshConcurrency < 1 || *in.UsageRefreshConcurrency > 64 {
+			writeErr(w, http.StatusBadRequest, "用量刷新并发须在 1–64")
+			return
+		}
+		cur.UsageRefreshConcurrency = *in.UsageRefreshConcurrency
+	}
 	if in.ProviderMode != nil {
 		cur.ProviderMode = strings.TrimSpace(*in.ProviderMode)
 	}
@@ -188,23 +204,25 @@ func (s *Server) publicConfig() map[string]any {
 	if err == nil {
 		cfg = store.ApplySettings(cfg, st)
 	} else {
-		st = model.Settings{}
+		st = model.Settings{UsageRefreshSec: 60, UsageRefreshConcurrency: 10}
 	}
 	return map[string]any{
-		"invite_url":          cfg.InviteURL,
-		"headless":            cfg.Headless,
-		"proxy":               cfg.Proxy,
-		"cloak_version":       cfg.CloakVersion,
-		"max_concurrent":      cfg.MaxConcurrent,
-		"max_retries":         cfg.MaxRetries,
-		"platform":            browser.PlatformTag(),
-		"hero_sms_api_key":    maskSecret(st.HeroSMSAPIKey),
-		"hero_sms_configured": strings.TrimSpace(st.HeroSMSAPIKey) != "",
-		"hero_sms_service":    st.HeroSMSService,
-		"hero_sms_country":    st.HeroSMSCountry,
-		"hero_sms_max_price":  st.HeroSMSMaxPrice,
-		"provider_mode":       st.ProviderMode,
-		"provider_value":      st.ProviderValue,
+		"invite_url":                cfg.InviteURL,
+		"headless":                  cfg.Headless,
+		"proxy":                     cfg.Proxy,
+		"cloak_version":             cfg.CloakVersion,
+		"max_concurrent":            cfg.MaxConcurrent,
+		"max_retries":               cfg.MaxRetries,
+		"usage_refresh_sec":         st.UsageRefreshSec,
+		"usage_refresh_concurrency": st.UsageRefreshConcurrency,
+		"platform":                  browser.PlatformTag(),
+		"hero_sms_api_key":          maskSecret(st.HeroSMSAPIKey),
+		"hero_sms_configured":       strings.TrimSpace(st.HeroSMSAPIKey) != "",
+		"hero_sms_service":          st.HeroSMSService,
+		"hero_sms_country":          st.HeroSMSCountry,
+		"hero_sms_max_price":        st.HeroSMSMaxPrice,
+		"provider_mode":             st.ProviderMode,
+		"provider_value":            st.ProviderValue,
 	}
 }
 

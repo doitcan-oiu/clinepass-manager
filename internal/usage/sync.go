@@ -10,7 +10,14 @@ import (
 	"opencode-go-manager/internal/store"
 )
 
-const DefaultInterval = time.Minute
+const (
+	DefaultInterval    = time.Minute
+	DefaultConcurrency = 10
+	minInterval        = 15 * time.Second
+	maxInterval        = 24 * time.Hour
+	minConcurrency     = 1
+	maxConcurrency     = 64
+)
 
 type Syncer struct {
 	store   *store.Store
@@ -33,8 +40,11 @@ func (s *Syncer) doFetch(a model.Account, proxy string) (model.AccountUsage, boo
 
 func (s *Syncer) Status() model.UsageSyncStatus {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.st
+	out := s.st
+	s.mu.Unlock()
+	out.IntervalSec = s.intervalSec()
+	out.Concurrency = s.concurrency()
+	return out
 }
 
 func (s *Syncer) StartAll() error {
@@ -69,18 +79,59 @@ func (s *Syncer) One(id string) (model.AccountUsage, error) {
 	return u, err
 }
 
-func (s *Syncer) StartLoop(interval time.Duration) {
-	if interval <= 0 {
-		interval = DefaultInterval
-	}
+func (s *Syncer) StartLoop() {
 	go func() {
-		_ = s.StartAll()
-		t := time.NewTicker(interval)
-		defer t.Stop()
-		for range t.C {
+		for {
 			_ = s.StartAll()
+			s.waitIdle()
+			time.Sleep(s.interval())
 		}
 	}()
+}
+
+func (s *Syncer) waitIdle() {
+	for {
+		s.mu.Lock()
+		running := s.st.Running
+		s.mu.Unlock()
+		if !running {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func (s *Syncer) interval() time.Duration {
+	d := time.Duration(s.intervalSec()) * time.Second
+	if d < minInterval {
+		return DefaultInterval
+	}
+	if d > maxInterval {
+		return maxInterval
+	}
+	return d
+}
+
+func (s *Syncer) intervalSec() int {
+	st, err := s.store.GetSettings()
+	if err != nil || st.UsageRefreshSec < 15 {
+		return int(DefaultInterval / time.Second)
+	}
+	if st.UsageRefreshSec > int(maxInterval/time.Second) {
+		return int(maxInterval / time.Second)
+	}
+	return st.UsageRefreshSec
+}
+
+func (s *Syncer) concurrency() int {
+	st, err := s.store.GetSettings()
+	if err != nil || st.UsageRefreshConcurrency < minConcurrency {
+		return DefaultConcurrency
+	}
+	if st.UsageRefreshConcurrency > maxConcurrency {
+		return maxConcurrency
+	}
+	return st.UsageRefreshConcurrency
 }
 
 func (s *Syncer) Refresh(id string) {
@@ -116,7 +167,13 @@ func (s *Syncer) start(list []model.Account, label string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("正在刷新用量，请稍后再试")
 	}
-	s.st = model.UsageSyncStatus{Running: true, Total: len(list), Message: "正在扫描 " + label}
+	s.st = model.UsageSyncStatus{
+		Running:    true,
+		Total:      len(list),
+		Message:    "正在扫描 " + label,
+		StartedAt:  time.Now().Unix(),
+		FinishedAt: s.st.FinishedAt,
+	}
 	s.mu.Unlock()
 	go s.run(list)
 	return nil
@@ -126,10 +183,15 @@ func (s *Syncer) run(list []model.Account) {
 	defer func() {
 		s.mu.Lock()
 		s.st.Running = false
+		s.st.FinishedAt = time.Now().Unix()
 		s.st.Message = fmt.Sprintf("完成，已支付 %d，未支付 %d，失败 %d", s.st.Paid, s.st.Unpaid, s.st.Fail)
 		s.mu.Unlock()
 	}()
-	sem := make(chan struct{}, 4)
+	n := s.concurrency()
+	if n < minConcurrency {
+		n = DefaultConcurrency
+	}
+	sem := make(chan struct{}, n)
 	var wg sync.WaitGroup
 	for _, a := range list {
 		a := a

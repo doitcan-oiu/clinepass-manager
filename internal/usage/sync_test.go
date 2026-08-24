@@ -62,6 +62,55 @@ func TestRefreshCoalescesConcurrentCalls(t *testing.T) {
 	}
 }
 
+func TestRunHonorsRefreshConcurrency(t *testing.T) {
+	st := openStore(t)
+	cfg, err := st.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.UsageRefreshConcurrency = 2
+	if err := st.SaveSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		mustPaid(t, st, fmt.Sprintf("a%d@x.com", i))
+	}
+	s := NewSyncer(st)
+	var inflight, peak atomic.Int32
+	s.fetch = func(model.Account, string) (model.AccountUsage, bool, error) {
+		n := inflight.Add(1)
+		for {
+			cur := peak.Load()
+			if n <= cur || peak.CompareAndSwap(cur, n) {
+				break
+			}
+		}
+		time.Sleep(40 * time.Millisecond)
+		inflight.Add(-1)
+		return okUsage(10), true, nil
+	}
+	if err := s.StartAll(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for s.Status().Running {
+		if time.Now().After(deadline) {
+			t.Fatal("sync did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if peak.Load() > 2 {
+		t.Fatalf("peak concurrency=%d", peak.Load())
+	}
+	if peak.Load() < 2 {
+		t.Fatalf("did not reach configured concurrency, peak=%d", peak.Load())
+	}
+	stt := s.Status()
+	if stt.FinishedAt <= 0 || stt.Concurrency != 2 || stt.IntervalSec != 60 {
+		t.Fatalf("status %+v", stt)
+	}
+}
+
 func TestFetchErrorKeepsPreviousUsage(t *testing.T) {
 	st := openStore(t)
 	a := mustPaid(t, st, "a@x.com")

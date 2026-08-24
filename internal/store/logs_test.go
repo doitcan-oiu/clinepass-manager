@@ -158,4 +158,16 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if err != nil || again.ProviderMode != "replace" {
 		t.Fatalf("provider mode %+v %v", again, err)
 	}
+	if again.UsageRefreshSec != 60 || again.UsageRefreshConcurrency != 10 {
+		t.Fatalf("usage refresh defaults %+v", again)
+	}
+	again.UsageRefreshSec = 120
+	again.UsageRefreshConcurrency = 16
+	if err := s.SaveSettings(again); err != nil {
+		t.Fatal(err)
+	}
+	gotRefresh, err := s.GetSettings()
+	if err != nil || gotRefresh.UsageRefreshSec != 120 || gotRefresh.UsageRefreshConcurrency != 16 {
+		t.Fatalf("usage refresh %+v %v", gotRefresh, err)
+	}
 }

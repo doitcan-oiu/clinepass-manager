@@ -119,17 +119,19 @@ type Job struct {
 }
 
 type Settings struct {
-	Proxy           string  `json:"proxy"`
-	Headless        bool    `json:"headless"`
-	InviteURL       string  `json:"invite_url,omitempty"`
-	UsageJSURL      string  `json:"usage_js_url,omitempty"`
-	HeroSMSAPIKey   string  `json:"hero_sms_api_key,omitempty"`
-	HeroSMSService  string  `json:"hero_sms_service,omitempty"`
-	HeroSMSCountry  int     `json:"hero_sms_country,omitempty"`
-	HeroSMSMaxPrice float64 `json:"hero_sms_max_price,omitempty"`
-	MaxConcurrent        int      `json:"max_concurrent,omitempty"`
-	MaxRetries           int      `json:"max_retries"`
-	EmailSuffixBlacklist []string `json:"email_suffix_blacklist,omitempty"`
-	ProviderMode         string   `json:"provider_mode,omitempty"`
-	ProviderValue        string   `json:"provider_value,omitempty"`
+	Proxy                   string   `json:"proxy"`
+	Headless                bool     `json:"headless"`
+	InviteURL               string   `json:"invite_url,omitempty"`
+	UsageJSURL              string   `json:"usage_js_url,omitempty"`
+	HeroSMSAPIKey           string   `json:"hero_sms_api_key,omitempty"`
+	HeroSMSService          string   `json:"hero_sms_service,omitempty"`
+	HeroSMSCountry          int      `json:"hero_sms_country,omitempty"`
+	HeroSMSMaxPrice         float64  `json:"hero_sms_max_price,omitempty"`
+	MaxConcurrent           int      `json:"max_concurrent,omitempty"`
+	MaxRetries              int      `json:"max_retries"`
+	UsageRefreshSec         int      `json:"usage_refresh_sec"`
+	UsageRefreshConcurrency int      `json:"usage_refresh_concurrency"`
+	EmailSuffixBlacklist    []string `json:"email_suffix_blacklist,omitempty"`
+	ProviderMode            string   `json:"provider_mode,omitempty"`
+	ProviderValue           string   `json:"provider_value,omitempty"`
 }

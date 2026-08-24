@@ -126,6 +126,12 @@ CREATE TABLE IF NOT EXISTS batches (
 	if err := s.ensureColumn("settings", "provider_value", `ALTER TABLE settings ADD COLUMN provider_value TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("settings", "usage_refresh_sec", `ALTER TABLE settings ADD COLUMN usage_refresh_sec INTEGER NOT NULL DEFAULT 60`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "usage_refresh_concurrency", `ALTER TABLE settings ADD COLUMN usage_refresh_concurrency INTEGER NOT NULL DEFAULT 10`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("accounts", "login_provider", `ALTER TABLE accounts ADD COLUMN login_provider TEXT NOT NULL DEFAULT 'google'`); err != nil {
 		return err
 	}
@@ -406,21 +412,24 @@ func (s *Store) GetSettings() (model.Settings, error) {
 	row := s.db.QueryRow(`SELECT proxy, headless, invite_url, usage_js_url,
 		IFNULL(hero_sms_api_key, ''), IFNULL(hero_sms_service, ''), IFNULL(hero_sms_country, 0), IFNULL(hero_sms_max_price, 0),
 		IFNULL(max_concurrent, 1), IFNULL(max_retries, 3), IFNULL(email_suffix_blacklist, ''),
-		IFNULL(provider_mode, 'keep'), IFNULL(provider_value, '')
+		IFNULL(provider_mode, 'keep'), IFNULL(provider_value, ''),
+		IFNULL(usage_refresh_sec, 60), IFNULL(usage_refresh_concurrency, 10)
 		FROM settings WHERE id = 1`)
 	var out model.Settings
 	var headless int
 	var blacklist string
 	if err := row.Scan(&out.Proxy, &headless, &out.InviteURL, &out.UsageJSURL,
 		&out.HeroSMSAPIKey, &out.HeroSMSService, &out.HeroSMSCountry, &out.HeroSMSMaxPrice, &out.MaxConcurrent, &out.MaxRetries, &blacklist,
-		&out.ProviderMode, &out.ProviderValue); err != nil {
-		return model.Settings{Headless: true, MaxRetries: 3}, err
+		&out.ProviderMode, &out.ProviderValue, &out.UsageRefreshSec, &out.UsageRefreshConcurrency); err != nil {
+		return model.Settings{Headless: true, MaxRetries: 3, UsageRefreshSec: 60, UsageRefreshConcurrency: 10}, err
 	}
 	out.Headless = headless != 0
 	if out.MaxConcurrent < 1 {
 		out.MaxConcurrent = 1
 	}
 	out.MaxRetries = clampMaxRetries(out.MaxRetries)
+	out.UsageRefreshSec = clampUsageRefreshSec(out.UsageRefreshSec)
+	out.UsageRefreshConcurrency = clampUsageRefreshConcurrency(out.UsageRefreshConcurrency)
 	out.EmailSuffixBlacklist = DecodeSuffixList(blacklist)
 	out.ProviderMode = normalizeProviderMode(out.ProviderMode)
 	return out, nil
@@ -440,11 +449,13 @@ func (s *Store) SaveSettings(in model.Settings) error {
 		conc = 1
 	}
 	retries := clampMaxRetries(in.MaxRetries)
+	refreshSec := clampUsageRefreshSec(in.UsageRefreshSec)
+	refreshConc := clampUsageRefreshConcurrency(in.UsageRefreshConcurrency)
 	blacklist := EncodeSuffixList(in.EmailSuffixBlacklist)
 	providerMode := normalizeProviderMode(in.ProviderMode)
 	_, err := s.db.Exec(`
-INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, usage_refresh_concurrency, updated_at)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	proxy = excluded.proxy,
 	headless = excluded.headless,
@@ -459,10 +470,12 @@ ON CONFLICT(id) DO UPDATE SET
 	email_suffix_blacklist = excluded.email_suffix_blacklist,
 	provider_mode = excluded.provider_mode,
 	provider_value = excluded.provider_value,
+	usage_refresh_sec = excluded.usage_refresh_sec,
+	usage_refresh_concurrency = excluded.usage_refresh_concurrency,
 	updated_at = excluded.updated_at`,
 		strings.TrimSpace(in.Proxy), headless, strings.TrimSpace(in.InviteURL), strings.TrimSpace(in.UsageJSURL),
 		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, retries, blacklist,
-		providerMode, in.ProviderValue, time.Now().Unix())
+		providerMode, in.ProviderValue, refreshSec, refreshConc, time.Now().Unix())
 	return err
 }
 
@@ -500,6 +513,26 @@ func clampMaxRetries(n int) int {
 	}
 	if n > 32 {
 		return 32
+	}
+	return n
+}
+
+func clampUsageRefreshSec(n int) int {
+	if n < 15 {
+		return 60
+	}
+	if n > 86400 {
+		return 86400
+	}
+	return n
+}
+
+func clampUsageRefreshConcurrency(n int) int {
+	if n < 1 {
+		return 10
+	}
+	if n > 64 {
+		return 64
 	}
 	return n
 }

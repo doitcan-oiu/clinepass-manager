@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { downloadJSON } from "@/lib/download"
 import type { Batch, ModelSpend, PoolAccount, PoolStats, UsageSyncStatus, UsageWindow } from "@/lib/types"
-import { barClass, formatResetAt, formatTime, health, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, shelfOf, usageRows, windowPct } from "@/lib/quota"
+import { barClass, formatRefreshAt, formatResetAt, health, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, shelfOf, usageRows, windowPct } from "@/lib/quota"
 import { AddPaidDialog } from "@/components/accounts/add-paid-dialog"
 import { loginProviderLabel, normalizeLoginProvider } from "@/lib/login-provider"
 import { Button } from "@/components/ui/button"
@@ -79,12 +79,11 @@ export function AccountsPage() {
   }, [page, batchId])
 
   useEffect(() => {
-    if (!sync.running) return
     const t = setInterval(() => {
       reload(page, batchId).catch(() => {})
-    }, 2000)
+    }, 3000)
     return () => clearInterval(t)
-  }, [sync.running, page, batchId])
+  }, [page, batchId])
 
   async function refreshAll() {
     try {
@@ -219,6 +218,11 @@ export function AccountsPage() {
           <MiniBar label="滚动" pct={stats.avg_rolling} on={barsOn} />
           <MiniBar label="每周" pct={stats.avg_weekly} on={barsOn} />
           <MiniBar label="每月" pct={stats.avg_monthly} on={barsOn} />
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 text-[11px] text-muted-foreground">
+          <span>{sync.running ? `刷新中 ${sync.done}/${sync.total}` : formatRefreshAt(sync.finished_at || 0)}</span>
+          <span>每 {sync.interval_sec || 60} 秒</span>
+          <span>并发 {sync.concurrency || 10}</span>
         </div>
       </div>
 
@@ -443,7 +447,7 @@ function AccountCard({
         ))}
       </div>
       {a.usage?.error ? <p className="mt-2 truncate text-[11px] text-red-600" title={a.usage.error}>{a.usage.error}</p> : null}
-      <p className="mt-2 text-[11px] text-muted-foreground">{formatTime(a.usage?.synced_at || 0)}</p>
+      <p className="mt-2 text-[11px] text-muted-foreground">{formatRefreshAt(a.usage?.synced_at || 0)}</p>
     </article>
   )
 }
@@ -503,6 +507,7 @@ function QuotaFold({
                 </button>
                 <span className="hidden text-[11px] text-muted-foreground sm:inline">{a.batch_name || ""}</span>
                 <span className={`font-mono text-[11px] ${pctText(pct)}`}>{pct == null ? "—" : `${pctLabel} ${Math.round(pct)}%`}</span>
+                <span className="hidden w-36 text-right text-[11px] text-muted-foreground lg:inline">{formatRefreshAt(a.usage?.synced_at || 0)}</span>
                 <span className="hidden w-28 text-right text-[11px] text-muted-foreground md:inline">{reset ? `重置 ${reset}` : ""}</span>
                 <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="刷新用量" disabled={busyId === a.id} onClick={() => onRefresh(a)}>
                   <RefreshCw className={busyId === a.id ? "animate-spin" : undefined} />

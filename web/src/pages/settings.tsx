@@ -35,6 +35,8 @@ export function SettingsPage() {
   const [headless, setHeadless] = useState(true)
   const [maxConcurrent, setMaxConcurrent] = useState(1)
   const [maxRetries, setMaxRetries] = useState(3)
+  const [usageRefreshSec, setUsageRefreshSec] = useState(60)
+  const [usageRefreshConcurrency, setUsageRefreshConcurrency] = useState(10)
   const [providerMode, setProviderMode] = useState<"keep" | "hide" | "replace">("keep")
   const [providerValue, setProviderValue] = useState("")
   const [apiKey, setApiKey] = useState("")
@@ -54,6 +56,8 @@ export function SettingsPage() {
         setHeadless(cfg.headless !== false)
         setMaxConcurrent(cfg.max_concurrent >= 1 ? cfg.max_concurrent : 1)
         setMaxRetries(Number.isFinite(cfg.max_retries) && cfg.max_retries >= 0 ? cfg.max_retries : 3)
+        setUsageRefreshSec(cfg.usage_refresh_sec >= 15 ? cfg.usage_refresh_sec : 60)
+        setUsageRefreshConcurrency(cfg.usage_refresh_concurrency >= 1 ? cfg.usage_refresh_concurrency : 10)
         setProviderMode(cfg.provider_mode === "hide" || cfg.provider_mode === "replace" ? cfg.provider_mode : "keep")
         setProviderValue(cfg.provider_value || "")
         setApiKey(cfg.hero_sms_api_key || "")
@@ -116,16 +120,30 @@ export function SettingsPage() {
         toast.error("失败换号次数须在 0–32")
         return
       }
+      const refreshSec = Math.floor(Number(usageRefreshSec))
+      if (!Number.isFinite(refreshSec) || refreshSec < 15 || refreshSec > 86400) {
+        toast.error("用量刷新间隔须在 15–86400 秒")
+        return
+      }
+      const refreshConc = Math.floor(Number(usageRefreshConcurrency))
+      if (!Number.isFinite(refreshConc) || refreshConc < 1 || refreshConc > 64) {
+        toast.error("用量刷新并发须在 1–64")
+        return
+      }
       await api.saveConfig({
         proxy,
         headless,
         max_concurrent: n,
         max_retries: retries,
+        usage_refresh_sec: refreshSec,
+        usage_refresh_concurrency: refreshConc,
         provider_mode: providerMode,
         provider_value: providerValue,
       })
       setMaxConcurrent(n)
       setMaxRetries(retries)
+      setUsageRefreshSec(refreshSec)
+      setUsageRefreshConcurrency(refreshConc)
       toast.success("运行环境已保存")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存失败")
@@ -243,8 +261,34 @@ export function SettingsPage() {
                     onChange={(e) => setMaxRetries(Number(e.target.value))}
                   />
                   <p className="text-xs text-muted-foreground">
-                    上游 429/5xx 时再换几个号，0 表示不换号。5 小时 / 周 / 月已经 100% 的账号不会参与转发和重试。用量默认每分钟自动刷新，遇到 429 也会立刻刷新该账号。
+                    上游 429/5xx 时再换几个号，0 表示不换号。5 小时 / 周 / 月已经 100% 的账号不会参与转发和重试。遇到 429 也会立刻刷新该账号用量。
                   </p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="usage-refresh-sec">用量刷新间隔（秒）</Label>
+                  <Input
+                    id="usage-refresh-sec"
+                    type="number"
+                    min={15}
+                    max={86400}
+                    step={1}
+                    value={usageRefreshSec}
+                    onChange={(e) => setUsageRefreshSec(Number(e.target.value))}
+                  />
+                  <p className="text-xs text-muted-foreground">后台自动拉套餐用量的间隔，默认 60 秒。改完下一轮生效，账号页会跟着更新。</p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="usage-refresh-concurrency">用量刷新并发</Label>
+                  <Input
+                    id="usage-refresh-concurrency"
+                    type="number"
+                    min={1}
+                    max={64}
+                    step={1}
+                    value={usageRefreshConcurrency}
+                    onChange={(e) => setUsageRefreshConcurrency(Number(e.target.value))}
+                  />
+                  <p className="text-xs text-muted-foreground">一次自动/手动刷新同时打多少个账号，默认 10，范围 1–64。</p>
                 </div>
                 <Button type="submit" disabled={pending} className="w-fit">
                   保存运行环境

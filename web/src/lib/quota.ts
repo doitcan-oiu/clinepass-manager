@@ -24,7 +24,12 @@ export function formatTime(ts: number) {
   if (!ts) return "—"
   const d = new Date(ts * 1000)
   const pad = (n: number) => String(n).padStart(2, "0")
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+export function formatRefreshAt(ts: number) {
+  if (!ts) return "尚未刷新"
+  return `刷新于 ${formatTime(ts)}`
 }
 
 export function barClass(pct: number | null) {

@@ -103,13 +103,17 @@ type CreatePaidAccountInput struct {
 }
 
 type UsageSyncStatus struct {
-	Running bool   `json:"running"`
-	Total   int    `json:"total"`
-	Done    int    `json:"done"`
-	Fail    int    `json:"fail"`
-	Paid    int    `json:"paid"`
-	Unpaid  int    `json:"unpaid"`
-	Message string `json:"message"`
+	Running     bool   `json:"running"`
+	Total       int    `json:"total"`
+	Done        int    `json:"done"`
+	Fail        int    `json:"fail"`
+	Paid        int    `json:"paid"`
+	Unpaid      int    `json:"unpaid"`
+	Message     string `json:"message"`
+	StartedAt   int64  `json:"started_at"`
+	FinishedAt  int64  `json:"finished_at"`
+	IntervalSec int    `json:"interval_sec"`
+	Concurrency int    `json:"concurrency"`
 }
 
 type PoolStats struct {
