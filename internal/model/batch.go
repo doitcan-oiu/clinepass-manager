@@ -24,8 +24,9 @@ type BatchSummary struct {
 }
 
 type PayLink struct {
-	Email string `json:"email"`
-	URL   string `json:"payment_url"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	URL      string `json:"payment_url"`
 }
 
 type CreateBatchInput struct {

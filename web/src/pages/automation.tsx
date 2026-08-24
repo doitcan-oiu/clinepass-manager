@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import type { Batch } from "@/lib/types"
-import { downloadText } from "@/lib/download"
+import { downloadBase64, xlsxMime } from "@/lib/download"
 import { AddBatchDialog } from "@/components/accounts/add-batch-dialog"
 import { BatchCard } from "@/components/accounts/batch-card"
 import { Button } from "@/components/ui/button"
@@ -78,8 +78,8 @@ export function AutomationPage() {
   async function downloadForStaff(b: Batch) {
     try {
       const res = await api.dispatchBatch(b.id)
-      downloadText(`${b.name}-支付链接.txt`, res.text)
-      toast.success(`已下载 ${res.count} 条`)
+      downloadBase64(res.filename || `${b.name}-支付链接.xlsx`, res.xlsx, xlsxMime)
+      toast.success(`已下载 ${res.count} 条，含账号和密码`)
       await reload(page)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "下载失败")

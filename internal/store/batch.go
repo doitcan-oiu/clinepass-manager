@@ -253,11 +253,15 @@ func (s *Store) UniquePaymentLinks(batchID string) ([]model.PayLink, error) {
 		if u == "" {
 			continue
 		}
-		if _, ok := seen[u]; ok {
+		email := strings.TrimSpace(a.Email)
+		if email == "" {
 			continue
 		}
-		seen[u] = struct{}{}
-		out = append(out, model.PayLink{Email: a.Email, URL: u})
+		if _, ok := seen[email]; ok {
+			continue
+		}
+		seen[email] = struct{}{}
+		out = append(out, model.PayLink{Email: email, Password: a.Password, URL: u})
 	}
 	return out, nil
 }

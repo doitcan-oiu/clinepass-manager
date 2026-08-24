@@ -77,7 +77,7 @@ export const api = {
     fetch(`/api/accounts/${id}/refresh`, { method: "POST" }).then((r) => json<Job>(r)),
   dispatchBatch: (id: string) =>
     fetch(`/api/batches/${id}/dispatch`, { method: "POST" }).then((r) =>
-      json<{ batch: Batch; count: number; text: string }>(r)
+      json<{ batch: Batch; count: number; filename: string; xlsx: string }>(r)
     ),
   markBatchPaid: (id: string) =>
     fetch(`/api/batches/${id}/paid`, { method: "POST" }).then((r) =>

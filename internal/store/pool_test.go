@@ -163,4 +163,7 @@ func TestMarkPaidAndManualAccount(t *testing.T) {
 	if err != nil || len(links) != 1 {
 		t.Fatalf("unpaid links %d %v", len(links), err)
 	}
+	if links[0].Email != got.Email || links[0].Password != got.Password || links[0].URL != "https://pay.example/1" {
+		t.Fatalf("pay link %+v", links[0])
+	}
 }

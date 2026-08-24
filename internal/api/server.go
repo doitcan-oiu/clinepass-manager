@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"opencode-go-manager/internal/browser"
 	"opencode-go-manager/internal/config"
+	"opencode-go-manager/internal/export"
 	"opencode-go-manager/internal/job"
 	"opencode-go-manager/internal/model"
 	"opencode-go-manager/internal/proxy"
@@ -418,20 +420,26 @@ func (s *Server) dispatchBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "还没有支付链接，请先提取")
 		return
 	}
-	lines := make([]string, 0, len(links))
-	for _, l := range links {
-		lines = append(lines, l.URL)
+	raw, err := export.PayLinksXLSX(links)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	if err := s.store.MarkExported(id, len(links)); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	sum, _ := s.store.GetBatchSummary(id)
+	name := strings.TrimSpace(sum.Name)
+	if name == "" {
+		name = "支付链接"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"batch": sum,
-		"items": links,
-		"count": len(links),
-		"text":  strings.Join(lines, "\n") + "\n",
+		"batch":    sum,
+		"items":    links,
+		"count":    len(links),
+		"filename": name + "-支付链接.xlsx",
+		"xlsx":     base64.StdEncoding.EncodeToString(raw),
 	})
 }
 

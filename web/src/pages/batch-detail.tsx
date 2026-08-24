@@ -9,7 +9,7 @@ import { JobLogPanel } from "@/components/accounts/job-log-panel"
 import { Button } from "@/components/ui/button"
 import { batchStatus, radarDeniedCount, waitingCount } from "@/lib/batch-ui"
 import { emailByAccount, jobStatusByAccount, latestStepByAccount } from "@/lib/job-log"
-import { downloadText } from "@/lib/download"
+import { downloadBase64, xlsxMime } from "@/lib/download"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -202,8 +202,8 @@ export function BatchDetailPage() {
     if (!id) return
     try {
       const res = await api.dispatchBatch(id)
-      downloadText(`${batch?.name || "batch"}-支付链接.txt`, res.text)
-      toast.success(`已下载 ${res.count} 条支付链接，把这个 txt 发给员工即可`)
+      downloadBase64(res.filename || `${batch?.name || "batch"}-支付链接.xlsx`, res.xlsx, xlsxMime)
+      toast.success(`已下载 ${res.count} 条，含账号和密码`)
       await reload()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "下载失败")
@@ -262,7 +262,7 @@ export function BatchDetailPage() {
           onClick={exportPay}
           disabled={!batch?.unpaid_pay_count}
         >
-          下载支付链接.txt
+          下载 Excel
         </Button>
         <Button
           className={batch && batchStatus(batch).primary === "paid" && batch.unpaid_cookie_count ? "bg-violet-600 text-white hover:bg-violet-700" : ""}
