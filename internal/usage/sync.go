@@ -10,14 +10,25 @@ import (
 	"opencode-go-manager/internal/store"
 )
 
+const DefaultInterval = time.Minute
+
 type Syncer struct {
-	store *store.Store
-	mu    sync.Mutex
-	st    model.UsageSyncStatus
+	store   *store.Store
+	fetch   func(model.Account, string) (model.AccountUsage, bool, error)
+	mu      sync.Mutex
+	st      model.UsageSyncStatus
+	kicking map[string]*sync.WaitGroup
 }
 
 func NewSyncer(st *store.Store) *Syncer {
-	return &Syncer{store: st}
+	return &Syncer{store: st, kicking: map[string]*sync.WaitGroup{}}
+}
+
+func (s *Syncer) doFetch(a model.Account, proxy string) (model.AccountUsage, bool, error) {
+	if s.fetch != nil {
+		return s.fetch(a, proxy)
+	}
+	return FetchAccount(a, proxy)
 }
 
 func (s *Syncer) Status() model.UsageSyncStatus {
@@ -56,6 +67,47 @@ func (s *Syncer) One(id string) (model.AccountUsage, error) {
 	}
 	u, _, err := s.syncOne(a)
 	return u, err
+}
+
+func (s *Syncer) StartLoop(interval time.Duration) {
+	if interval <= 0 {
+		interval = DefaultInterval
+	}
+	go func() {
+		_ = s.StartAll()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for range t.C {
+			_ = s.StartAll()
+		}
+	}()
+}
+
+func (s *Syncer) Refresh(id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.kicking == nil {
+		s.kicking = map[string]*sync.WaitGroup{}
+	}
+	if wg, ok := s.kicking[id]; ok {
+		s.mu.Unlock()
+		wg.Wait()
+		return
+	}
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	s.kicking[id] = wg
+	s.mu.Unlock()
+
+	_, _ = s.One(id)
+
+	s.mu.Lock()
+	delete(s.kicking, id)
+	s.mu.Unlock()
+	wg.Done()
 }
 
 func (s *Syncer) start(list []model.Account, label string) error {
@@ -121,13 +173,13 @@ func (s *Syncer) syncOne(a model.Account) (model.AccountUsage, bool, error) {
 			_ = s.store.SaveLoginResult(a)
 		}
 	}
-	u, subscribed, err := FetchAccount(a, proxy)
+	u, subscribed, err := s.doFetch(a, proxy)
 	if err != nil {
-		_ = s.store.SaveAccountUsage(a.ID, model.AccountUsage{
-			Error:    err.Error(),
-			SyncedAt: time.Now().Unix(),
-		})
-		return model.AccountUsage{}, false, err
+		prev, _ := s.store.GetAccountUsage(a.ID)
+		prev.Error = err.Error()
+		prev.SyncedAt = time.Now().Unix()
+		_ = s.store.SaveAccountUsage(a.ID, prev)
+		return prev, false, err
 	}
 	_ = s.store.SetAccountPaid(a.ID, subscribed)
 	if err := s.store.SaveAccountUsage(a.ID, u); err != nil {

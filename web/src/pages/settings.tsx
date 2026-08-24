@@ -243,7 +243,7 @@ export function SettingsPage() {
                     onChange={(e) => setMaxRetries(Number(e.target.value))}
                   />
                   <p className="text-xs text-muted-foreground">
-                    上游 429/5xx 时再换几个号，0 表示不换号。5 小时 / 周 / 月已经 100% 的账号不会参与转发和重试。
+                    上游 429/5xx 时再换几个号，0 表示不换号。5 小时 / 周 / 月已经 100% 的账号不会参与转发和重试。用量默认每分钟自动刷新，遇到 429 也会立刻刷新该账号。
                   </p>
                 </div>
                 <Button type="submit" disabled={pending} className="w-fit">

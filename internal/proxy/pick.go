@@ -15,17 +15,19 @@ const defaultMaxRetries = 3
 const maxRetryCap = 32
 
 type balancer struct {
-	mu       sync.Mutex
-	cool     map[string]time.Time
-	inflight map[string]int
-	lastPick map[string]time.Time
+	mu         sync.Mutex
+	cool       map[string]time.Time
+	inflight   map[string]int
+	lastPick   map[string]time.Time
+	refreshing map[string]int
 }
 
 func newBalancer() *balancer {
 	return &balancer{
-		cool:     map[string]time.Time{},
-		inflight: map[string]int{},
-		lastPick: map[string]time.Time{},
+		cool:       map[string]time.Time{},
+		inflight:   map[string]int{},
+		lastPick:   map[string]time.Time{},
+		refreshing: map[string]int{},
 	}
 }
 
@@ -61,6 +63,33 @@ func (b *balancer) end(id string) {
 		b.inflight[id]--
 	}
 	b.mu.Unlock()
+}
+
+func (b *balancer) hold(id string) {
+	if id == "" {
+		return
+	}
+	b.mu.Lock()
+	b.refreshing[id]++
+	b.mu.Unlock()
+}
+
+func (b *balancer) unhold(id string) {
+	if id == "" {
+		return
+	}
+	b.mu.Lock()
+	if b.refreshing[id] > 0 {
+		b.refreshing[id]--
+		if b.refreshing[id] == 0 {
+			delete(b.refreshing, id)
+		}
+	}
+	b.mu.Unlock()
+}
+
+func (b *balancer) holding(id string) bool {
+	return b.refreshing[id] > 0
 }
 
 func (b *balancer) cooldown(id string, d time.Duration) {
@@ -188,7 +217,7 @@ func (b *balancer) rankLocked(accounts []model.PoolAccount, modelID string, skip
 	out := make([]model.PoolAccount, 0, len(accounts))
 	for _, a := range accounts {
 		id := accountID(a)
-		if skip[id] || b.cooling(id, now) || !canServeQuota(a, now) {
+		if skip[id] || b.cooling(id, now) || b.holding(id) || !canServeQuota(a, now) {
 			continue
 		}
 		out = append(out, a)
@@ -232,4 +261,3 @@ func maxAttemptsFromSettings(retries int) int {
 	}
 	return retries + 1
 }
-

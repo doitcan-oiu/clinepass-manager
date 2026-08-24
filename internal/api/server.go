@@ -37,6 +37,8 @@ func New(cfg config.Config, st *store.Store, jobs *job.Manager, webRoot string) 
 		proxy:   proxy.New(st),
 		webRoot: webRoot,
 	}
+	s.proxy.SetUsageRefresher(s.usage)
+	s.usage.StartLoop(usage.DefaultInterval)
 	go s.expireLoop()
 	return s
 }

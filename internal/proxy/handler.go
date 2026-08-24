@@ -15,10 +15,15 @@ import (
 	"opencode-go-manager/internal/store"
 )
 
+type usageRefresher interface {
+	Refresh(id string)
+}
+
 type Handler struct {
-	store    *store.Store
-	client   *http.Client
-	upstream string
+	store     *store.Store
+	client    *http.Client
+	upstream  string
+	refresher usageRefresher
 }
 
 func New(st *store.Store) *Handler {
@@ -40,6 +45,21 @@ func New(st *store.Store) *Handler {
 		client:   &http.Client{Transport: tr},
 		upstream: "https://api.cline.bot",
 	}
+}
+
+func (h *Handler) SetUsageRefresher(r usageRefresher) {
+	h.refresher = r
+}
+
+func (h *Handler) refreshAfter429(id string) {
+	if h.refresher == nil || id == "" {
+		return
+	}
+	lb.hold(id)
+	go func() {
+		defer lb.unhold(id)
+		h.refresher.Refresh(id)
+	}()
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +137,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			lb.end(keyID)
 			if d := cooldownFor(a, resp.StatusCode, resp.Header); d > 0 {
 				lb.cooldown(keyID, d)
+			}
+			if resp.StatusCode == http.StatusTooManyRequests {
+				h.refreshAfter429(keyID)
 			}
 			lastStatus, lastBody = resp.StatusCode, b
 			state.httpStatus = lastStatus

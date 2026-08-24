@@ -272,6 +272,159 @@ func Test429DoesNotExcludeSameAccount(t *testing.T) {
 	}
 }
 
+type refreshFunc func(id string)
+
+func (f refreshFunc) Refresh(id string) { f(id) }
+
+func Test429RefreshesUsageAndSkipsExhaustedKey(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "a@x.com", APIKey: "sk-a", WorkspaceID: "ws", CookieHeader: "auth=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "b@x.com", APIKey: "sk-b", WorkspaceID: "ws", CookieHeader: "auth=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	mustUsage(t, st, a.ID, 40, now)
+	mustUsage(t, st, b.ID, 40, now)
+
+	refreshed := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.Header.Get("Authorization"), "sk-a") {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"You have reached your 5-hour Clinepass limit"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	h.SetUsageRefresher(refreshFunc(func(id string) {
+		_ = st.SaveAccountUsage(id, model.AccountUsage{
+			SyncedAt: time.Now().Unix(),
+			Rolling:  model.UsageWindow{Status: "rate-limited", UsagePercent: 100, ResetInSec: 3600},
+			Weekly:   model.UsageWindow{Status: "ok", UsagePercent: 10},
+			Monthly:  model.UsageWindow{Status: "ok", UsagePercent: 10},
+		})
+		close(refreshed)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	select {
+	case <-refreshed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("429 did not refresh usage")
+	}
+
+	var seen []string
+	up2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(up2.Close)
+	h.upstream = up2.URL
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != 200 {
+		t.Fatalf("second status=%d", rr2.Code)
+	}
+	if len(seen) != 1 || seen[0] != "Bearer sk-b" {
+		t.Fatalf("exhausted key still used: %v", seen)
+	}
+}
+
+func Test429HoldsKeyUntilRefreshFinishes(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "a@x.com", APIKey: "sk-a", WorkspaceID: "ws", CookieHeader: "auth=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "b@x.com", APIKey: "sk-b", WorkspaceID: "ws", CookieHeader: "auth=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	mustUsage(t, st, a.ID, 10, now)
+	mustUsage(t, st, b.ID, 10, now)
+
+	block := make(chan struct{})
+	started := make(chan struct{})
+	var mu sync.Mutex
+	var seen []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		seen = append(seen, auth)
+		mu.Unlock()
+		if strings.HasSuffix(auth, "sk-a") {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"rate"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	h.SetUsageRefresher(refreshFunc(func(string) {
+		close(started)
+		<-block
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d", rr.Code)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not start")
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != 200 {
+		t.Fatalf("second status=%d", rr2.Code)
+	}
+	close(block)
+	mu.Lock()
+	got := append([]string{}, seen...)
+	mu.Unlock()
+	if len(got) < 3 {
+		t.Fatalf("seen %v", got)
+	}
+	for i := 2; i < len(got); i++ {
+		if got[i] == "Bearer sk-a" {
+			t.Fatalf("held key reused before refresh finished: %v", got)
+		}
+	}
+}
+
 func TestRecordsUpstream400ErrorBody(t *testing.T) {
 	resetBalancer()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))

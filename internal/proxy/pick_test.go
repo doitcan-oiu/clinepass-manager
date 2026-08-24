@@ -161,6 +161,22 @@ func TestInflightPrefersIdleKey(t *testing.T) {
 	}
 }
 
+func TestHoldSkipsKeyUntilUnhold(t *testing.T) {
+	resetBalancer()
+	a := acc("a@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	b := acc("b@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	lb.hold(a.ID)
+	got := Rank([]model.PoolAccount{a, b}, "glm-5.3")
+	if len(got) != 1 || got[0].Email != "b@x.com" {
+		t.Fatalf("held key still ranked: %v", emails(got))
+	}
+	lb.unhold(a.ID)
+	got = Rank([]model.PoolAccount{a, b}, "glm-5.3")
+	if len(got) != 2 {
+		t.Fatalf("after unhold got %v", emails(got))
+	}
+}
+
 func TestReserveLeastInflightNotLowestUsage(t *testing.T) {
 	resetBalancer()
 	low := acc("low@x.com", "k", win("ok", 5), win("ok", 5), win("ok", 5), "glm-5.3", 1)
