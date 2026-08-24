@@ -49,7 +49,7 @@ bin/server       生产二进制（make build 生成）
 | `make api` | 只起后端，开发端口 `:8080`（不跑 ensure-env，不启前端） |
 | `make web` | 只起 Vite 前端 `:5173` |
 | `make install-web` | `cd web && npm install` |
-| `make build-web` | `cd web && npm run build` |
+| `make build-web` | 先 `npm install`，再 `npm run build` |
 | `make tidy` | `go mod tidy` |
 | `make browser-deps` | `apt` 安装 Xvfb 和 Chromium 运行库（需要 sudo） |
 | `make worker-test` | 跑工人单测（`test_urls`、`test_herosms`、`test_cloak`、`test_radar`） |

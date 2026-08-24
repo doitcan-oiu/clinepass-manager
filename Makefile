@@ -38,7 +38,7 @@ web:
 install-web:
 	cd web && npm install
 
-build-web:
+build-web: install-web
 	cd web && npm run build
 
 tidy:
