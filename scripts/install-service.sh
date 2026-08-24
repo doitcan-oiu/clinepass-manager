@@ -7,6 +7,35 @@ UNIT_DST="/etc/systemd/system/clinepass-manager.service"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+listen_url() {
+	local addr=":9999"
+	local line host port
+	if [[ -n "${ADDR:-}" ]]; then
+		addr="$ADDR"
+	elif [[ -f "$ROOT/config.yaml" ]]; then
+		line="$(grep -E '^[[:space:]]*addr:' "$ROOT/config.yaml" | grep -v '^[[:space:]]*#' | head -1 || true)"
+		line="${line#*addr:}"
+		line="${line%%#*}"
+		line="${line// /}"
+		line="${line//\"/}"
+		line="${line//\'/}"
+		if [[ -n "$line" ]]; then
+			addr="$line"
+		fi
+	fi
+	if [[ "$addr" != *:* ]]; then
+		addr=":$addr"
+	fi
+	host="${addr%:*}"
+	port="${addr##*:}"
+	if [[ -z "$host" || "$host" == "0.0.0.0" || "$host" == "::" || "$host" == "[::]" ]]; then
+		host="127.0.0.1"
+	fi
+	host="${host#[}"
+	host="${host%]}"
+	echo "http://${host}:${port}"
+}
+
 ensure_browser_deps() {
 	if have Xvfb; then
 		echo "==> Xvfb 已安装"
@@ -40,8 +69,8 @@ install_systemd() {
 		systemctl restart clinepass-manager
 	fi
 	rm -f "$tmp"
-	echo "==> 已发出 restart，等待 http://127.0.0.1:9999/api/health"
-	if ! wait_http "http://127.0.0.1:9999/api/health" 60; then
+	echo "==> 已发出 restart，等待 $(listen_url)/api/health"
+	if ! wait_http "$(listen_url)/api/health" 60; then
 		echo "==> 服务没有在 60 秒内就绪"
 		if have journalctl; then
 			journalctl -u clinepass-manager -n 40 --no-pager || true
@@ -51,7 +80,7 @@ install_systemd() {
 	fi
 	echo "==> 已启动 clinepass-manager"
 	echo "==> 工作目录 $ROOT"
-	echo "==> 打开 http://127.0.0.1:9999"
+	echo "==> 打开 $(listen_url)"
 	if have journalctl; then
 		journalctl -u clinepass-manager -n 15 --no-pager || true
 	elif have systemctl; then

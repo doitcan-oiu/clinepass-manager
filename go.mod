@@ -5,6 +5,7 @@ go 1.23.0
 require (
 	github.com/mxschmitt/playwright-go v0.6201.0
 	golang.org/x/net v0.35.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.38.2
 )
 
@@ -14,6 +15,7 @@ require (
 	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

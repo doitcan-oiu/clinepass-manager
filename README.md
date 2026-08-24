@@ -124,11 +124,21 @@ LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 huma
 
 不要把真实账密、Cookie、代理密码写进仓库。
 
+## 配置
+
+端口、数据目录等可以写在项目根目录的 `config.yaml`。启动后改文件需要重启才生效。
+
+优先级：**环境变量 > config.yaml > 代码默认值**。
+
+`make` / `make api` 仍会设 `ADDR=:8080`，所以开发端口不受 yaml 影响。生产 `make start` 读 yaml 里的 `addr`（默认 `:9999`）。
+
+也可以用 `CONFIG_FILE=/path/to.yaml` 指定别的文件。
+
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `ADDR` | `:9999` | 生产监听地址。`make` / `make api` 开发固定 `:8080` |
+| `ADDR` | `:9999` | 监听地址，也可写在 `config.yaml` 的 `addr`。`make` / `make api` 开发固定 `:8080` |
 | `DATA_DIR` | `./data` | SQLite、浏览器配置目录、截图、HOME 不可写时的回退目录 |
 | `HOME` | 进程用户家目录 | systemd `ProtectHome` 时请指到 `DATA_DIR/home` |
 | `INVITE_URL` | `https://authkit.cline.bot` | 邀请链接，可在设置里改 |

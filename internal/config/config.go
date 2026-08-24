@@ -25,22 +25,45 @@ type Config struct {
 	HeroSMSService  string
 	HeroSMSCountry  int
 	HeroSMSMaxPrice float64
+	LoginEngine     string
+	LoginPython     string
+	ConfigFile      string
 }
 
-func Load() Config {
+func Load() (Config, error) {
+	c := defaults()
+	path, required, err := discoverFile()
+	if err != nil {
+		return c, err
+	}
+	if path != "" {
+		if err := loadFile(path, &c); err != nil {
+			if required || !os.IsNotExist(err) {
+				return c, err
+			}
+		} else {
+			c.ConfigFile = path
+		}
+	}
+	applyEnv(&c)
+	c.Addr = normalizeAddr(c.Addr)
+	if strings.TrimSpace(c.DataDir) == "" {
+		c.DataDir = "./data"
+	}
+	c.applyProcessEnv()
+	return c, nil
+}
+
+func defaults() Config {
 	return Config{
-		Addr:            env("ADDR", ":9999"),
-		DataDir:         env("DATA_DIR", "./data"),
-		InviteURL:       env("INVITE_URL", "https://authkit.cline.bot"),
-		Headless:        envBool("HEADLESS", true),
-		SlowMo:          envFloat("SLOW_MO", 0),
-		CloakVersion:    env("CLOAKBROWSER_VERSION", "146.0.7680.177.5"),
-		CloakCacheDir:   env("CLOAKBROWSER_CACHE_DIR", ""),
-		CloakBinaryPath: env("CLOAKBROWSER_BINARY_PATH", ""),
-		LicenseKey:      env("CLOAKBROWSER_LICENSE_KEY", ""),
-		MaxConcurrent:   envInt("MAX_CONCURRENT", 1),
-		MaxRetries:      envInt("MAX_RETRIES", 3),
-		Proxy:           env("PROXY", ""),
+		Addr:          ":9999",
+		DataDir:       "./data",
+		InviteURL:     "https://authkit.cline.bot",
+		Headless:      true,
+		MaxConcurrent: 1,
+		MaxRetries:    3,
+		CloakVersion:  "146.0.7680.177.5",
+		LoginEngine:   "python",
 	}
 }
 
@@ -173,11 +196,69 @@ func (c Config) prepareRuntimeDir() (string, error) {
 	return "XDG_RUNTIME_DIR=" + cur + " 不可写（常见于 systemd ProtectHome 屏蔽 /run/user），已改用 " + dir, nil
 }
 
-func env(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
+func applyEnv(c *Config) {
+	if v := strings.TrimSpace(os.Getenv("ADDR")); v != "" {
+		c.Addr = v
 	}
-	return fallback
+	if v := strings.TrimSpace(os.Getenv("DATA_DIR")); v != "" {
+		c.DataDir = v
+	}
+	if v := strings.TrimSpace(os.Getenv("INVITE_URL")); v != "" {
+		c.InviteURL = v
+	}
+	if strings.TrimSpace(os.Getenv("HEADLESS")) != "" {
+		c.Headless = envBool("HEADLESS", c.Headless)
+	}
+	if strings.TrimSpace(os.Getenv("SLOW_MO")) != "" {
+		c.SlowMo = envFloat("SLOW_MO", c.SlowMo)
+	}
+	if v := strings.TrimSpace(os.Getenv("CLOAKBROWSER_VERSION")); v != "" {
+		c.CloakVersion = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CLOAKBROWSER_CACHE_DIR")); v != "" {
+		c.CloakCacheDir = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CLOAKBROWSER_BINARY_PATH")); v != "" {
+		c.CloakBinaryPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CLOAKBROWSER_LICENSE_KEY")); v != "" {
+		c.LicenseKey = v
+	}
+	if strings.TrimSpace(os.Getenv("MAX_CONCURRENT")) != "" {
+		c.MaxConcurrent = envInt("MAX_CONCURRENT", c.MaxConcurrent)
+	}
+	if strings.TrimSpace(os.Getenv("MAX_RETRIES")) != "" {
+		c.MaxRetries = envInt("MAX_RETRIES", c.MaxRetries)
+	}
+	if v := strings.TrimSpace(os.Getenv("PROXY")); v != "" {
+		c.Proxy = v
+	}
+	if v := strings.TrimSpace(os.Getenv("LOGIN_ENGINE")); v != "" {
+		c.LoginEngine = v
+	}
+	if v := strings.TrimSpace(os.Getenv("LOGIN_PYTHON")); v != "" {
+		c.LoginPython = v
+	}
+}
+
+func (c Config) applyProcessEnv() {
+	if strings.TrimSpace(c.LoginEngine) != "" {
+		_ = os.Setenv("LOGIN_ENGINE", c.LoginEngine)
+	}
+	if strings.TrimSpace(c.LoginPython) != "" {
+		_ = os.Setenv("LOGIN_PYTHON", c.LoginPython)
+	}
+}
+
+func normalizeAddr(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ":9999"
+	}
+	if !strings.Contains(s, ":") {
+		return ":" + s
+	}
+	return s
 }
 
 func envBool(key string, fallback bool) bool {

@@ -116,3 +116,97 @@ func TestPrepareRuntimeRedirectsRuntimeDir(t *testing.T) {
 		t.Fatalf("note=%q", note)
 	}
 }
+
+func TestLoadYAMLThenEnvOverride(t *testing.T) {
+	clearConfigEnv(t)
+	p := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(p, []byte("addr: \":1234\"\ndata_dir: /tmp/from-yaml\nmax_concurrent: 4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", p)
+	t.Setenv("ADDR", ":5555")
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Addr != ":5555" {
+		t.Fatalf("addr=%q", got.Addr)
+	}
+	if got.DataDir != "/tmp/from-yaml" {
+		t.Fatalf("data_dir=%q", got.DataDir)
+	}
+	if got.MaxConcurrent != 4 {
+		t.Fatalf("concurrent=%d", got.MaxConcurrent)
+	}
+	if got.ConfigFile != p {
+		t.Fatalf("file=%q", got.ConfigFile)
+	}
+}
+
+func TestLoadYAMLBarePort(t *testing.T) {
+	clearConfigEnv(t)
+	p := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(p, []byte("addr: 8888\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", p)
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Addr != ":8888" {
+		t.Fatalf("addr=%q", got.Addr)
+	}
+}
+
+func TestLoadMissingConfigFile(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("CONFIG_FILE", filepath.Join(t.TempDir(), "nope.yaml"))
+	if _, err := Load(); err == nil {
+		t.Fatal("missing CONFIG_FILE should fail")
+	}
+}
+
+func TestLoadDefaultsWithoutFile(t *testing.T) {
+	clearConfigEnv(t)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Addr != ":9999" || got.DataDir != "./data" || got.ConfigFile != "" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestLoadInvalidYAML(t *testing.T) {
+	clearConfigEnv(t)
+	p := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(p, []byte("addr: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", p)
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid yaml should fail")
+	}
+}
+
+func clearConfigEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"ADDR", "DATA_DIR", "INVITE_URL", "HEADLESS", "SLOW_MO", "PROXY",
+		"MAX_CONCURRENT", "MAX_RETRIES", "LOGIN_ENGINE", "LOGIN_PYTHON",
+		"CLOAKBROWSER_VERSION", "CLOAKBROWSER_CACHE_DIR", "CLOAKBROWSER_BINARY_PATH",
+		"CLOAKBROWSER_LICENSE_KEY", "CONFIG_FILE",
+	} {
+		t.Setenv(k, "")
+	}
+}

@@ -24,7 +24,13 @@ func main() {
 		log.Fatalf("进入项目根目录失败: %v", err)
 	}
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("读取配置失败: %v", err)
+	}
+	if cfg.ConfigFile != "" {
+		log.Printf("配置文件 %s", cfg.ConfigFile)
+	}
 	prepared, note, err := cfg.PrepareRuntime()
 	if err != nil {
 		log.Fatalf("准备运行目录失败: %v", err)
