@@ -57,17 +57,21 @@ func (u AccountUsage) QuotaExhausted() bool {
 	return u.Rolling.Exhausted() || u.Weekly.Exhausted() || u.Monthly.Exhausted()
 }
 
-func SplitWeeklyLimited(list []PoolAccount) (active, weekly []PoolAccount) {
+func SplitShelved(list []PoolAccount) (active, weekly, rolling []PoolAccount) {
 	active = make([]PoolAccount, 0, len(list))
 	weekly = make([]PoolAccount, 0)
+	rolling = make([]PoolAccount, 0)
 	for _, a := range list {
-		if a.Usage.Weekly.Exhausted() {
+		switch {
+		case a.Usage.Weekly.Exhausted():
 			weekly = append(weekly, a)
-			continue
+		case a.Usage.Rolling.Exhausted():
+			rolling = append(rolling, a)
+		default:
+			active = append(active, a)
 		}
-		active = append(active, a)
 	}
-	return active, weekly
+	return active, weekly, rolling
 }
 
 type PoolAccount struct {
@@ -76,12 +80,13 @@ type PoolAccount struct {
 }
 
 type PoolPage struct {
-	Items         []PoolAccount `json:"items"`
-	WeeklyLimited []PoolAccount `json:"weekly_limited"`
-	Total         int           `json:"total"`
-	Page          int           `json:"page"`
-	PageSize      int           `json:"page_size"`
-	Stats         PoolStats     `json:"stats"`
+	Items          []PoolAccount `json:"items"`
+	WeeklyLimited  []PoolAccount `json:"weekly_limited"`
+	RollingLimited []PoolAccount `json:"rolling_limited"`
+	Total          int           `json:"total"`
+	Page           int           `json:"page"`
+	PageSize       int           `json:"page_size"`
+	Stats          PoolStats     `json:"stats"`
 }
 
 type CreatePaidAccountInput struct {

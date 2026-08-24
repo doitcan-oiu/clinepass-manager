@@ -51,6 +51,16 @@ export function isWeeklyLimited(a: PoolAccount): boolean {
   return windowExhausted(a.usage?.weekly)
 }
 
+export function isRollingLimited(a: PoolAccount): boolean {
+  return !isWeeklyLimited(a) && windowExhausted(a.usage?.rolling)
+}
+
+export function shelfOf(a: PoolAccount): "weekly" | "rolling" | "active" {
+  if (isWeeklyLimited(a)) return "weekly"
+  if (isRollingLimited(a)) return "rolling"
+  return "active"
+}
+
 export function windowPct(w: UsageWindow | undefined, synced: boolean): number | null {
   if (!synced || !w?.status) return null
   return w.usage_percent

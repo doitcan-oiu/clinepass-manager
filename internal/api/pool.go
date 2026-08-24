@@ -48,15 +48,16 @@ func (s *Server) listPoolAccounts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	active, weekly := model.SplitWeeklyLimited(all)
+	active, weekly, rolling := model.SplitShelved(all)
 	stats, _ := s.store.PoolStats(batchID)
 	writeJSON(w, http.StatusOK, model.PoolPage{
-		Items:         pageAccounts(active, page, pageSize),
-		WeeklyLimited: weekly,
-		Total:         len(active),
-		Page:          page,
-		PageSize:      pageSize,
-		Stats:         stats,
+		Items:          pageAccounts(active, page, pageSize),
+		WeeklyLimited:  weekly,
+		RollingLimited: rolling,
+		Total:          len(active),
+		Page:           page,
+		PageSize:       pageSize,
+		Stats:          stats,
 	})
 }
 

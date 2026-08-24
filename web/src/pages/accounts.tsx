@@ -3,8 +3,8 @@ import { ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Download, RefreshC
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { downloadJSON } from "@/lib/download"
-import type { Batch, ModelSpend, PoolAccount, PoolStats, UsageSyncStatus } from "@/lib/types"
-import { barClass, formatResetAt, formatTime, health, isWeeklyLimited, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, usageRows, windowPct } from "@/lib/quota"
+import type { Batch, ModelSpend, PoolAccount, PoolStats, UsageSyncStatus, UsageWindow } from "@/lib/types"
+import { barClass, formatResetAt, formatTime, health, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, shelfOf, usageRows, windowPct } from "@/lib/quota"
 import { AddPaidDialog } from "@/components/accounts/add-paid-dialog"
 import { loginProviderLabel, normalizeLoginProvider } from "@/lib/login-provider"
 import { Button } from "@/components/ui/button"
@@ -29,7 +29,9 @@ const emptyStats: PoolStats = { total: 0, ok: 0, tight: 0, exhausted: 0, avg_rol
 export function AccountsPage() {
   const [items, setItems] = useState<PoolAccount[]>([])
   const [weeklyLimited, setWeeklyLimited] = useState<PoolAccount[]>([])
+  const [rollingLimited, setRollingLimited] = useState<PoolAccount[]>([])
   const [weeklyOpen, setWeeklyOpen] = useState(false)
+  const [rollingOpen, setRollingOpen] = useState(false)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [batchId, setBatchId] = useState("")
@@ -56,11 +58,13 @@ export function AccountsPage() {
       const again = await api.poolAccounts(last, PAGE_SIZE, filter)
       setItems(again.items)
       setWeeklyLimited(again.weekly_limited || [])
+      setRollingLimited(again.rolling_limited || [])
       setTotal(again.total)
       setStats(again.stats || emptyStats)
     } else {
       setItems(pool.items)
       setWeeklyLimited(pool.weekly_limited || [])
+      setRollingLimited(pool.rolling_limited || [])
       setTotal(pool.total)
       setStats(pool.stats || emptyStats)
     }
@@ -139,12 +143,13 @@ export function AccountsPage() {
     try {
       const got = await api.refreshAccountUsage(a.id)
       const next = { ...a, ...got }
-      if (isWeeklyLimited(a) !== isWeeklyLimited(next)) {
+      if (shelfOf(a) !== shelfOf(next)) {
         await reload(page, batchId)
         return
       }
       setItems((cur) => cur.map((x) => (x.id === a.id ? next : x)))
       setWeeklyLimited((cur) => cur.map((x) => (x.id === a.id ? next : x)))
+      setRollingLimited((cur) => cur.map((x) => (x.id === a.id ? next : x)))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "刷新失败")
     } finally {
@@ -217,13 +222,13 @@ export function AccountsPage() {
         </div>
       </div>
 
-      {items.length === 0 && weeklyLimited.length === 0 ? (
+      {items.length === 0 && weeklyLimited.length === 0 && rollingLimited.length === 0 ? (
         <div className="rounded-xl border border-dashed bg-card p-12 text-center text-muted-foreground">
           还没有已付款账号。在「提取支付链接」点确认付款后，有配额的号会出现在这里。
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-xl border border-dashed bg-card p-8 text-center text-muted-foreground">
-          当前没有可调度的账号，周限已满的号收在下面。
+          当前没有可调度的账号，额度已满的号收在下面。
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
@@ -241,9 +246,27 @@ export function AccountsPage() {
         </div>
       )}
 
+      {rollingLimited.length > 0 ? (
+        <QuotaFold
+          title="滚动额度已满"
+          pctLabel="滚动"
+          accounts={rollingLimited}
+          windowOf={(a) => a.usage?.rolling}
+          open={rollingOpen}
+          onOpenChange={setRollingOpen}
+          busyId={busyId}
+          onModels={setModelsOf}
+          onRefresh={refreshOne}
+          onRemove={setRemove}
+        />
+      ) : null}
+
       {weeklyLimited.length > 0 ? (
-        <WeeklyLimitedFold
+        <QuotaFold
+          title="周限额度已满"
+          pctLabel="周限"
           accounts={weeklyLimited}
+          windowOf={(a) => a.usage?.weekly}
           open={weeklyOpen}
           onOpenChange={setWeeklyOpen}
           busyId={busyId}
@@ -256,6 +279,7 @@ export function AccountsPage() {
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
           共 {stats.total} 个账号
+          {rollingLimited.length ? ` · 滚动 ${rollingLimited.length} 个已收起` : ""}
           {weeklyLimited.length ? ` · 周限 ${weeklyLimited.length} 个已收起` : ""}
           {sync.running && sync.message ? ` · ${sync.message}` : ""}
         </span>
@@ -424,8 +448,11 @@ function AccountCard({
   )
 }
 
-function WeeklyLimitedFold({
+function QuotaFold({
+  title,
+  pctLabel,
   accounts,
+  windowOf,
   open,
   onOpenChange,
   busyId,
@@ -433,7 +460,10 @@ function WeeklyLimitedFold({
   onRefresh,
   onRemove,
 }: {
+  title: string
+  pctLabel: string
   accounts: PoolAccount[]
+  windowOf: (a: PoolAccount) => UsageWindow | undefined
   open: boolean
   onOpenChange: (open: boolean) => void
   busyId: string
@@ -450,7 +480,7 @@ function WeeklyLimitedFold({
         aria-expanded={open}
       >
         <span className="text-sm font-medium">
-          周限额度已满
+          {title}
           <span className="ml-2 text-muted-foreground">{accounts.length} 个账号，不参与调度</span>
         </span>
         <ChevronDown className={`size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
@@ -458,8 +488,9 @@ function WeeklyLimitedFold({
       {open ? (
         <ul className="divide-y border-t">
           {accounts.map((a) => {
-            const pct = windowPct(a.usage?.weekly, !!a.usage?.synced_at)
-            const reset = formatResetAt(a.usage?.weekly?.reset_in_sec, a.usage?.synced_at || 0)
+            const w = windowOf(a)
+            const pct = windowPct(w, !!a.usage?.synced_at)
+            const reset = formatResetAt(w?.reset_in_sec, a.usage?.synced_at || 0)
             return (
               <li key={a.id} className="flex items-center gap-3 px-4 py-2.5">
                 <button
@@ -471,7 +502,7 @@ function WeeklyLimitedFold({
                   {a.email}
                 </button>
                 <span className="hidden text-[11px] text-muted-foreground sm:inline">{a.batch_name || ""}</span>
-                <span className={`font-mono text-[11px] ${pctText(pct)}`}>{pct == null ? "—" : `周限 ${Math.round(pct)}%`}</span>
+                <span className={`font-mono text-[11px] ${pctText(pct)}`}>{pct == null ? "—" : `${pctLabel} ${Math.round(pct)}%`}</span>
                 <span className="hidden w-28 text-right text-[11px] text-muted-foreground md:inline">{reset ? `重置 ${reset}` : ""}</span>
                 <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="刷新用量" disabled={busyId === a.id} onClick={() => onRefresh(a)}>
                   <RefreshCw className={busyId === a.id ? "animate-spin" : undefined} />
