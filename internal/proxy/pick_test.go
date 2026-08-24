@@ -8,7 +8,7 @@ import (
 	"opencode-go-manager/internal/model"
 )
 
-func TestRankSkipsLimitedAndPicksLeastUsed(t *testing.T) {
+func TestRankSkipsExhaustedKeepsUsable(t *testing.T) {
 	resetBalancer()
 	limited := acc("a@x.com", "k1", win("ok", 10), win("rate-limited", 100), win("ok", 10), "glm-5.3", 1)
 	fullPct := acc("f@x.com", "k6", win("ok", 100), win("ok", 10), win("ok", 10), "glm-5.3", 1)
@@ -22,7 +22,7 @@ func TestRankSkipsLimitedAndPicksLeastUsed(t *testing.T) {
 	if len(got) != 4 {
 		t.Fatalf("len=%d emails=%v", len(got), emails(got))
 	}
-	if got[0].Email != "g@x.com" || got[1].Email != "b@x.com" || got[2].Email != "c@x.com" || got[3].Email != "d@x.com" {
+	if got[0].Email != "b@x.com" || got[1].Email != "c@x.com" || got[2].Email != "d@x.com" || got[3].Email != "g@x.com" {
 		t.Fatalf("order %v", emails(got))
 	}
 }
@@ -44,8 +44,8 @@ func TestRankUnknownModelUsesPackageOnly(t *testing.T) {
 	a := acc("a@x.com", "k", win("ok", 50), win("ok", 10), win("ok", 10), "glm-5.3", 2)
 	b := acc("b@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 10), "glm-5.3", 2)
 	got := Rank([]model.PoolAccount{a, b}, "unknown-model")
-	if len(got) != 2 || got[0].Email != "b@x.com" {
-		t.Fatalf("%+v", got)
+	if len(got) != 2 {
+		t.Fatalf("usable keys should stay eligible, got %v", emails(got))
 	}
 }
 
@@ -158,6 +158,57 @@ func TestInflightPrefersIdleKey(t *testing.T) {
 	lb.end(a.ID)
 	if len(got) != 2 || got[0].Email != "b@x.com" {
 		t.Fatalf("order %v", emails(got))
+	}
+}
+
+func TestReserveLeastInflightNotLowestUsage(t *testing.T) {
+	resetBalancer()
+	low := acc("low@x.com", "k", win("ok", 5), win("ok", 5), win("ok", 5), "glm-5.3", 1)
+	high := acc("high@x.com", "k", win("ok", 80), win("ok", 80), win("ok", 80), "glm-5.3", 1)
+	dead := acc("dead@x.com", "k", win("ok", 100), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	list := []model.PoolAccount{low, high, dead}
+
+	var picks []string
+	for i := 0; i < 4; i++ {
+		a, ok := lb.reserve(list, "glm-5.3", nil)
+		if !ok {
+			t.Fatalf("reserve %d failed", i)
+		}
+		picks = append(picks, a.Email)
+	}
+	for _, email := range picks {
+		lb.end(email)
+	}
+	if picks[0] != "high@x.com" && picks[0] != "low@x.com" {
+		t.Fatalf("first pick %v", picks)
+	}
+	for i := 1; i < len(picks); i++ {
+		if picks[i] == picks[i-1] {
+			t.Fatalf("stuck on one key: %v", picks)
+		}
+		if picks[i] == "dead@x.com" {
+			t.Fatalf("exhausted key picked: %v", picks)
+		}
+	}
+}
+
+func TestReserveSpreadsSequentialAfterEnd(t *testing.T) {
+	resetBalancer()
+	a := acc("a@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	b := acc("b@x.com", "k", win("ok", 80), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	list := []model.PoolAccount{a, b}
+	first, ok := lb.reserve(list, "glm-5.3", nil)
+	if !ok {
+		t.Fatal("first reserve")
+	}
+	lb.end(accountID(first))
+	second, ok := lb.reserve(list, "glm-5.3", nil)
+	if !ok {
+		t.Fatal("second reserve")
+	}
+	lb.end(accountID(second))
+	if first.Email == second.Email {
+		t.Fatalf("sequential picks stuck on %s", first.Email)
 	}
 }
 

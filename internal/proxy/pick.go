@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"opencode-go-manager/internal/gomodel"
 	"opencode-go-manager/internal/model"
 )
 
@@ -138,17 +137,7 @@ func parseRetryAfter(h http.Header) time.Duration {
 	return d
 }
 
-func modelSpend(u model.AccountUsage, modelID string) float64 {
-	id := gomodel.Normalize(modelID)
-	for _, m := range u.Models {
-		if gomodel.Normalize(m.Model) == id {
-			return m.USD
-		}
-	}
-	return 0
-}
-
-func canServeQuota(a model.PoolAccount, modelID string, now time.Time) bool {
+func canServeQuota(a model.PoolAccount, now time.Time) bool {
 	if strings.TrimSpace(a.APIKey) == "" {
 		return false
 	}
@@ -199,33 +188,13 @@ func (b *balancer) rankLocked(accounts []model.PoolAccount, modelID string, skip
 	out := make([]model.PoolAccount, 0, len(accounts))
 	for _, a := range accounts {
 		id := accountID(a)
-		if skip[id] || b.cooling(id, now) || !canServeQuota(a, modelID, now) {
+		if skip[id] || b.cooling(id, now) || !canServeQuota(a, now) {
 			continue
 		}
 		out = append(out, a)
 	}
-	mid := gomodel.Normalize(modelID)
 	sort.SliceStable(out, func(i, j int) bool {
-		a, c := out[i], out[j]
-		as, cs := windowScore(a.Usage.Rolling, a.Usage.SyncedAt), windowScore(c.Usage.Rolling, c.Usage.SyncedAt)
-		if as != cs {
-			return as < cs
-		}
-		as, cs = windowScore(a.Usage.Weekly, a.Usage.SyncedAt), windowScore(c.Usage.Weekly, c.Usage.SyncedAt)
-		if as != cs {
-			return as < cs
-		}
-		as, cs = windowScore(a.Usage.Monthly, a.Usage.SyncedAt), windowScore(c.Usage.Monthly, c.Usage.SyncedAt)
-		if as != cs {
-			return as < cs
-		}
-		if mid != "" {
-			sa, sc := modelSpend(a.Usage, mid), modelSpend(c.Usage, mid)
-			if sa != sc {
-				return sa < sc
-			}
-		}
-		aid, cid := accountID(a), accountID(c)
+		aid, cid := accountID(out[i]), accountID(out[j])
 		ia, ic := b.inflight[aid], b.inflight[cid]
 		if ia != ic {
 			return ia < ic
@@ -234,7 +203,7 @@ func (b *balancer) rankLocked(accounts []model.PoolAccount, modelID string, skip
 		if !ta.Equal(tc) {
 			return ta.Before(tc)
 		}
-		return a.Email < c.Email
+		return out[i].Email < out[j].Email
 	})
 	return out
 }
@@ -243,13 +212,6 @@ func Rank(accounts []model.PoolAccount, modelID string) []model.PoolAccount {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 	return lb.rankLocked(accounts, modelID, nil, time.Now())
-}
-
-func windowScore(w model.UsageWindow, synced int64) float64 {
-	if w.Status == "" && synced == 0 {
-		return 1000
-	}
-	return w.UsagePercent
 }
 
 func retryableStatus(code int) bool {
