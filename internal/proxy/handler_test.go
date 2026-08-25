@@ -553,6 +553,57 @@ func TestRecordsUpstream400ErrorBody(t *testing.T) {
 	}
 }
 
+func TestNonStreamForcesUpstreamSSEAndAssemblesJSON(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "a@x.com", APIKey: "sk-a", WorkspaceID: "ws", CookieHeader: "auth=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUsage(t, st, a.ID, 1, time.Now().Unix())
+
+	var upstreamBody []byte
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"gen_1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"gen_1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"kimi-k3","stream":false,"messages":[{"role":"user","content":"hi"}]}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var sent map[string]any
+	if json.Unmarshal(upstreamBody, &sent) != nil || sent["stream"] != true {
+		t.Fatalf("upstream should be stream=true, body=%s", upstreamBody)
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("content-type=%s", ct)
+	}
+	var obj map[string]any
+	if json.Unmarshal(rr.Body.Bytes(), &obj) != nil {
+		t.Fatalf("client body %s", rr.Body.String())
+	}
+	if obj["object"] != "chat.completion" {
+		t.Fatalf("object=%v", obj["object"])
+	}
+	choices := obj["choices"].([]any)
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	if msg["content"] != "hello" {
+		t.Fatalf("content=%v body=%s", msg["content"], rr.Body.String())
+	}
+}
+
 func TestIsTransportTimeout(t *testing.T) {
 	if !isTransportTimeout(fmt.Errorf("Post https://api.cline.bot/api/v1/chat/completions: http2: timeout awaiting response headers")) {
 		t.Fatal("header timeout")

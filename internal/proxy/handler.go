@@ -138,6 +138,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := gomodel.UpstreamPath(r.URL.Path, modelID)
 	body = rewriteModel(body, gomodel.Canonical(modelID))
+	if !stream {
+		// Cline 非流式会等整段生成完才写响应头。kimi-k3 大请求经常超过
+		// ResponseHeaderTimeout，看起来像链路超时。改走上游 SSE，头立刻回来。
+		body = forceUpstreamStream(body)
+	}
 	tried := map[string]bool{}
 	var lastStatus int
 	var lastBody []byte
@@ -209,9 +214,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		copyHeader(w.Header(), resp.Header)
 		w.Header().Del("Content-Length")
+		if !stream {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		}
 		w.WriteHeader(resp.StatusCode)
-		sse := stream || strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "event-stream")
-		usage, firstAt, copyErr := copyAndParse(w, resp.Body, sse, h.providerPolicy())
+		usage, firstAt, copyErr := copyAndParse(w, resp.Body, stream, h.providerPolicy())
 		resp.Body.Close()
 		lb.end(keyID)
 		if !firstAt.IsZero() {
@@ -309,11 +316,19 @@ func rewriteModel(body []byte, canonical string) []byte {
 	if strings.TrimSpace(canonical) == "" {
 		return body
 	}
+	return setJSONField(body, "model", canonical)
+}
+
+func forceUpstreamStream(body []byte) []byte {
+	return setJSONField(body, "stream", true)
+}
+
+func setJSONField(body []byte, key string, val any) []byte {
 	var payload map[string]any
 	if json.Unmarshal(body, &payload) != nil {
 		return body
 	}
-	payload["model"] = canonical
+	payload[key] = val
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return body
@@ -416,9 +431,7 @@ func copyAndParse(w http.ResponseWriter, src io.Reader, stream bool, pol provide
 		parse.Write(raw)
 		var out []byte
 		if looksLikeSSE(raw) {
-			uw := &sseUnwrapper{pol: pol}
-			out = uw.Transform(raw)
-			out = append(out, uw.Finish(parse.Result())...)
+			out = assembleCompletion(raw, parse.Result(), pol)
 		} else {
 			out = normalizeCompletionJSON(raw, pol)
 		}
