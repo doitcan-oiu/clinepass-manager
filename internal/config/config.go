@@ -62,7 +62,7 @@ func defaults() Config {
 		Headless:      true,
 		MaxConcurrent: 1,
 		MaxRetries:    3,
-		CloakVersion:  "146.0.7680.177.5",
+		CloakVersion:  "151.0.7922.108.2",
 		LoginEngine:   "python",
 	}
 }

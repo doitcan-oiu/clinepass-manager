@@ -29,10 +29,14 @@ func browserLaunchEnv(license string) map[string]string {
 		}
 		env[k] = v
 	}
-	if key := firstNonEmpty(strings.TrimSpace(license), readLicenseFile()); key != "" {
+	if key := ResolveLicense(license); key != "" {
 		env["CLOAKBROWSER_LICENSE_KEY"] = key
 	}
 	return env
+}
+
+func ResolveLicense(explicit string) string {
+	return firstNonEmpty(strings.TrimSpace(explicit), readLicenseFile())
 }
 
 func readLicenseFile() string {

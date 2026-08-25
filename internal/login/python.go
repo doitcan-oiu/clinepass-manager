@@ -108,7 +108,7 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 			CloakVersion:    cfg.CloakVersion,
 			CloakCacheDir:   cfg.CloakCacheDir,
 			CloakBinaryPath: cfg.CloakBinaryPath,
-			LicenseKey:      cfg.LicenseKey,
+			LicenseKey:      browser.ResolveLicense(cfg.LicenseKey),
 			VirtualDisplay:  browser.VirtualDisplay() != "",
 		},
 	}
@@ -277,11 +277,11 @@ func workerEnv(cfg config.Config) []string {
 		env = append(env, kv)
 	}
 	env = append(env, "PYTHONUNBUFFERED=1")
-	if key := strings.TrimSpace(cfg.LicenseKey); key != "" {
+	if key := browser.ResolveLicense(cfg.LicenseKey); key != "" {
 		env = append(env, "CLOAKBROWSER_LICENSE_KEY="+key)
-	}
-	if cfg.CloakVersion != "" {
-		env = append(env, "CLOAKBROWSER_VERSION="+cfg.CloakVersion)
+		if cfg.CloakVersion != "" {
+			env = append(env, "CLOAKBROWSER_VERSION="+cfg.CloakVersion)
+		}
 	}
 	cacheDir := strings.TrimSpace(cfg.CloakCacheDir)
 	if cacheDir == "" {

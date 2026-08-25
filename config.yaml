@@ -16,7 +16,10 @@ max_retries: 3
 login_engine: python
 # login_python: "./worker/.venv/bin/python"
 
-cloakbrowser_version: "146.0.7680.177.5"
+# 151 是当前 Stable。没有 license 时官方包装只会下免费 146，AuthKit Radar 更容易拦。
+# 换 key 改这一项后重启服务。环境变量 CLOAKBROWSER_LICENSE_KEY 会盖过这里。
+# 这是密钥，不要推到公开仓库。
+cloakbrowser_version: "151.0.7922.108.2"
 cloakbrowser_cache_dir: ""
 cloakbrowser_binary_path: ""
 cloakbrowser_license_key: ""

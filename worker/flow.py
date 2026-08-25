@@ -1,10 +1,11 @@
+import random
 import time
 
 from authkit import handle_authkit_wait
 from errors import WorkerError
 from google import CONSENT, accept_workspace_tos, recover_unknown_error, start_google
 from microsoft import start_microsoft
-from pageutil import click_one_of, on_radar_flow, serialize_cookies, sleep_ms, visible
+from pageutil import click_one_of, human_idle_authkit, on_radar_flow, serialize_cookies, sleep_ms, visible
 from payment import capture_payment
 from protocol import log
 from radar import handle_radar, handle_terms
@@ -78,7 +79,9 @@ def run_login(page, context, acc: dict, settings: dict) -> dict:
     log("登录方式=%s", provider)
     log("打开邀请链接 %s", invite)
     page.goto(invite, wait_until="domcontentloaded", timeout=60000)
-    sleep_ms(2000)
+    sleep_ms(1400 + random.randint(0, 900))
+    if url_host(page.url) == AUTH_HOST and not on_radar_flow(page):
+        human_idle_authkit(page)
     if on_cline_app(page.url) and "radar-challenge" not in page.url:
         log("当前已在 Cline，跳过身份登录")
     else:

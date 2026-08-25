@@ -61,11 +61,16 @@ def click_one_of(page, selectors, timeout_ms: float, step: str) -> None:
             except Exception:
                 continue
             try:
+                try:
+                    page.hover(sel, timeout=4000)
+                    sleep_ms(180 + random.randint(0, 220))
+                except Exception:
+                    pass
                 page.click(sel, timeout=8000)
                 from protocol import log
 
                 log("%s 成功", step)
-                sleep_ms(1200)
+                sleep_ms(900 + random.randint(0, 700))
                 return
             except Exception as exc:
                 last_err = exc
@@ -77,12 +82,18 @@ def click_one_of(page, selectors, timeout_ms: float, step: str) -> None:
 
 def type_field(page, selector: str, value: str) -> None:
     wait_overlay_gone(page)
+    try:
+        page.hover(selector, timeout=4000)
+        sleep_ms(160 + random.randint(0, 200))
+    except Exception:
+        pass
     page.click(selector, timeout=12000)
-    sleep_ms(80)
+    sleep_ms(120 + random.randint(0, 180))
     page.keyboard.press("Control+a")
-    sleep_ms(40)
+    sleep_ms(40 + random.randint(0, 50))
     page.keyboard.press("Backspace")
-    page.type(selector, value, delay=50)
+    sleep_ms(80 + random.randint(0, 80))
+    page.type(selector, value)
 
 
 def input_value(page, selector: str) -> str:
@@ -195,10 +206,14 @@ def human_idle_authkit(page) -> None:
     from protocol import log
 
     log("在 AuthKit 停留，让 Radar 采集页面信号")
-    for _ in range(3):
-        page.mouse.move(80 + random.random() * 400, 80 + random.random() * 240)
-        sleep_ms(350 + random.randint(0, 400))
-    sleep_ms(1200 + random.randint(0, 800))
+    for _ in range(4 + random.randint(0, 2)):
+        page.mouse.move(72 + random.random() * 520, 64 + random.random() * 280)
+        sleep_ms(280 + random.randint(0, 420))
+    try:
+        human_scroll(page)
+    except Exception:
+        pass
+    sleep_ms(1400 + random.randint(0, 900))
 
 
 def human_scroll(page) -> None:

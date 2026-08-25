@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	defaultVersion = "146.0.7680.177.5"
+	defaultVersion = "151.0.7922.108.2"
 	downloadBase   = "https://cloakbrowser.dev"
 	githubBase     = "https://github.com/CloakHQ/cloakbrowser/releases/download"
 	signingKeyB64  = "MKFKwIhUcKWq5xTuNA0Ovg99njcDEcEJvmWYYhApvaU="
@@ -73,6 +73,27 @@ func chromeName() string {
 	}
 }
 
+func downloadURLs(version string) []string {
+	name := archiveName()
+	tags := []string{"chromium-v" + version + "-pro", "chromium-v" + version}
+	seen := map[string]bool{}
+	var out []string
+	add := func(u string) {
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	for _, tag := range tags {
+		add(downloadBase + "/" + tag + "/" + name)
+		add(githubBase + "/" + tag + "/" + name)
+	}
+	add(fmt.Sprintf("%s/chromium-v%s/%s", downloadBase, version, name))
+	add(fmt.Sprintf("%s/chromium-v%s/%s", githubBase, version, name))
+	return out
+}
+
 func archiveName() string {
 	if runtime.GOOS == "windows" {
 		return "cloakbrowser-" + PlatformTag() + ".zip"
@@ -89,6 +110,8 @@ func DefaultStealthArgs(seed int) []string {
 		fmt.Sprintf("--fingerprint=%d", seed),
 		"--fingerprint-storage-quota=5000",
 		"--ignore-gpu-blocklist",
+		"--fingerprint-windows-font-metrics",
+		"--fingerprint-allow-3p-cookies",
 	}
 	if runtime.GOOS == "darwin" {
 		args = append(args, "--fingerprint-platform=macos")
@@ -132,10 +155,7 @@ func EnsureBinary(version, cacheDir, overridePath string, logf func(string, ...a
 		return BinaryInfo{}, err
 	}
 
-	urls := []string{
-		fmt.Sprintf("%s/chromium-v%s/%s", downloadBase, version, archiveName()),
-		fmt.Sprintf("%s/chromium-v%s/%s", githubBase, version, archiveName()),
-	}
+	urls := downloadURLs(version)
 	tmp, err := os.CreateTemp("", "cloakbrowser-*"+filepath.Ext(archiveName()))
 	if err != nil {
 		return BinaryInfo{}, err
@@ -236,6 +256,8 @@ func verifyArchive(path, version string, logf func(string, ...any)) error {
 
 func fetchSignedManifest(version string) ([]byte, []byte, error) {
 	bases := []string{
+		downloadBase + "/chromium-v" + version + "-pro",
+		githubBase + "/chromium-v" + version + "-pro",
 		fmt.Sprintf("%s/chromium-v%s", downloadBase, version),
 		fmt.Sprintf("%s/chromium-v%s", githubBase, version),
 	}

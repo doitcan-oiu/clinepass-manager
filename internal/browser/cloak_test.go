@@ -12,6 +12,8 @@ func TestDefaultStealthArgsUseBinaryFingerprint(t *testing.T) {
 		"--fingerprint=12345",
 		"--fingerprint-storage-quota=5000",
 		"--ignore-gpu-blocklist",
+		"--fingerprint-windows-font-metrics",
+		"--fingerprint-allow-3p-cookies",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %s in %v", want, args)
@@ -25,6 +27,16 @@ func TestDefaultStealthArgsUseBinaryFingerprint(t *testing.T) {
 		if strings.Contains(joined, banned) {
 			t.Fatalf("must not force locale/timezone: %v", args)
 		}
+	}
+}
+
+func TestDownloadURLsPreferProTag(t *testing.T) {
+	got := downloadURLs("151.0.7922.108.2")
+	if len(got) < 2 {
+		t.Fatalf("%v", got)
+	}
+	if !strings.Contains(got[0], "chromium-v151.0.7922.108.2-pro/") {
+		t.Fatalf("first url should be pro tag: %v", got[0])
 	}
 }
 

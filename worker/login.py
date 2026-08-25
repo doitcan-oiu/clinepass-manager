@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+import atexit
 import json
 import os
+import signal
 import sys
 import traceback
 
@@ -31,6 +33,27 @@ def main() -> int:
     shot = (settings.get("screenshot_path") or "").strip()
     ctx = None
     page = None
+    closed = False
+
+    def close_browser() -> None:
+        nonlocal closed
+        if ctx is None or closed:
+            return
+        closed = True
+        log("正在正常关闭浏览器，释放 Cloak 会话")
+        try:
+            ctx.close()
+        except Exception as exc:
+            log("关闭浏览器失败: %s", exc)
+
+    def on_signal(signum, _frame):
+        log("收到信号 %s，正常关闭浏览器", signum)
+        close_browser()
+        raise SystemExit(128 + signum)
+
+    atexit.register(close_browser)
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
     try:
         ctx = launch_ctx(settings, seed)
         pages = ctx.pages
@@ -57,11 +80,7 @@ def main() -> int:
         result(False, error=msg, code="")
         return 1
     finally:
-        if ctx is not None:
-            try:
-                ctx.close()
-            except Exception:
-                pass
+        close_browser()
 
 
 if __name__ == "__main__":
