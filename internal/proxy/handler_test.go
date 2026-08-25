@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -549,6 +550,64 @@ func TestRecordsUpstream400ErrorBody(t *testing.T) {
 	}
 	if !strings.Contains(l.Error, "400") {
 		t.Fatalf("error should include HTTP status, got %q", l.Error)
+	}
+}
+
+func TestIsTransportTimeout(t *testing.T) {
+	if !isTransportTimeout(fmt.Errorf("Post https://api.cline.bot/api/v1/chat/completions: http2: timeout awaiting response headers")) {
+		t.Fatal("header timeout")
+	}
+	if !isTransportTimeout(fmt.Errorf("net/http: timeout awaiting response headers")) {
+		t.Fatal("http1 header timeout")
+	}
+	if isTransportTimeout(fmt.Errorf("context canceled")) {
+		t.Fatal("canceled is not stale conn")
+	}
+}
+
+func TestNewUpstreamTransportDisablesHTTP2(t *testing.T) {
+	tr := newUpstreamTransport()
+	if tr.ForceAttemptHTTP2 {
+		t.Fatal("http2 should be off for api.cline.bot")
+	}
+	if tr.ResponseHeaderTimeout != 60*time.Second {
+		t.Fatalf("header timeout=%s", tr.ResponseHeaderTimeout)
+	}
+}
+
+func TestTransportTimeoutDoesNotFailoverAccounts(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if _, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "a@x.com", APIKey: "sk-a", WorkspaceID: "ws", CookieHeader: "auth=1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "b@x.com", APIKey: "sk-b", WorkspaceID: "ws", CookieHeader: "auth=1"}); err != nil {
+		t.Fatal(err)
+	}
+	var seen atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.Add(1)
+		time.Sleep(400 * time.Millisecond)
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	tr := &http.Transport{ResponseHeaderTimeout: 80 * time.Millisecond}
+	h.transport = tr
+	h.client = &http.Client{Transport: tr}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if n := seen.Load(); n > 2 {
+		t.Fatalf("transport timeout should not walk all accounts, hits=%d", n)
 	}
 }
 

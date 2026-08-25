@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ type usageRefresher interface {
 type Handler struct {
 	store     *store.Store
 	client    *http.Client
+	transport *http.Transport
 	upstream  string
 	refresher usageRefresher
 }
@@ -32,21 +34,41 @@ func New(st *store.Store) *Handler {
 		store:    st,
 		upstream: "https://api.cline.bot",
 	}
+	tr := newUpstreamTransport()
+	netproxy.ApplyFunc(tr, h.globalProxy)
+	h.transport = tr
+	h.client = &http.Client{Transport: tr}
+	return h
+}
+
+func newUpstreamTransport() *http.Transport {
 	tr := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   15 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:     true,
+		ForceAttemptHTTP2:     false,
+		TLSNextProto:          map[string]func(authority string, c *tls.Conn) http.RoundTripper{},
 		MaxIdleConns:          64,
-		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConnsPerHost:   8,
+		IdleConnTimeout:       25 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 120 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-	netproxy.ApplyFunc(tr, h.globalProxy)
-	h.client = &http.Client{Transport: tr}
-	return h
+	return tr
+}
+
+func isTransportTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout awaiting response headers") ||
+		strings.Contains(msg, "http2: client conn not usable") ||
+		strings.Contains(msg, "http2: server sent goaway") ||
+		strings.Contains(msg, "http2: client connection lost") ||
+		strings.Contains(msg, "unexpected eof")
 }
 
 func (h *Handler) globalProxy() string {
@@ -133,12 +155,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		keyID := accountID(a)
 		tried[keyID] = true
 		resp, ferr := h.do(r, path, a.APIKey, body)
+		if ferr != nil && isTransportTimeout(ferr) {
+			if h.transport != nil {
+				h.transport.CloseIdleConnections()
+			}
+			resp, ferr = h.do(r, path, a.APIKey, body)
+		}
 		if ferr != nil {
 			lb.end(keyID)
 			lastStatus = http.StatusBadGateway
 			lastBody, _ = json.Marshal(map[string]any{"error": ferr.Error()})
 			state.httpStatus = lastStatus
 			state.err = formatLogError(lastStatus, lastBody)
+			// 等响应头超时是链路问题，不是账号额度。换号只会再卡几轮，拖到十几二十分钟。
+			if isTransportTimeout(ferr) {
+				break
+			}
 			continue
 		}
 		if resp.StatusCode >= 400 {
@@ -179,7 +211,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Del("Content-Length")
 		w.WriteHeader(resp.StatusCode)
 		sse := stream || strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "event-stream")
-		usage, firstAt, _ := copyAndParse(w, resp.Body, sse, h.providerPolicy())
+		usage, firstAt, copyErr := copyAndParse(w, resp.Body, sse, h.providerPolicy())
 		resp.Body.Close()
 		lb.end(keyID)
 		if !firstAt.IsZero() {
@@ -187,6 +219,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		state.usage = usage
 		state.httpStatus = resp.StatusCode
+		if copyErr != nil {
+			state.status = "error"
+			state.err = copyErr.Error()
+			return
+		}
 		state.status = "completed"
 		state.err = ""
 		return
