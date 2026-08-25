@@ -12,6 +12,7 @@ import (
 
 	"opencode-go-manager/internal/gomodel"
 	"opencode-go-manager/internal/model"
+	"opencode-go-manager/internal/netproxy"
 	"opencode-go-manager/internal/store"
 )
 
@@ -27,8 +28,11 @@ type Handler struct {
 }
 
 func New(st *store.Store) *Handler {
+	h := &Handler{
+		store:    st,
+		upstream: "https://api.cline.bot",
+	}
 	tr := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   15 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -40,11 +44,17 @@ func New(st *store.Store) *Handler {
 		ResponseHeaderTimeout: 120 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-	return &Handler{
-		store:    st,
-		client:   &http.Client{Transport: tr},
-		upstream: "https://api.cline.bot",
+	netproxy.ApplyFunc(tr, h.globalProxy)
+	h.client = &http.Client{Transport: tr}
+	return h
+}
+
+func (h *Handler) globalProxy() string {
+	st, err := h.store.GetSettings()
+	if err != nil {
+		return ""
 	}
+	return strings.TrimSpace(st.Proxy)
 }
 
 func (h *Handler) SetUsageRefresher(r usageRefresher) {

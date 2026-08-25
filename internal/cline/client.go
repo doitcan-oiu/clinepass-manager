@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"opencode-go-manager/internal/netproxy"
 )
 
 const (
@@ -423,11 +425,7 @@ func httpClient(proxy string) *http.Client {
 	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
 		tr = dt.Clone()
 	}
-	if p := strings.TrimSpace(proxy); p != "" {
-		if u, err := url.Parse(p); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-			tr.Proxy = http.ProxyURL(u)
-		}
-	}
+	netproxy.Apply(tr, proxy)
 	return &http.Client{
 		Timeout:   45 * time.Second,
 		Transport: tr,

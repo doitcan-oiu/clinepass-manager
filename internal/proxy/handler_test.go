@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -479,6 +480,72 @@ func TestFormatLogError(t *testing.T) {
 	got = formatLogError(502, []byte(`{"error":"upstream timeout"}`))
 	if got != "HTTP 502: upstream timeout" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestForwardUsesGlobalHTTPProxy(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: "a@x.com", APIKey: "sk-a", WorkspaceID: "ws", CookieHeader: "auth=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUsage(t, st, a.ID, 1, time.Now().Unix())
+
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(up.Close)
+
+	var viaProxy atomic.Bool
+	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		viaProxy.Store(true)
+		req, err := http.NewRequest(r.Method, r.URL.String(), r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		req.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(proxySrv.Close)
+
+	cfg, err := st.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Proxy = proxySrv.URL
+	if err := st.SaveSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	h := New(st)
+	h.upstream = up.URL
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !viaProxy.Load() {
+		t.Fatal("forwarding did not use global proxy")
 	}
 }
 
