@@ -40,7 +40,7 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	info, err := EnsureBinary(cfg.CloakVersion, cfg.CloakCacheDir, cfg.CloakBinaryPath, logf)
+	info, err := EnsureBinary(cfg.CloakVersion, cfg.CloakCacheDir, cfg.CloakBinaryPath, ResolveLicense(cfg.LicenseKey), logf)
 	if err != nil {
 		return nil, err
 	}

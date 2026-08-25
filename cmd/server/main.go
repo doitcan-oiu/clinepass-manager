@@ -75,7 +75,7 @@ func main() {
 
 func prepareCloak(cfg config.Config, jobs *job.Manager) {
 	log.Printf("后台准备 CloakBrowser %s → %s", cfg.CloakVersion, cfg.CloakCacheDir)
-	info, err := browser.EnsureBinary(cfg.CloakVersion, cfg.CloakCacheDir, cfg.CloakBinaryPath, log.Printf)
+	info, err := browser.EnsureBinary(cfg.CloakVersion, cfg.CloakCacheDir, cfg.CloakBinaryPath, browser.ResolveLicense(cfg.LicenseKey), log.Printf)
 	if err != nil {
 		log.Printf("启动时未能备好 CloakBrowser（登录时会再试）: %v", err)
 		return

@@ -73,25 +73,30 @@ func chromeName() string {
 	}
 }
 
-func downloadURLs(version string) []string {
+func proDownloadURL(version string) string {
+	return downloadBase + "/api/download/" + version
+}
+
+func freeDownloadURLs(version string) []string {
 	name := archiveName()
-	tags := []string{"chromium-v" + version + "-pro", "chromium-v" + version}
-	seen := map[string]bool{}
-	var out []string
-	add := func(u string) {
-		if u == "" || seen[u] {
-			return
+	return []string{
+		fmt.Sprintf("%s/chromium-v%s/%s", downloadBase, version, name),
+		fmt.Sprintf("%s/chromium-v%s/%s", githubBase, version, name),
+	}
+}
+
+func needsLicense(version string) bool {
+	return !strings.HasPrefix(version, "145.") && !strings.HasPrefix(version, "146.")
+}
+
+func cachedBinaryPath(dir, version string) string {
+	for _, name := range []string{"chromium-" + version + "-pro", "chromium-" + version} {
+		p := filepath.Join(dir, name, chromeName())
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
 		}
-		seen[u] = true
-		out = append(out, u)
 	}
-	for _, tag := range tags {
-		add(downloadBase + "/" + tag + "/" + name)
-		add(githubBase + "/" + tag + "/" + name)
-	}
-	add(fmt.Sprintf("%s/chromium-v%s/%s", downloadBase, version, name))
-	add(fmt.Sprintf("%s/chromium-v%s/%s", githubBase, version, name))
-	return out
+	return ""
 }
 
 func archiveName() string {
@@ -125,7 +130,7 @@ func IgnoreDefaultArgs() []string {
 	return []string{"--enable-automation", "--enable-unsafe-swiftshader"}
 }
 
-func EnsureBinary(version, cacheDir, overridePath string, logf func(string, ...any)) (BinaryInfo, error) {
+func EnsureBinary(version, cacheDir, overridePath, license string, logf func(string, ...any)) (BinaryInfo, error) {
 	ensureMu.Lock()
 	defer ensureMu.Unlock()
 
@@ -138,14 +143,13 @@ func EnsureBinary(version, cacheDir, overridePath string, logf func(string, ...a
 	if version == "" {
 		version = defaultVersion
 	}
+	license = ResolveLicense(license)
 	dir, err := CacheDir(cacheDir)
 	if err != nil {
 		return BinaryInfo{}, err
 	}
-	binDir := filepath.Join(dir, "chromium-"+version)
-	binPath := filepath.Join(binDir, chromeName())
-	if st, err := os.Stat(binPath); err == nil && !st.IsDir() {
-		return BinaryInfo{Path: binPath, Version: version, Platform: PlatformTag(), Cached: true}, nil
+	if p := cachedBinaryPath(dir, version); p != "" {
+		return BinaryInfo{Path: p, Version: version, Platform: PlatformTag(), Cached: true}, nil
 	}
 
 	if logf == nil {
@@ -155,7 +159,11 @@ func EnsureBinary(version, cacheDir, overridePath string, logf func(string, ...a
 		return BinaryInfo{}, err
 	}
 
-	urls := downloadURLs(version)
+	pro := license != ""
+	if !pro && needsLicense(version) {
+		return BinaryInfo{}, fmt.Errorf("CloakBrowser %s 是 Pro 包，GitHub 公开地址没有 tar.gz（只有校验文件，直链会 404）。请填写 cloakbrowser_license_key，走官方 %s", version, proDownloadURL(version))
+	}
+
 	tmp, err := os.CreateTemp("", "cloakbrowser-*"+filepath.Ext(archiveName()))
 	if err != nil {
 		return BinaryInfo{}, err
@@ -165,23 +173,40 @@ func EnsureBinary(version, cacheDir, overridePath string, logf func(string, ...a
 	defer os.Remove(tmpPath)
 
 	var lastErr error
-	for _, u := range urls {
-		logf("下载 CloakBrowser %s：%s", version, u)
-		if err := downloadFile(u, tmpPath, logf); err != nil {
-			lastErr = err
-			continue
+	if pro {
+		u := proDownloadURL(version)
+		logf("用 license 从官方接口下载 CloakBrowser %s：%s", version, u)
+		lastErr = downloadFile(u, tmpPath, logf, map[string]string{
+			"Authorization": "Bearer " + license,
+			"X-Platform":    PlatformTag(),
+		})
+		if lastErr == nil {
+			lastErr = verifyArchive(tmpPath, version, true, logf)
 		}
-		if err := verifyArchive(tmpPath, version, logf); err != nil {
-			lastErr = err
-			continue
+	} else {
+		for _, u := range freeDownloadURLs(version) {
+			logf("下载免费 CloakBrowser %s：%s", version, u)
+			if err := downloadFile(u, tmpPath, logf, nil); err != nil {
+				lastErr = err
+				continue
+			}
+			if err := verifyArchive(tmpPath, version, false, logf); err != nil {
+				lastErr = err
+				continue
+			}
+			lastErr = nil
+			break
 		}
-		lastErr = nil
-		break
 	}
 	if lastErr != nil {
 		return BinaryInfo{}, fmt.Errorf("下载 CloakBrowser 失败: %w", lastErr)
 	}
 
+	binDir := filepath.Join(dir, "chromium-"+version)
+	if pro {
+		binDir = filepath.Join(dir, "chromium-"+version+"-pro")
+	}
+	binPath := filepath.Join(binDir, chromeName())
 	logf("解压 CloakBrowser 到 %s", binDir)
 	if err := extractArchive(tmpPath, binDir); err != nil {
 		return BinaryInfo{}, err
@@ -198,18 +223,24 @@ func EnsureBinary(version, cacheDir, overridePath string, logf func(string, ...a
 	return BinaryInfo{Path: binPath, Version: version, Platform: PlatformTag(), Cached: false}, nil
 }
 
-func downloadFile(url, dest string, logf func(string, ...any)) error {
+func downloadFile(url, dest string, logf func(string, ...any), headers map[string]string) error {
 	client := &http.Client{Timeout: 15 * time.Minute}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "opencode-go-manager")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("%s -> HTTP %d（license 无效或无权下载这个版本）", url, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s -> HTTP %d", url, resp.StatusCode)
 	}
@@ -226,8 +257,8 @@ func downloadFile(url, dest string, logf func(string, ...any)) error {
 	return nil
 }
 
-func verifyArchive(path, version string, logf func(string, ...any)) error {
-	manifest, sig, err := fetchSignedManifest(version)
+func verifyArchive(path, version string, pro bool, logf func(string, ...any)) error {
+	manifest, sig, err := fetchSignedManifest(version, pro)
 	if err != nil {
 		return fmt.Errorf("无法获取签名清单: %w", err)
 	}
@@ -254,12 +285,18 @@ func verifyArchive(path, version string, logf func(string, ...any)) error {
 	return nil
 }
 
-func fetchSignedManifest(version string) ([]byte, []byte, error) {
-	bases := []string{
-		downloadBase + "/chromium-v" + version + "-pro",
-		githubBase + "/chromium-v" + version + "-pro",
-		fmt.Sprintf("%s/chromium-v%s", downloadBase, version),
-		fmt.Sprintf("%s/chromium-v%s", githubBase, version),
+func fetchSignedManifest(version string, pro bool) ([]byte, []byte, error) {
+	var bases []string
+	if pro {
+		bases = []string{
+			downloadBase + "/releases/pro/chromium-v" + version,
+			githubBase + "/chromium-v" + version + "-pro",
+		}
+	} else {
+		bases = []string{
+			fmt.Sprintf("%s/chromium-v%s", downloadBase, version),
+			fmt.Sprintf("%s/chromium-v%s", githubBase, version),
+		}
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	var last error

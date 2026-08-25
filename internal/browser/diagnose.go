@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,8 +32,7 @@ func cachedChromePath(cfg config.Config) string {
 	if ver == "" {
 		ver = defaultVersion
 	}
-	p := filepath.Join(dir, "chromium-"+ver, chromeName())
-	if st, err := os.Stat(p); err == nil && !st.IsDir() {
+	if p := cachedBinaryPath(dir, ver); p != "" {
 		return p
 	}
 	return ""

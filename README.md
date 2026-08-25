@@ -150,6 +150,6 @@ LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 huma
 | `CLOAKBROWSER_VERSION` | `151.0.7922.108.2` | 二进制版本。151 需 Cloak license；没 key 时包装会回落免费 146 |
 | `CLOAKBROWSER_CACHE_DIR` | `$HOME/.cloakbrowser` | 缓存目录。HOME 不可写时落到 `data/home/.cloakbrowser` |
 | `CLOAKBROWSER_BINARY_PATH` | 空 | 跳过下载，使用本地 chrome |
-| `CLOAKBROWSER_LICENSE_KEY` | 空 | Cloak key。151 必须有：`cloakbrowser login` 或 [cloakbrowser.dev/free](https://cloakbrowser.dev/free)。没有 key 只会落到免费 146，AuthKit Radar 更容易拦 |
+| `CLOAKBROWSER_LICENSE_KEY` | 空 | Cloak key。151 必须有，下载走 `cloakbrowser.dev/api/download/{version}`，不是 GitHub 直链 |
 
 登录失败截图在 `data/screenshots/<账号ID>.png`。每个账号的浏览器配置在 `data/profiles/<账号ID>/`。
