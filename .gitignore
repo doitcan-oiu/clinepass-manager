@@ -8,6 +8,8 @@
 web/node_modules/
 web/dist/
 /login-tool/dist/
+/login-tool/dist.zip
+/login-tool/*.zip
 /login-tool/chrome/
 /login-tool/*.xlsx
 worker/.venv/
