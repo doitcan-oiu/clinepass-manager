@@ -46,6 +46,7 @@ export type Account = {
 
 export type PoolAccount = Account & {
   usage: AccountUsage
+  inflight?: number
 }
 
 export type PoolPage = {
@@ -63,6 +64,7 @@ export type PoolStats = {
   ok: number
   tight: number
   exhausted: number
+  inflight: number
   avg_rolling: number | null
   avg_weekly: number | null
   avg_monthly: number | null
@@ -89,6 +91,8 @@ export type AppConfig = {
   invite_url: string
   max_concurrent: number
   max_retries: number
+  account_rpm: number
+  api_proxy: boolean
   usage_refresh_sec: number
   usage_refresh_concurrency: number
   hero_sms_api_key: string

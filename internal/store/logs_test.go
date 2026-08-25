@@ -158,9 +158,41 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if err != nil || again.ProviderMode != "replace" {
 		t.Fatalf("provider mode %+v %v", again, err)
 	}
+	if again.AccountRPM != 5 {
+		t.Fatalf("default account rpm=%d", again.AccountRPM)
+	}
+	if !again.APIProxy {
+		t.Fatal("default api_proxy should be on")
+	}
+	again.APIProxy = false
+	if err := s.SaveSettings(again); err != nil {
+		t.Fatal(err)
+	}
+	gotAPIProxy, err := s.GetSettings()
+	if err != nil || gotAPIProxy.APIProxy {
+		t.Fatalf("api_proxy %+v %v", gotAPIProxy, err)
+	}
+	again = gotAPIProxy
+	again.APIProxy = true
+	if err := s.SaveSettings(again); err != nil {
+		t.Fatal(err)
+	}
+	again, err = s.GetSettings()
+	if err != nil || !again.APIProxy {
+		t.Fatalf("api_proxy on %+v %v", again, err)
+	}
 	if again.UsageRefreshSec != 60 || again.UsageRefreshConcurrency != 10 {
 		t.Fatalf("usage refresh defaults %+v", again)
 	}
+	again.AccountRPM = 8
+	if err := s.SaveSettings(again); err != nil {
+		t.Fatal(err)
+	}
+	gotRPM, err := s.GetSettings()
+	if err != nil || gotRPM.AccountRPM != 8 {
+		t.Fatalf("account rpm %+v %v", gotRPM, err)
+	}
+	again = gotRPM
 	again.UsageRefreshSec = 120
 	again.UsageRefreshConcurrency = 16
 	if err := s.SaveSettings(again); err != nil {

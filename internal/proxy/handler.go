@@ -51,7 +51,7 @@ func New(st *store.Store) *Handler {
 
 func (h *Handler) globalProxy() string {
 	st, err := h.store.GetSettings()
-	if err != nil {
+	if err != nil || !st.APIProxy {
 		return ""
 	}
 	return strings.TrimSpace(st.Proxy)
@@ -121,7 +121,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var lastBody []byte
 	var lastAcc model.PoolAccount
 	for i := 0; i < h.maxAttempts(); i++ {
-		a, ok := lb.reserve(list, modelID, tried)
+		a, ok := lb.reserveWithRPM(list, modelID, tried, h.accountRPM())
 		if !ok {
 			break
 		}
@@ -141,37 +141,38 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			state.err = formatLogError(lastStatus, lastBody)
 			continue
 		}
-		if retryableStatus(resp.StatusCode) {
-			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-			resp.Body.Close()
-			lb.end(keyID)
-			if d := cooldownFor(a, resp.StatusCode, resp.Header); d > 0 {
-				lb.cooldown(keyID, d)
-			}
-			if resp.StatusCode == http.StatusTooManyRequests {
-				h.refreshAfter429(keyID)
-			}
-			lastStatus, lastBody = resp.StatusCode, b
-			state.httpStatus = lastStatus
-			state.err = formatLogError(resp.StatusCode, b)
-			continue
-		}
 		if resp.StatusCode >= 400 {
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
 			lb.end(keyID)
-			copyHeader(w.Header(), resp.Header)
-			if w.Header().Get("Content-Type") == "" {
-				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			lastStatus, lastBody = resp.StatusCode, b
+			state.httpStatus = lastStatus
+			state.err = formatLogError(resp.StatusCode, b)
+			if isPermanentModelError(b) {
+				writeUpstreamErr(w, resp, b)
+				if u, ok := parseUsageJSON(b); ok {
+					state.usage = u
+				}
+				state.status = "error"
+				return
 			}
-			w.WriteHeader(resp.StatusCode)
-			_, _ = w.Write(b)
+			if isHTMLRateLimit(resp.StatusCode, b, resp.Header.Get("Content-Type")) {
+				break
+			}
+			if retryableStatus(resp.StatusCode) {
+				if d := cooldownFor(a, resp.StatusCode, resp.Header); d > 0 {
+					lb.cooldown(keyID, d)
+				}
+				if resp.StatusCode == http.StatusTooManyRequests {
+					h.refreshAfter429(keyID)
+				}
+				continue
+			}
+			writeUpstreamErr(w, resp, b)
 			if u, ok := parseUsageJSON(b); ok {
 				state.usage = u
 			}
-			state.httpStatus = resp.StatusCode
 			state.status = "error"
-			state.err = formatLogError(resp.StatusCode, b)
 			return
 		}
 		copyHeader(w.Header(), resp.Header)
@@ -191,7 +192,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if lastStatus == 0 {
-		state.err = unavailableReason(list, time.Now())
+		state.err = unavailableReasonRPM(list, time.Now(), h.accountRPM())
 		writeProxyErr(w, http.StatusServiceUnavailable, state.err)
 		return
 	}
@@ -211,6 +212,13 @@ func (h *Handler) maxAttempts() int {
 		retries = st.MaxRetries
 	}
 	return maxAttemptsFromSettings(retries)
+}
+
+func (h *Handler) accountRPM() int {
+	if st, err := h.store.GetSettings(); err == nil {
+		return clampAccountRPM(st.AccountRPM)
+	}
+	return defaultAccountRPM
 }
 
 func (h *Handler) pool() ([]model.PoolAccount, error) {
@@ -286,6 +294,21 @@ func copyHeader(dst, src http.Header) {
 			dst.Add(k, v)
 		}
 	}
+}
+
+func writeUpstreamErr(w http.ResponseWriter, resp *http.Response, body []byte) {
+	if resp != nil {
+		copyHeader(w.Header(), resp.Header)
+	}
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	}
+	code := http.StatusBadGateway
+	if resp != nil && resp.StatusCode >= 400 {
+		code = resp.StatusCode
+	}
+	w.WriteHeader(code)
+	_, _ = w.Write(body)
 }
 
 func writeProxyErr(w http.ResponseWriter, code int, msg string) {

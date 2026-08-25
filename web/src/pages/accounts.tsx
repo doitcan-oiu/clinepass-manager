@@ -24,7 +24,7 @@ import {
 const PAGE_SIZE = 24
 
 const emptySync: UsageSyncStatus = { running: false, total: 0, done: 0, fail: 0, paid: 0, unpaid: 0, message: "" }
-const emptyStats: PoolStats = { total: 0, ok: 0, tight: 0, exhausted: 0, avg_rolling: null, avg_weekly: null, avg_monthly: null }
+const emptyStats: PoolStats = { total: 0, ok: 0, tight: 0, exhausted: 0, inflight: 0, avg_rolling: null, avg_weekly: null, avg_monthly: null }
 
 export function AccountsPage() {
   const [items, setItems] = useState<PoolAccount[]>([])
@@ -212,6 +212,7 @@ export function AccountsPage() {
           <Stat label="正常" value={stats.ok} className="text-emerald-600" />
           <Stat label="紧张" value={stats.tight} className={stats.tight ? "text-amber-600" : ""} />
           <Stat label="用尽" value={stats.exhausted} className={stats.exhausted ? "text-red-600" : ""} />
+          <Stat label="在途" value={stats.inflight || 0} className={stats.inflight ? "text-sky-600" : ""} />
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span className="text-[11px] uppercase tracking-wide text-muted-foreground">总额度(均值)</span>
@@ -420,6 +421,9 @@ function AccountCard({
         <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${normalizeLoginProvider(a.login_provider) === "microsoft" ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200" : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200"}`}>
           {loginProviderLabel(a.login_provider)}
         </span>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${(a.inflight || 0) > 0 ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200" : "bg-muted text-muted-foreground"}`}>
+          在途 {a.inflight || 0}
+        </span>
         {a.batch_name ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{a.batch_name}</span> : null}
         {expire ? (
           <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
@@ -506,6 +510,7 @@ function QuotaFold({
                   {a.email}
                 </button>
                 <span className="hidden text-[11px] text-muted-foreground sm:inline">{a.batch_name || ""}</span>
+                <span className={`shrink-0 font-mono text-[11px] ${(a.inflight || 0) > 0 ? "text-sky-600" : "text-muted-foreground"}`}>在途 {a.inflight || 0}</span>
                 <span className={`font-mono text-[11px] ${pctText(pct)}`}>{pct == null ? "—" : `${pctLabel} ${Math.round(pct)}%`}</span>
                 <span className="hidden w-36 text-right text-[11px] text-muted-foreground lg:inline">{formatRefreshAt(a.usage?.synced_at || 0)}</span>
                 <span className="hidden w-28 text-right text-[11px] text-muted-foreground md:inline">{reset ? `重置 ${reset}` : ""}</span>

@@ -132,6 +132,12 @@ CREATE TABLE IF NOT EXISTS batches (
 	if err := s.ensureColumn("settings", "usage_refresh_concurrency", `ALTER TABLE settings ADD COLUMN usage_refresh_concurrency INTEGER NOT NULL DEFAULT 10`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("settings", "account_rpm", `ALTER TABLE settings ADD COLUMN account_rpm INTEGER NOT NULL DEFAULT 5`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "api_proxy", `ALTER TABLE settings ADD COLUMN api_proxy INTEGER NOT NULL DEFAULT 1`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("accounts", "login_provider", `ALTER TABLE accounts ADD COLUMN login_provider TEXT NOT NULL DEFAULT 'google'`); err != nil {
 		return err
 	}
@@ -413,21 +419,23 @@ func (s *Store) GetSettings() (model.Settings, error) {
 		IFNULL(hero_sms_api_key, ''), IFNULL(hero_sms_service, ''), IFNULL(hero_sms_country, 0), IFNULL(hero_sms_max_price, 0),
 		IFNULL(max_concurrent, 1), IFNULL(max_retries, 3), IFNULL(email_suffix_blacklist, ''),
 		IFNULL(provider_mode, 'keep'), IFNULL(provider_value, ''),
-		IFNULL(usage_refresh_sec, 60), IFNULL(usage_refresh_concurrency, 10)
+		IFNULL(usage_refresh_sec, 60), IFNULL(usage_refresh_concurrency, 10), IFNULL(account_rpm, 5), IFNULL(api_proxy, 1)
 		FROM settings WHERE id = 1`)
 	var out model.Settings
-	var headless int
+	var headless, apiProxy int
 	var blacklist string
 	if err := row.Scan(&out.Proxy, &headless, &out.InviteURL, &out.UsageJSURL,
 		&out.HeroSMSAPIKey, &out.HeroSMSService, &out.HeroSMSCountry, &out.HeroSMSMaxPrice, &out.MaxConcurrent, &out.MaxRetries, &blacklist,
-		&out.ProviderMode, &out.ProviderValue, &out.UsageRefreshSec, &out.UsageRefreshConcurrency); err != nil {
-		return model.Settings{Headless: true, MaxRetries: 3, UsageRefreshSec: 60, UsageRefreshConcurrency: 10}, err
+		&out.ProviderMode, &out.ProviderValue, &out.UsageRefreshSec, &out.UsageRefreshConcurrency, &out.AccountRPM, &apiProxy); err != nil {
+		return model.Settings{Headless: true, MaxRetries: 3, AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, UsageRefreshConcurrency: 10}, err
 	}
 	out.Headless = headless != 0
+	out.APIProxy = apiProxy != 0
 	if out.MaxConcurrent < 1 {
 		out.MaxConcurrent = 1
 	}
 	out.MaxRetries = clampMaxRetries(out.MaxRetries)
+	out.AccountRPM = clampAccountRPM(out.AccountRPM)
 	out.UsageRefreshSec = clampUsageRefreshSec(out.UsageRefreshSec)
 	out.UsageRefreshConcurrency = clampUsageRefreshConcurrency(out.UsageRefreshConcurrency)
 	out.EmailSuffixBlacklist = DecodeSuffixList(blacklist)
@@ -440,6 +448,10 @@ func (s *Store) SaveSettings(in model.Settings) error {
 	if in.Headless {
 		headless = 1
 	}
+	apiProxy := 0
+	if in.APIProxy {
+		apiProxy = 1
+	}
 	svc := strings.TrimSpace(in.HeroSMSService)
 	if svc == "" {
 		svc = "ot"
@@ -449,13 +461,14 @@ func (s *Store) SaveSettings(in model.Settings) error {
 		conc = 1
 	}
 	retries := clampMaxRetries(in.MaxRetries)
+	rpm := clampAccountRPM(in.AccountRPM)
 	refreshSec := clampUsageRefreshSec(in.UsageRefreshSec)
 	refreshConc := clampUsageRefreshConcurrency(in.UsageRefreshConcurrency)
 	blacklist := EncodeSuffixList(in.EmailSuffixBlacklist)
 	providerMode := normalizeProviderMode(in.ProviderMode)
 	_, err := s.db.Exec(`
-INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, usage_refresh_concurrency, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, usage_refresh_concurrency, account_rpm, api_proxy, updated_at)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	proxy = excluded.proxy,
 	headless = excluded.headless,
@@ -472,10 +485,12 @@ ON CONFLICT(id) DO UPDATE SET
 	provider_value = excluded.provider_value,
 	usage_refresh_sec = excluded.usage_refresh_sec,
 	usage_refresh_concurrency = excluded.usage_refresh_concurrency,
+	account_rpm = excluded.account_rpm,
+	api_proxy = excluded.api_proxy,
 	updated_at = excluded.updated_at`,
 		strings.TrimSpace(in.Proxy), headless, strings.TrimSpace(in.InviteURL), strings.TrimSpace(in.UsageJSURL),
 		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, retries, blacklist,
-		providerMode, in.ProviderValue, refreshSec, refreshConc, time.Now().Unix())
+		providerMode, in.ProviderValue, refreshSec, refreshConc, rpm, apiProxy, time.Now().Unix())
 	return err
 }
 
@@ -494,6 +509,16 @@ func ApplySettings(cfg config.Config, s model.Settings) config.Config {
 	}
 	cfg.MaxRetries = clampMaxRetries(s.MaxRetries)
 	return cfg
+}
+
+func clampAccountRPM(n int) int {
+	if n < 1 {
+		return 5
+	}
+	if n > 1000 {
+		return 1000
+	}
+	return n
 }
 
 func normalizeProviderMode(mode string) string {
@@ -548,5 +573,6 @@ func (s *Store) SeedDefaults(cfg config.Config) error {
 		Headless:   cfg.Headless,
 		InviteURL:  cfg.InviteURL,
 		MaxRetries: 3,
+		APIProxy:   true,
 	})
 }

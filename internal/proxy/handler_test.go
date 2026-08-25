@@ -426,6 +426,90 @@ func Test429HoldsKeyUntilRefreshFinishes(t *testing.T) {
 	}
 }
 
+func TestHTML429DoesNotFailoverOrRefresh(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	now := time.Now().Unix()
+	for _, email := range []string{"a@x.com", "b@x.com"} {
+		a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: email, APIKey: "sk-" + email, WorkspaceID: "ws", CookieHeader: "auth=1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustUsage(t, st, a.ID, 1, now)
+	}
+	var hits int
+	var refreshed atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`<!doctype html><meta charset="utf-8"><title>429</title>429 Too Many Requests`))
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	h.SetUsageRefresher(refreshFunc(func(string) { refreshed.Add(1) }))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"deepseek-v4-flash"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if hits != 1 {
+		t.Fatalf("html 429 must not switch accounts, hits=%d", hits)
+	}
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d", rr.Code)
+	}
+	if refreshed.Load() != 0 {
+		t.Fatal("html 429 must not refresh usage")
+	}
+}
+
+func TestImageInput500DoesNotFailover(t *testing.T) {
+	resetBalancer()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	now := time.Now().Unix()
+	for _, email := range []string{"a@x.com", "b@x.com"} {
+		a, err := st.CreatePaidAccount(model.CreatePaidAccountInput{Email: email, APIKey: "sk-" + email, WorkspaceID: "ws", CookieHeader: "auth=1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustUsage(t, st, a.ID, 1, now)
+	}
+	var hits int
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"inference request failed: failed to invoke model 'deepseek/deepseek-v4-flash' from Openrouter: request failed with status 404: {\"error\":{\"message\":\"No endpoints found that support image input\",\"code\":404}}"}}`))
+	}))
+	t.Cleanup(up.Close)
+	h := New(st)
+	h.upstream = up.URL
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"deepseek-v4-flash"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if hits != 1 {
+		t.Fatalf("image 500 must not switch accounts, hits=%d", hits)
+	}
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d", rr.Code)
+	}
+	logs, err := st.ListRequestLogs(model.RequestLogFilter{}, 1, 0)
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("logs %v", err)
+	}
+	if logs[0].Retries != 0 || !strings.Contains(logs[0].Error, "image input") {
+		t.Fatalf("log %+v", logs[0])
+	}
+}
+
 func TestRecordsUpstream400ErrorBody(t *testing.T) {
 	resetBalancer()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
@@ -546,6 +630,21 @@ func TestForwardUsesGlobalHTTPProxy(t *testing.T) {
 	}
 	if !viaProxy.Load() {
 		t.Fatal("forwarding did not use global proxy")
+	}
+
+	cfg.APIProxy = false
+	if err := st.SaveSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+	viaProxy.Store(false)
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.3"}`))
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != 200 {
+		t.Fatalf("direct status=%d body=%s", rr2.Code, rr2.Body.String())
+	}
+	if viaProxy.Load() {
+		t.Fatal("api_proxy off must skip global proxy")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"opencode-go-manager/internal/backup"
 	"opencode-go-manager/internal/model"
+	"opencode-go-manager/internal/proxy"
 )
 
 func (s *Server) markBatchPaid(w http.ResponseWriter, r *http.Request) {
@@ -48,8 +49,12 @@ func (s *Server) listPoolAccounts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	proxy.AttachInflight(all)
 	active, weekly, rolling := model.SplitShelved(all)
 	stats, _ := s.store.PoolStats(batchID)
+	for _, a := range all {
+		stats.Inflight += a.Inflight
+	}
 	writeJSON(w, http.StatusOK, model.PoolPage{
 		Items:          pageAccounts(active, page, pageSize),
 		WeeklyLimited:  weekly,
@@ -114,6 +119,7 @@ func (s *Server) createPaidAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, a.Public())
 		return
 	}
+	p.Inflight = proxy.InflightOf(p.ID)
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -128,6 +134,7 @@ func (s *Server) refreshAccountUsage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"usage": u})
 		return
 	}
+	p.Inflight = proxy.InflightOf(p.ID)
 	writeJSON(w, http.StatusOK, p)
 }
 

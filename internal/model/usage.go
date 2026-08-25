@@ -76,7 +76,8 @@ func SplitShelved(list []PoolAccount) (active, weekly, rolling []PoolAccount) {
 
 type PoolAccount struct {
 	AccountPublic
-	Usage AccountUsage `json:"usage"`
+	Usage    AccountUsage `json:"usage"`
+	Inflight int          `json:"inflight"`
 }
 
 type PoolPage struct {
@@ -121,6 +122,7 @@ type PoolStats struct {
 	Ok         int      `json:"ok"`
 	Tight      int      `json:"tight"`
 	Exhausted  int      `json:"exhausted"`
+	Inflight   int      `json:"inflight"`
 	AvgRolling *float64 `json:"avg_rolling"`
 	AvgWeekly  *float64 `json:"avg_weekly"`
 	AvgMonthly *float64 `json:"avg_monthly"`

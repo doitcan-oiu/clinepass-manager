@@ -234,6 +234,63 @@ func TestRetryableStatus(t *testing.T) {
 	}
 }
 
+func TestHTMLRateLimitDetection(t *testing.T) {
+	html := []byte(`<!doctype html><meta charset="utf-8"><meta name=viewport content="width=device-width, initial-scale=1"><title>429</title>429 Too Many Requests`)
+	if !isHTMLRateLimit(429, html, "text/html") {
+		t.Fatal("html 429")
+	}
+	if !isHTMLRateLimit(429, html, "") {
+		t.Fatal("html body without content-type")
+	}
+	if isHTMLRateLimit(429, []byte(`{"error":"You have reached your 5-hour Clinepass limit"}`), "application/json") {
+		t.Fatal("json quota 429 must stay failover")
+	}
+	if isHTMLRateLimit(500, html, "text/html") {
+		t.Fatal("only 429 is edge limit")
+	}
+}
+
+func TestPermanentModelError(t *testing.T) {
+	body := []byte(`{"error":{"message":"inference request failed: failed to invoke model 'deepseek/deepseek-v4-flash' from Openrouter: request failed with status 404: {\"error\":{\"message\":\"No endpoints found that support image input\",\"code\":404}}"}}`)
+	if !isPermanentModelError(body) {
+		t.Fatal("image input 404 must be permanent")
+	}
+	if isPermanentModelError([]byte(`{"error":"upstream timeout"}`)) {
+		t.Fatal("transient 500 should still retry")
+	}
+}
+
+func TestReserveRespectsAccountRPM(t *testing.T) {
+	resetBalancer()
+	a := acc("a@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	list := []model.PoolAccount{a}
+	for i := 0; i < 2; i++ {
+		if _, ok := lb.reserveWithRPM(list, "glm-5.3", nil, 2); !ok {
+			t.Fatalf("reserve %d should succeed", i)
+		}
+	}
+	if _, ok := lb.reserveWithRPM(list, "glm-5.3", nil, 2); ok {
+		t.Fatal("third reserve must hit rpm=2")
+	}
+	got := RankWithRPM(list, "glm-5.3", 2)
+	if len(got) != 0 {
+		t.Fatalf("ranked while at rpm cap: %v", emails(got))
+	}
+}
+
+func TestAttachInflight(t *testing.T) {
+	resetBalancer()
+	a := acc("a@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	if _, ok := lb.reserve([]model.PoolAccount{a}, "glm-5.3", nil); !ok {
+		t.Fatal("reserve")
+	}
+	list := []model.PoolAccount{a}
+	AttachInflight(list)
+	if list[0].Inflight != 1 {
+		t.Fatalf("inflight=%d", list[0].Inflight)
+	}
+}
+
 func win(status string, pct float64) model.UsageWindow {
 	return model.UsageWindow{Status: status, UsagePercent: pct}
 }

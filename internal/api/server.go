@@ -111,7 +111,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	cur, err := s.store.GetSettings()
 	if err != nil {
-		cur = model.Settings{Headless: true}
+		cur = model.Settings{Headless: true, APIProxy: true}
 	}
 	var in struct {
 		Proxy                   *string  `json:"proxy"`
@@ -123,6 +123,8 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		HeroSMSMaxPrice         *float64 `json:"hero_sms_max_price"`
 		MaxConcurrent           *int     `json:"max_concurrent"`
 		MaxRetries              *int     `json:"max_retries"`
+		AccountRPM              *int     `json:"account_rpm"`
+		APIProxy                *bool    `json:"api_proxy"`
 		UsageRefreshSec         *int     `json:"usage_refresh_sec"`
 		UsageRefreshConcurrency *int     `json:"usage_refresh_concurrency"`
 		ProviderMode            *string  `json:"provider_mode"`
@@ -170,6 +172,16 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		cur.MaxRetries = *in.MaxRetries
 	}
+	if in.AccountRPM != nil {
+		if *in.AccountRPM < 1 || *in.AccountRPM > 1000 {
+			writeErr(w, http.StatusBadRequest, "单账号 RPM 须在 1–1000")
+			return
+		}
+		cur.AccountRPM = *in.AccountRPM
+	}
+	if in.APIProxy != nil {
+		cur.APIProxy = *in.APIProxy
+	}
 	if in.UsageRefreshSec != nil {
 		if *in.UsageRefreshSec < 15 || *in.UsageRefreshSec > 86400 {
 			writeErr(w, http.StatusBadRequest, "用量刷新间隔须在 15–86400 秒")
@@ -204,7 +216,7 @@ func (s *Server) publicConfig() map[string]any {
 	if err == nil {
 		cfg = store.ApplySettings(cfg, st)
 	} else {
-		st = model.Settings{UsageRefreshSec: 60, UsageRefreshConcurrency: 10}
+		st = model.Settings{AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, UsageRefreshConcurrency: 10}
 	}
 	return map[string]any{
 		"invite_url":                cfg.InviteURL,
@@ -213,6 +225,8 @@ func (s *Server) publicConfig() map[string]any {
 		"cloak_version":             cfg.CloakVersion,
 		"max_concurrent":            cfg.MaxConcurrent,
 		"max_retries":               cfg.MaxRetries,
+		"account_rpm":               st.AccountRPM,
+		"api_proxy":                 st.APIProxy,
 		"usage_refresh_sec":         st.UsageRefreshSec,
 		"usage_refresh_concurrency": st.UsageRefreshConcurrency,
 		"platform":                  browser.PlatformTag(),

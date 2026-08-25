@@ -35,6 +35,8 @@ export function SettingsPage() {
   const [headless, setHeadless] = useState(true)
   const [maxConcurrent, setMaxConcurrent] = useState(1)
   const [maxRetries, setMaxRetries] = useState(3)
+  const [accountRpm, setAccountRpm] = useState(5)
+  const [apiProxy, setApiProxy] = useState(true)
   const [usageRefreshSec, setUsageRefreshSec] = useState(60)
   const [usageRefreshConcurrency, setUsageRefreshConcurrency] = useState(10)
   const [providerMode, setProviderMode] = useState<"keep" | "hide" | "replace">("keep")
@@ -56,6 +58,8 @@ export function SettingsPage() {
         setHeadless(cfg.headless !== false)
         setMaxConcurrent(cfg.max_concurrent >= 1 ? cfg.max_concurrent : 1)
         setMaxRetries(Number.isFinite(cfg.max_retries) && cfg.max_retries >= 0 ? cfg.max_retries : 3)
+        setAccountRpm(cfg.account_rpm >= 1 ? cfg.account_rpm : 5)
+        setApiProxy(cfg.api_proxy !== false)
         setUsageRefreshSec(cfg.usage_refresh_sec >= 15 ? cfg.usage_refresh_sec : 60)
         setUsageRefreshConcurrency(cfg.usage_refresh_concurrency >= 1 ? cfg.usage_refresh_concurrency : 10)
         setProviderMode(cfg.provider_mode === "hide" || cfg.provider_mode === "replace" ? cfg.provider_mode : "keep")
@@ -115,9 +119,34 @@ export function SettingsPage() {
         toast.error("并发数至少为 1")
         return
       }
+      await api.saveConfig({
+        proxy,
+        headless,
+        max_concurrent: n,
+        provider_mode: providerMode,
+        provider_value: providerValue,
+      })
+      setMaxConcurrent(n)
+      toast.success("运行环境已保存")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "保存失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function saveAccount(e?: FormEvent) {
+    e?.preventDefault()
+    setPending(true)
+    try {
       const retries = Math.floor(Number(maxRetries))
       if (!Number.isFinite(retries) || retries < 0 || retries > 32) {
         toast.error("失败换号次数须在 0–32")
+        return
+      }
+      const rpm = Math.floor(Number(accountRpm))
+      if (!Number.isFinite(rpm) || rpm < 1 || rpm > 1000) {
+        toast.error("单账号 RPM 须在 1–1000")
         return
       }
       const refreshSec = Math.floor(Number(usageRefreshSec))
@@ -131,20 +160,17 @@ export function SettingsPage() {
         return
       }
       await api.saveConfig({
-        proxy,
-        headless,
-        max_concurrent: n,
         max_retries: retries,
+        account_rpm: rpm,
+        api_proxy: apiProxy,
         usage_refresh_sec: refreshSec,
         usage_refresh_concurrency: refreshConc,
-        provider_mode: providerMode,
-        provider_value: providerValue,
       })
-      setMaxConcurrent(n)
       setMaxRetries(retries)
+      setAccountRpm(rpm)
       setUsageRefreshSec(refreshSec)
       setUsageRefreshConcurrency(refreshConc)
-      toast.success("运行环境已保存")
+      toast.success("账号设置已保存")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存失败")
     } finally {
@@ -182,8 +208,9 @@ export function SettingsPage() {
         <p className="text-sm text-muted-foreground">按分组切换，只改当前这一组。</p>
       </div>
       <Tabs defaultValue="runtime">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="runtime">运行环境</TabsTrigger>
+          <TabsTrigger value="account">账号设置</TabsTrigger>
           <TabsTrigger value="herosms">Hero SMS</TabsTrigger>
         </TabsList>
         <TabsContent value="runtime" className="mt-4">
@@ -203,7 +230,7 @@ export function SettingsPage() {
                     onChange={(e) => setProxy(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    留空则直连。登录、用量刷新、转发 Cline API 都会走这里。带账密的 SOCKS5（例如 1024proxy）Chrome 不支持，会自动起本地中继再出去。
+                    留空则直连。登录提取支付、用量刷新会走这里。转发 Cline API 是否走代理由「账号设置」里的开关决定。带账密的 SOCKS5（例如 1024proxy）Chrome 不支持，会自动起本地中继再出去。
                   </p>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border p-3">
@@ -249,6 +276,43 @@ export function SettingsPage() {
                     只改转发给客户端的 JSON，流式和非流式都生效。默认不改。
                   </p>
                 </div>
+                <Button type="submit" disabled={pending} className="w-fit">
+                  保存运行环境
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="account" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>账号设置</CardTitle>
+              <CardDescription>控制单账号转发速率、API 是否走代理、失败换号和用量刷新。</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={saveAccount} className="grid gap-6">
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor="api-proxy">转发 API 走全局代理</Label>
+                    <p className="text-xs text-muted-foreground">关闭后转发 Cline API 直连，提取支付链接仍走全局代理。</p>
+                  </div>
+                  <Switch id="api-proxy" checked={apiProxy} onCheckedChange={setApiProxy} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="account-rpm">单账号 RPM</Label>
+                  <Input
+                    id="account-rpm"
+                    type="number"
+                    min={1}
+                    max={1000}
+                    step={1}
+                    value={accountRpm}
+                    onChange={(e) => setAccountRpm(Number(e.target.value))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    每个账号每分钟最多转发多少个请求，默认 5。达到上限后会换其他号。
+                  </p>
+                </div>
                 <div className="grid gap-2">
                   <Label htmlFor="max-retries">失败换号次数</Label>
                   <Input
@@ -261,7 +325,7 @@ export function SettingsPage() {
                     onChange={(e) => setMaxRetries(Number(e.target.value))}
                   />
                   <p className="text-xs text-muted-foreground">
-                    上游 429/5xx 时再换几个号，0 表示不换号。5 小时 / 周 / 月已经 100% 的账号不会参与转发和重试。遇到 429 也会立刻刷新该账号用量。
+                    上游账号额度 429/5xx 时再换几个号，0 表示不换号。边缘 HTML 429 和模型不支持图片这类错误不会换号，避免把限流打得更猛。
                   </p>
                 </div>
                 <div className="grid gap-2">
@@ -291,7 +355,7 @@ export function SettingsPage() {
                   <p className="text-xs text-muted-foreground">一次自动/手动刷新同时打多少个账号，默认 10，范围 1–64。</p>
                 </div>
                 <Button type="submit" disabled={pending} className="w-fit">
-                  保存运行环境
+                  保存账号设置
                 </Button>
               </form>
             </CardContent>
