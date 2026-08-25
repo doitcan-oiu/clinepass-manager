@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := dev
 
-.PHONY: dev api web build start tidy install-web build-web install-pw browser-deps ensure-env worker-venv worker-test
+.PHONY: dev api web build start tidy install-web build-web install-pw browser-deps ensure-env worker-venv worker-test pay-tool
 
 dev: ensure-env
 	@echo "==> 安装依赖"
@@ -62,3 +62,10 @@ build: ensure-env build-web
 
 start: build
 	@bash scripts/install-service.sh
+
+pay-tool:
+	mkdir -p login-tool/dist
+	go build -ldflags="-s -w" -o login-tool/dist/pay-linux ./login-tool
+	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o login-tool/dist/pay.exe ./login-tool
+	@echo "==> Linux: login-tool/dist/pay-linux"
+	@echo "==> Windows: login-tool/dist/pay.exe"
