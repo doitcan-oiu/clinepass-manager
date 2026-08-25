@@ -26,6 +26,7 @@ type BatchSummary struct {
 type PayLink struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Cookie   string `json:"cookie"`
 	URL      string `json:"payment_url"`
 }
 

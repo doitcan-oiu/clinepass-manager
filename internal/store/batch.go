@@ -261,7 +261,12 @@ func (s *Store) UniquePaymentLinks(batchID string) ([]model.PayLink, error) {
 			continue
 		}
 		seen[email] = struct{}{}
-		out = append(out, model.PayLink{Email: email, Password: a.Password, URL: u})
+		out = append(out, model.PayLink{
+			Email:    email,
+			Password: a.Password,
+			Cookie:   strings.TrimSpace(a.CookieHeader),
+			URL:      u,
+		})
 	}
 	return out, nil
 }

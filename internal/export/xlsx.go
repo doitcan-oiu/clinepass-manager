@@ -69,10 +69,11 @@ func worksheetXML(rows []model.PayLink) string {
 	b.WriteString(`<col min="1" max="1" width="28" customWidth="1"/>`)
 	b.WriteString(`<col min="2" max="2" width="22" customWidth="1"/>`)
 	b.WriteString(`<col min="3" max="3" width="72" customWidth="1"/>`)
+	b.WriteString(`<col min="4" max="4" width="72" customWidth="1"/>`)
 	b.WriteString(`</cols><sheetData>`)
-	writeRow(&b, 1, []string{"账号", "密码", "支付链接"})
+	writeRow(&b, 1, []string{"账号", "密码", "Cookie", "支付链接"})
 	for i, row := range rows {
-		writeRow(&b, i+2, []string{row.Email, row.Password, row.URL})
+		writeRow(&b, i+2, []string{row.Email, row.Password, row.Cookie, row.URL})
 	}
 	b.WriteString(`</sheetData></worksheet>`)
 	return b.String()
@@ -80,11 +81,22 @@ func worksheetXML(rows []model.PayLink) string {
 
 func writeRow(b *strings.Builder, n int, cells []string) {
 	fmt.Fprintf(b, `<row r="%d">`, n)
-	cols := []string{"A", "B", "C"}
 	for i, v := range cells {
-		fmt.Fprintf(b, `<c r="%s%d" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>`, cols[i], n, xmlEscape(v))
+		fmt.Fprintf(b, `<c r="%s%d" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>`, colName(i), n, xmlEscape(v))
 	}
 	b.WriteString(`</row>`)
+}
+
+func colName(i int) string {
+	if i < 0 {
+		i = 0
+	}
+	name := ""
+	for i >= 0 {
+		name = string(rune('A'+i%26)) + name
+		i = i/26 - 1
+	}
+	return name
 }
 
 func xmlEscape(s string) string {
