@@ -47,6 +47,8 @@ type workerSettings struct {
 	CloakBinaryPath string  `json:"cloak_binary_path"`
 	LicenseKey      string  `json:"license_key"`
 	VirtualDisplay  bool    `json:"virtual_display"`
+	AutoPay         bool    `json:"auto_pay"`
+	ManagerAPI      string  `json:"manager_api"`
 }
 
 type workerMsg struct {
@@ -58,6 +60,8 @@ type workerMsg struct {
 	CookiesJSON  string `json:"cookies_json"`
 	CookieHeader string `json:"cookie_header"`
 	PaymentURL   string `json:"payment_url"`
+	Paid         bool   `json:"paid"`
+	PayError     string `json:"pay_error"`
 }
 
 func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logger) (Result, error) {
@@ -110,6 +114,8 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 			CloakBinaryPath: cfg.CloakBinaryPath,
 			LicenseKey:      browser.ResolveLicense(cfg.LicenseKey),
 			VirtualDisplay:  browser.VirtualDisplay() != "",
+			AutoPay:         cfg.AutoPay,
+			ManagerAPI:      cfg.ManagerAPI(),
 		},
 	}
 	payload, err := json.Marshal(job)
@@ -175,6 +181,8 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 		WorkspaceID:  acc.WorkspaceID,
 		APIKey:       acc.APIKey,
 		UserID:       acc.UserID,
+		Paid:         last.Paid,
+		PayError:     last.PayError,
 	}
 	if action != "refresh" {
 		key, userID, err := createClineKey(cfg, res.CookieHeader, "", "", log)

@@ -105,6 +105,14 @@ export type AppConfig = {
   hero_sms_max_price: number
   provider_mode: "keep" | "hide" | "replace"
   provider_value: string
+  amzkeys_host: string
+  amzkeys_app_id: string
+  amzkeys_app_key: string
+  amzkeys_private_key: string
+  amzkeys_card_type: number
+  amzkeys_card_amount: number
+  amzkeys_configured: boolean
+  amzkeys_card_last4: string
 }
 
 export type CloakUpdate = {

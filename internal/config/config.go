@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -9,25 +10,32 @@ import (
 )
 
 type Config struct {
-	Addr            string
-	DataDir         string
-	InviteURL       string
-	Headless        bool
-	SlowMo          float64
-	CloakVersion    string
-	CloakCacheDir   string
-	CloakBinaryPath string
-	LicenseKey      string
-	MaxConcurrent   int
-	MaxRetries      int
-	Proxy           string
-	HeroSMSAPIKey   string
-	HeroSMSService  string
-	HeroSMSCountry  int
-	HeroSMSMaxPrice float64
-	LoginEngine     string
-	LoginPython     string
-	ConfigFile      string
+	Addr              string
+	DataDir           string
+	InviteURL         string
+	Headless          bool
+	SlowMo            float64
+	CloakVersion      string
+	CloakCacheDir     string
+	CloakBinaryPath   string
+	LicenseKey        string
+	MaxConcurrent     int
+	MaxRetries        int
+	Proxy             string
+	HeroSMSAPIKey     string
+	HeroSMSService    string
+	HeroSMSCountry    int
+	HeroSMSMaxPrice   float64
+	AmzKeysHost       string
+	AmzKeysAppID      string
+	AmzKeysAppKey     string
+	AmzKeysPrivateKey string
+	AmzKeysCardType   int
+	AmzKeysCardAmount float64
+	AutoPay           bool
+	LoginEngine       string
+	LoginPython       string
+	ConfigFile        string
 }
 
 func Load() (Config, error) {
@@ -85,6 +93,24 @@ func (c Config) RuntimeHome() string {
 
 func (c Config) RuntimeDir() string {
 	return filepath.Join(c.DataDir, "run")
+}
+
+func (c Config) ManagerAPI() string {
+	addr := strings.TrimSpace(c.Addr)
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return strings.TrimRight(addr, "/")
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		if strings.HasPrefix(addr, ":") {
+			return "http://127.0.0.1" + addr
+		}
+		return "http://127.0.0.1:9999"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 func DirWritable(dir string) bool {

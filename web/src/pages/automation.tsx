@@ -5,6 +5,7 @@ import { api } from "@/lib/api"
 import type { Batch } from "@/lib/types"
 import { downloadBase64, xlsxMime } from "@/lib/download"
 import { AddBatchDialog } from "@/components/accounts/add-batch-dialog"
+import { AutoPayDialog } from "@/components/accounts/auto-pay-dialog"
 import { BatchCard } from "@/components/accounts/batch-card"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,6 +26,8 @@ export function AutomationPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [remove, setRemove] = useState<Batch | null>(null)
+  const [payAsk, setPayAsk] = useState<null | { batch: Batch; mode: "login" | "refresh" }>(null)
+  const [payPending, setPayPending] = useState(false)
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   async function reload(next = page) {
@@ -53,25 +56,22 @@ export function AutomationPage() {
     await reload(page)
   }
 
-  async function loginBatch(b: Batch) {
+  async function startWithAutoPay(autoPay: boolean) {
+    if (!payAsk) return
+    setPayPending(true)
     try {
-      const jobs = await api.loginBatch(b.id)
-      if (!jobs?.length) toast.message("没有需要登录的账号")
-      else toast.success(`开始生成 ${jobs.length} 条`)
+      const jobs =
+        payAsk.mode === "refresh"
+          ? await api.refreshBatch(payAsk.batch.id, autoPay)
+          : await api.loginBatch(payAsk.batch.id, autoPay)
+      if (!jobs?.length) toast.message(payAsk.mode === "refresh" ? "没有可刷新的账号" : "没有需要登录的账号")
+      else toast.success(`${payAsk.mode === "refresh" ? "开始刷新" : "开始生成"} ${jobs.length} 条${autoPay ? "，并自动支付" : ""}`)
+      setPayAsk(null)
       await reload(page)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "启动失败")
-    }
-  }
-
-  async function refreshBatch(b: Batch) {
-    try {
-      const jobs = await api.refreshBatch(b.id)
-      if (!jobs?.length) toast.message("没有可刷新的账号")
-      else toast.success(`开始刷新 ${jobs.length} 条`)
-      await reload(page)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "启动失败")
+    } finally {
+      setPayPending(false)
     }
   }
 
@@ -113,8 +113,8 @@ export function AutomationPage() {
             <BatchCard
               key={b.id}
               batch={b}
-              onLogin={loginBatch}
-              onRefresh={refreshBatch}
+              onLogin={(b) => setPayAsk({ batch: b, mode: "login" })}
+              onRefresh={(b) => setPayAsk({ batch: b, mode: "refresh" })}
               onDownload={downloadForStaff}
               onPaid={markPaid}
               onRemove={setRemove}
@@ -139,6 +139,19 @@ export function AutomationPage() {
           </Button>
         </div>
       </div>
+
+      <AutoPayDialog
+        open={!!payAsk}
+        title={payAsk?.mode === "refresh" ? "刷新支付链接" : "生成支付链接"}
+        description={
+          payAsk?.mode === "refresh"
+            ? "用已有 Cookie 重新抽出支付链接。勾选自动支付后会立刻用 AmzKeys 虚拟卡去付 Stripe。"
+            : "登录成功后抽出支付链接。勾选自动支付后不再下载 Excel，会开虚拟卡填 Stripe。"
+        }
+        pending={payPending}
+        onOpenChange={(v) => !v && !payPending && setPayAsk(null)}
+        onConfirm={startWithAutoPay}
+      />
 
       <AlertDialog open={!!remove} onOpenChange={(v) => !v && setRemove(null)}>
         <AlertDialogContent>

@@ -217,4 +217,44 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if cfg.CloakVersion != "151.0.7922.108.2" || cfg.LicenseKey != "ck_test_license" {
 		t.Fatalf("apply cloak %+v", cfg)
 	}
+	again = gotCloak
+	again.AmzKeysHost = "https://testapi.amzkeys.com"
+	again.AmzKeysAppID = "2026240003167464"
+	again.AmzKeysAppKey = "amz-app-key"
+	again.AmzKeysPrivateKey = "amz-rsa-key"
+	again.AmzKeysCardType = 467845
+	again.AmzKeysCardAmount = 20
+	if err := s.SaveSettings(again); err != nil {
+		t.Fatal(err)
+	}
+	gotAmz, err := s.GetSettings()
+	if err != nil || gotAmz.AmzKeysHost != "https://testapi.amzkeys.com" || gotAmz.AmzKeysAppID != "2026240003167464" || gotAmz.AmzKeysAppKey != "amz-app-key" || gotAmz.AmzKeysPrivateKey != "amz-rsa-key" || gotAmz.AmzKeysCardType != 467845 || gotAmz.AmzKeysCardAmount != 20 {
+		t.Fatalf("amzkeys %+v %v", gotAmz, err)
+	}
+	cfg = ApplySettings(config.Config{}, gotAmz)
+	if cfg.AmzKeysAppID != "2026240003167464" || cfg.AmzKeysCardType != 467845 {
+		t.Fatalf("apply amzkeys %+v", cfg)
+	}
+	card := model.AmzKeysCard{CardNo: "4111111111111111", CVV: "123", ValidDate: "2028-12", RequestID: "r1"}
+	if err := s.SetAmzKeysCard(card); err != nil {
+		t.Fatal(err)
+	}
+	gotCard, err := s.GetAmzKeysCard()
+	if err != nil || !gotCard.Ready() || gotCard.CardNo != card.CardNo || gotCard.CVV != "123" {
+		t.Fatalf("active card %+v %v", gotCard, err)
+	}
+	if err := s.SaveSettings(gotAmz); err != nil {
+		t.Fatal(err)
+	}
+	gotCard, err = s.GetAmzKeysCard()
+	if err != nil || gotCard.CardNo != card.CardNo {
+		t.Fatalf("card must survive settings save %+v %v", gotCard, err)
+	}
+	if err := s.SetAmzKeysCard(model.AmzKeysCard{}); err != nil {
+		t.Fatal(err)
+	}
+	gotCard, err = s.GetAmzKeysCard()
+	if err != nil || gotCard.Ready() {
+		t.Fatalf("cleared card %+v %v", gotCard, err)
+	}
 }

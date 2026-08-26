@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { toast } from "sonner"
-import { api, type HeroSMSCatalog, type HeroSMSCountry } from "@/lib/api"
+import { api, type AmzKeysStatus, type HeroSMSCatalog, type HeroSMSCountry } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 
 const selectClass = "h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
@@ -53,6 +54,17 @@ export function SettingsPage() {
   const [pending, setPending] = useState(false)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [loadingCatalog, setLoadingCatalog] = useState(false)
+  const [amzHost, setAmzHost] = useState("https://testapi.amzkeys.com")
+  const [amzAppID, setAmzAppID] = useState("")
+  const [amzAppKey, setAmzAppKey] = useState("")
+  const [amzPrivateKey, setAmzPrivateKey] = useState("")
+  const [amzCardType, setAmzCardType] = useState(467845)
+  const [amzAmount, setAmzAmount] = useState(20)
+  const [amzConfigured, setAmzConfigured] = useState(false)
+  const [amzLast4, setAmzLast4] = useState("")
+  const [amzStatus, setAmzStatus] = useState<AmzKeysStatus | null>(null)
+  const [checkingAmz, setCheckingAmz] = useState(false)
+  const [clearingCard, setClearingCard] = useState(false)
 
   useEffect(() => {
     api
@@ -76,6 +88,14 @@ export function SettingsPage() {
         setService(cfg.hero_sms_service || "ot")
         setCountry(cfg.hero_sms_country || 0)
         setMaxPrice(cfg.hero_sms_max_price || 0)
+        setAmzHost(cfg.amzkeys_host || "https://testapi.amzkeys.com")
+        setAmzAppID(cfg.amzkeys_app_id || "")
+        setAmzAppKey(cfg.amzkeys_app_key || "")
+        setAmzPrivateKey(cfg.amzkeys_private_key || "")
+        setAmzCardType(cfg.amzkeys_card_type || 467845)
+        setAmzAmount(cfg.amzkeys_card_amount || 20)
+        setAmzConfigured(!!cfg.amzkeys_configured)
+        setAmzLast4(cfg.amzkeys_card_last4 || "")
         if (cfg.hero_sms_configured) {
           loadCatalog(cfg.hero_sms_service || "ot").catch(() => {})
         }
@@ -232,6 +252,80 @@ export function SettingsPage() {
     }
   }
 
+  async function saveAmzKeys(e?: FormEvent) {
+    e?.preventDefault()
+    const type = Math.floor(Number(amzCardType))
+    const amount = Number(amzAmount)
+    if (!Number.isFinite(type) || type <= 0) {
+      toast.error("卡段须为正整数")
+      return false
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("开卡金额须大于 0")
+      return false
+    }
+    setPending(true)
+    try {
+      const body: Parameters<typeof api.saveConfig>[0] = {
+        amzkeys_host: amzHost.trim() || "https://testapi.amzkeys.com",
+        amzkeys_app_id: amzAppID.trim(),
+        amzkeys_card_type: type,
+        amzkeys_card_amount: amount,
+      }
+      if (amzAppKey && !amzAppKey.includes("********")) {
+        body.amzkeys_app_key = amzAppKey.trim()
+      }
+      if (amzPrivateKey && !amzPrivateKey.includes("********")) {
+        body.amzkeys_private_key = amzPrivateKey.trim()
+      }
+      const cfg = await api.saveConfig(body)
+      setAmzHost(cfg.amzkeys_host || body.amzkeys_host || "")
+      setAmzAppID(cfg.amzkeys_app_id || "")
+      setAmzAppKey(cfg.amzkeys_app_key || "")
+      setAmzPrivateKey(cfg.amzkeys_private_key || "")
+      setAmzCardType(cfg.amzkeys_card_type || type)
+      setAmzAmount(cfg.amzkeys_card_amount || amount)
+      setAmzConfigured(!!cfg.amzkeys_configured)
+      setAmzLast4(cfg.amzkeys_card_last4 || "")
+      toast.success("amzkeys卡台已保存")
+      return true
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "保存失败")
+      return false
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function clearAmzCard() {
+    setClearingCard(true)
+    try {
+      await api.clearAmzKeysCard()
+      setAmzLast4("")
+      toast.success("已弃用当前卡，下次支付会开新卡")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "弃用失败")
+    } finally {
+      setClearingCard(false)
+    }
+  }
+
+  async function checkAmzKeys() {
+    setCheckingAmz(true)
+    try {
+      if (!(await saveAmzKeys())) return
+      const st = await api.amzKeysStatus()
+      setAmzStatus(st)
+      const usd = st.balances.find((b) => b.currency === "USD")
+      toast.success(usd ? `连接成功，USD 可用 ${usd.available_amount}` : "连接成功")
+    } catch (err) {
+      setAmzStatus(null)
+      toast.error(err instanceof Error ? err.message : "检测失败")
+    } finally {
+      setCheckingAmz(false)
+    }
+  }
+
   async function saveHeroSMS(e?: FormEvent) {
     e?.preventDefault()
     setPending(true)
@@ -262,11 +356,12 @@ export function SettingsPage() {
         <p className="text-sm text-muted-foreground">按分组切换，只改当前这一组。</p>
       </div>
       <Tabs defaultValue="runtime">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
           <TabsTrigger value="runtime">运行环境</TabsTrigger>
           <TabsTrigger value="cloak">CloakBrowser</TabsTrigger>
           <TabsTrigger value="account">账号设置</TabsTrigger>
           <TabsTrigger value="herosms">Hero SMS</TabsTrigger>
+          <TabsTrigger value="amzkeys">amzkeys卡台</TabsTrigger>
         </TabsList>
         <TabsContent value="runtime" className="mt-4">
           <Card>
@@ -558,6 +653,115 @@ export function SettingsPage() {
                 <Button type="submit" disabled={pending || !country} className="w-fit">
                   保存接码设置
                 </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="amzkeys" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>amzkeys卡台</CardTitle>
+              <CardDescription>
+                自动支付共用一张卡，被 Stripe 拒绝后再开新卡。测试环境 Host 是 https://testapi.amzkeys.com，测试卡段 467845。
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={saveAmzKeys} className="grid gap-6">
+                <div className="grid gap-2">
+                  <Label htmlFor="amz-host">API Host</Label>
+                  <Input
+                    id="amz-host"
+                    placeholder="https://testapi.amzkeys.com"
+                    value={amzHost}
+                    onChange={(e) => setAmzHost(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="amz-app-id">AppID</Label>
+                  <Input
+                    id="amz-app-id"
+                    placeholder="测试环境文档里的 AppID"
+                    value={amzAppID}
+                    onChange={(e) => setAmzAppID(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="amz-app-key">AppKey</Label>
+                  <Input
+                    id="amz-app-key"
+                    type="password"
+                    autoComplete="off"
+                    placeholder={amzConfigured ? "已保存，留空不改" : "平台提供的 AppKey"}
+                    value={amzAppKey}
+                    onChange={(e) => setAmzAppKey(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="amz-private-key">RSA2 私钥</Label>
+                  <Textarea
+                    id="amz-private-key"
+                    rows={6}
+                    autoComplete="off"
+                    placeholder={amzConfigured ? "已保存，留空不改" : "PEM 或纯 Base64，文档里的测试私钥也可以"}
+                    value={amzPrivateKey}
+                    onChange={(e) => setAmzPrivateKey(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="amz-card-type">卡段</Label>
+                  <Input
+                    id="amz-card-type"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={amzCardType}
+                    onChange={(e) => setAmzCardType(Number(e.target.value))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    测试环境固定 467845。生产卡段用检测连接返回的可开卡列表，或问商务。
+                  </p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="amz-amount">每张开卡金额（USD）</Label>
+                  <Input
+                    id="amz-amount"
+                    type="number"
+                    min={1}
+                    step={0.01}
+                    value={amzAmount}
+                    onChange={(e) => setAmzAmount(Number(e.target.value))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    只在开新卡时扣这一笔。同一张卡会一直用来付，被拒了才再开。
+                  </p>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label>当前在用的卡</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {amzLast4 ? `**** ${amzLast4}，被拒前一直复用` : "还没有卡，第一次自动支付时会开"}
+                    </p>
+                  </div>
+                  <Button type="button" variant="outline" disabled={!amzLast4 || clearingCard} onClick={clearAmzCard}>
+                    {clearingCard ? "处理中…" : "弃用当前卡"}
+                  </Button>
+                </div>
+                {amzStatus?.balances?.length ? (
+                  <p className="text-sm text-muted-foreground">
+                    {amzStatus.balances.map((b) => `${b.currency} 可用 ${b.available_amount}`).join("，")}
+                    {amzStatus.card_types?.length
+                      ? `；可开卡段 ${amzStatus.card_types.map((c) => c.card_type).join("、")}`
+                      : ""}
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="submit" disabled={pending} className="w-fit">
+                    保存 amzkeys卡台
+                  </Button>
+                  <Button type="button" variant="outline" disabled={pending || checkingAmz} onClick={checkAmzKeys}>
+                    {checkingAmz ? "检测中…" : "检测连接"}
+                  </Button>
+                </div>
               </form>
             </CardContent>
           </Card>

@@ -111,6 +111,7 @@ type Job struct {
 	AccountID string     `json:"account_id"`
 	Email     string     `json:"email"`
 	Kind      string     `json:"kind,omitempty"`
+	AutoPay   bool       `json:"auto_pay,omitempty"`
 	Status    string     `json:"status"`
 	Error     string     `json:"error,omitempty"`
 	Logs      []JobEvent `json:"logs"`
@@ -129,6 +130,12 @@ type Settings struct {
 	HeroSMSMaxPrice         float64  `json:"hero_sms_max_price,omitempty"`
 	CloakVersion            string   `json:"cloak_version,omitempty"`
 	CloakLicenseKey         string   `json:"cloak_license_key,omitempty"`
+	AmzKeysHost             string   `json:"amzkeys_host,omitempty"`
+	AmzKeysAppID            string   `json:"amzkeys_app_id,omitempty"`
+	AmzKeysAppKey           string   `json:"amzkeys_app_key,omitempty"`
+	AmzKeysPrivateKey       string   `json:"amzkeys_private_key,omitempty"`
+	AmzKeysCardType         int      `json:"amzkeys_card_type,omitempty"`
+	AmzKeysCardAmount       float64  `json:"amzkeys_card_amount,omitempty"`
 	MaxConcurrent           int      `json:"max_concurrent,omitempty"`
 	MaxRetries              int      `json:"max_retries"`
 	AccountRPM              int      `json:"account_rpm"`
@@ -138,4 +145,16 @@ type Settings struct {
 	EmailSuffixBlacklist    []string `json:"email_suffix_blacklist,omitempty"`
 	ProviderMode            string   `json:"provider_mode,omitempty"`
 	ProviderValue           string   `json:"provider_value,omitempty"`
+}
+
+type AmzKeysCard struct {
+	CardNo    string `json:"card_no"`
+	CVV       string `json:"cvv"`
+	ValidDate string `json:"valid_date"`
+	RequestID string `json:"request_id,omitempty"`
+	CardType  int    `json:"card_type,omitempty"`
+}
+
+func (c AmzKeysCard) Ready() bool {
+	return c.CardNo != "" && c.CVV != ""
 }

@@ -199,6 +199,18 @@ func TestLoadInvalidYAML(t *testing.T) {
 	}
 }
 
+func TestManagerAPI(t *testing.T) {
+	if got := (Config{Addr: ":9999"}).ManagerAPI(); got != "http://127.0.0.1:9999" {
+		t.Fatalf("port=%q", got)
+	}
+	if got := (Config{Addr: "0.0.0.0:8888"}).ManagerAPI(); got != "http://127.0.0.1:8888" {
+		t.Fatalf("all=%q", got)
+	}
+	if got := (Config{Addr: "http://127.0.0.1:9999/"}).ManagerAPI(); got != "http://127.0.0.1:9999" {
+		t.Fatalf("url=%q", got)
+	}
+}
+
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{

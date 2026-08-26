@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"opencode-go-manager/internal/browser"
@@ -23,12 +24,13 @@ import (
 )
 
 type Server struct {
-	cfg     config.Config
-	store   *store.Store
-	jobs    *job.Manager
-	usage   *usage.Syncer
-	proxy   *proxy.Handler
-	webRoot string
+	cfg       config.Config
+	store     *store.Store
+	jobs      *job.Manager
+	usage     *usage.Syncer
+	proxy     *proxy.Handler
+	webRoot   string
+	amzCardMu sync.Mutex
 }
 
 func New(cfg config.Config, st *store.Store, jobs *job.Manager, webRoot string) *Server {
@@ -52,6 +54,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/config", s.getConfig)
 	mux.HandleFunc("PATCH /api/config", s.patchConfig)
 	mux.HandleFunc("GET /api/herosms/catalog", s.heroSMSCatalog)
+	mux.HandleFunc("GET /api/amzkeys/status", s.amzKeysStatus)
+	mux.HandleFunc("POST /api/amzkeys/cards", s.amzKeysCheckoutCard)
+	mux.HandleFunc("DELETE /api/amzkeys/cards", s.amzKeysClearCard)
+	mux.HandleFunc("GET /api/amzkeys/auth-codes", s.amzKeysAuthCodes)
 	mux.HandleFunc("POST /api/accounts", s.createPaidAccount)
 	mux.HandleFunc("GET /api/accounts/{id}", s.getAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.deleteAccount)
@@ -133,6 +139,12 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		ProviderValue           *string  `json:"provider_value"`
 		CloakVersion            *string  `json:"cloak_version"`
 		CloakLicenseKey         *string  `json:"cloak_license_key"`
+		AmzKeysHost             *string  `json:"amzkeys_host"`
+		AmzKeysAppID            *string  `json:"amzkeys_app_id"`
+		AmzKeysAppKey           *string  `json:"amzkeys_app_key"`
+		AmzKeysPrivateKey       *string  `json:"amzkeys_private_key"`
+		AmzKeysCardType         *int     `json:"amzkeys_card_type"`
+		AmzKeysCardAmount       *float64 `json:"amzkeys_card_amount"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 无效")
@@ -215,6 +227,34 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 			cur.CloakLicenseKey = key
 		}
 	}
+	if in.AmzKeysHost != nil {
+		cur.AmzKeysHost = strings.TrimSpace(*in.AmzKeysHost)
+	}
+	if in.AmzKeysAppID != nil {
+		cur.AmzKeysAppID = strings.TrimSpace(*in.AmzKeysAppID)
+	}
+	if in.AmzKeysAppKey != nil {
+		key := strings.TrimSpace(*in.AmzKeysAppKey)
+		if !strings.Contains(key, "********") {
+			cur.AmzKeysAppKey = key
+		}
+	}
+	if in.AmzKeysPrivateKey != nil {
+		key := strings.TrimSpace(*in.AmzKeysPrivateKey)
+		if !strings.Contains(key, "********") {
+			cur.AmzKeysPrivateKey = key
+		}
+	}
+	if in.AmzKeysCardType != nil {
+		cur.AmzKeysCardType = *in.AmzKeysCardType
+	}
+	if in.AmzKeysCardAmount != nil {
+		if *in.AmzKeysCardAmount < 0 {
+			writeErr(w, http.StatusBadRequest, "开卡金额不能为负")
+			return
+		}
+		cur.AmzKeysCardAmount = *in.AmzKeysCardAmount
+	}
 	cloakChanged := in.CloakVersion != nil || in.CloakLicenseKey != nil
 	if err := s.store.SaveSettings(cur); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -270,9 +310,9 @@ func (s *Server) updateCloak(w http.ResponseWriter, r *http.Request) {
 	}
 	if browser.CompareVersion(latest, current) <= 0 {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"current":    current,
-			"latest":     latest,
-			"updated":    false,
+			"current":     current,
+			"latest":      latest,
+			"updated":     false,
 			"downloading": false,
 		})
 		return
@@ -324,6 +364,14 @@ func (s *Server) publicConfig() map[string]any {
 		"hero_sms_max_price":        st.HeroSMSMaxPrice,
 		"provider_mode":             st.ProviderMode,
 		"provider_value":            st.ProviderValue,
+		"amzkeys_host":              amzKeysHost(st.AmzKeysHost),
+		"amzkeys_app_id":            st.AmzKeysAppID,
+		"amzkeys_app_key":           maskSecret(st.AmzKeysAppKey),
+		"amzkeys_private_key":       maskSecret(st.AmzKeysPrivateKey),
+		"amzkeys_card_type":         amzKeysCardType(st.AmzKeysCardType),
+		"amzkeys_card_amount":       amzKeysCardAmount(st.AmzKeysCardAmount),
+		"amzkeys_configured":        amzKeysConfigured(st),
+		"amzkeys_card_last4":        amzKeysCardLast4(s),
 	}
 }
 
@@ -356,7 +404,12 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) loginAccount(w http.ResponseWriter, r *http.Request) {
-	j, err := s.jobs.Enqueue(r.PathValue("id"))
+	autoPay := readAutoPay(r)
+	if err := s.requireAutoPay(autoPay); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	j, err := s.jobs.Enqueue(r.PathValue("id"), autoPay)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "账号不存在")
 		return
@@ -464,6 +517,11 @@ func (s *Server) deleteBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) loginBatch(w http.ResponseWriter, r *http.Request) {
+	autoPay := readAutoPay(r)
+	if err := s.requireAutoPay(autoPay); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	list, err := s.store.ListByBatchMeta(r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -481,7 +539,7 @@ func (s *Server) loginBatch(w http.ResponseWriter, r *http.Request) {
 		if a.Status == "ready" || a.Status == "queued" || a.Status == "running" {
 			continue
 		}
-		j, err := s.jobs.Enqueue(a.ID)
+		j, err := s.jobs.Enqueue(a.ID, autoPay)
 		if err != nil {
 			continue
 		}
@@ -491,6 +549,11 @@ func (s *Server) loginBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) refreshBatch(w http.ResponseWriter, r *http.Request) {
+	autoPay := readAutoPay(r)
+	if err := s.requireAutoPay(autoPay); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	id := r.PathValue("id")
 	if _, err := s.store.GetBatch(id); err != nil {
 		writeErr(w, http.StatusNotFound, "批次不存在")
@@ -510,7 +573,7 @@ func (s *Server) refreshBatch(w http.ResponseWriter, r *http.Request) {
 		if a.Status == "queued" || a.Status == "running" {
 			continue
 		}
-		j, err := s.jobs.EnqueueRefresh(a.ID)
+		j, err := s.jobs.EnqueueRefresh(a.ID, autoPay)
 		if err != nil {
 			continue
 		}
@@ -520,7 +583,12 @@ func (s *Server) refreshBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) refreshAccount(w http.ResponseWriter, r *http.Request) {
-	j, err := s.jobs.EnqueueRefresh(r.PathValue("id"))
+	autoPay := readAutoPay(r)
+	if err := s.requireAutoPay(autoPay); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	j, err := s.jobs.EnqueueRefresh(r.PathValue("id"), autoPay)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

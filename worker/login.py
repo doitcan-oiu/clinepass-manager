@@ -59,7 +59,7 @@ def main() -> int:
         pages = ctx.pages
         page = pages[0] if pages else ctx.new_page()
         if action == "refresh":
-            out = run_refresh(page, ctx, acc)
+            out = run_refresh(page, ctx, acc, settings)
         else:
             out = run_login(page, ctx, acc, settings)
         result(True, **out)

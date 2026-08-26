@@ -34,7 +34,7 @@ async function json<T>(res: Response): Promise<T> {
 
 export const api = {
   config: () => fetch("/api/config").then((r) => json<AppConfig>(r)),
-  saveConfig: (body: Partial<AppConfig> & { hero_sms_api_key?: string; cloak_license_key?: string }) =>
+  saveConfig: (body: Partial<AppConfig> & { hero_sms_api_key?: string; cloak_license_key?: string; amzkeys_app_key?: string; amzkeys_private_key?: string }) =>
     fetch("/api/config", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -44,8 +44,12 @@ export const api = {
     fetch("/api/cloak/update", { method: "POST" }).then((r) => json<CloakUpdate>(r)),
   account: (id: string) => fetch(`/api/accounts/${id}`).then((r) => json<Account>(r)),
   deleteAccount: (id: string) => fetch(`/api/accounts/${id}`, { method: "DELETE" }).then((r) => json<null>(r)),
-  loginAccount: (id: string) =>
-    fetch(`/api/accounts/${id}/login`, { method: "POST" }).then((r) => json<Job>(r)),
+  loginAccount: (id: string, autoPay = false) =>
+    fetch(`/api/accounts/${id}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_pay: autoPay }),
+    }).then((r) => json<Job>(r)),
   jobs: () => fetch("/api/jobs").then((r) => json<Job[]>(r)),
   batches: (page = 1, pageSize = 30) =>
     fetch(`/api/batches?page=${page}&page_size=${pageSize}`).then((r) => json<BatchPage>(r)),
@@ -71,12 +75,26 @@ export const api = {
     fetch(`/api/batches/${id}/radar-denied`, { method: "DELETE" }).then((r) =>
       json<{ deleted: number; batch: Batch }>(r)
     ),
-  loginBatch: (id: string) =>
-    fetch(`/api/batches/${id}/login`, { method: "POST" }).then((r) => json<Job[]>(r)),
-  refreshBatch: (id: string) =>
-    fetch(`/api/batches/${id}/refresh`, { method: "POST" }).then((r) => json<Job[]>(r)),
-  refreshAccount: (id: string) =>
-    fetch(`/api/accounts/${id}/refresh`, { method: "POST" }).then((r) => json<Job>(r)),
+  loginBatch: (id: string, autoPay = false) =>
+    fetch(`/api/batches/${id}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_pay: autoPay }),
+    }).then((r) => json<Job[]>(r)),
+  refreshBatch: (id: string, autoPay = false) =>
+    fetch(`/api/batches/${id}/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_pay: autoPay }),
+    }).then((r) => json<Job[]>(r)),
+  refreshAccount: (id: string, autoPay = false) =>
+    fetch(`/api/accounts/${id}/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_pay: autoPay }),
+    }).then((r) => json<Job>(r)),
+  amzKeysStatus: () => fetch("/api/amzkeys/status").then((r) => json<AmzKeysStatus>(r)),
+  clearAmzKeysCard: () => fetch("/api/amzkeys/cards", { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
   dispatchBatch: (id: string) =>
     fetch(`/api/batches/${id}/dispatch`, { method: "POST" }).then((r) =>
       json<{ batch: Batch; count: number; filename: string; xlsx: string }>(r)
@@ -134,6 +152,16 @@ export const api = {
     return fetch(`/api/herosms/catalog${qs ? `?${qs}` : ""}`).then((r) => json<HeroSMSCatalog>(r))
   },
 }
+
+export type AmzKeysBalance = { currency: string; available_amount: string; frozen_amount: string }
+export type AmzKeysCardType = {
+  card_type: number
+  new_card_fee: string
+  service_fee: string
+  min_opencard_amount: string
+  min_recharge_amount: string
+}
+export type AmzKeysStatus = { host: string; balances: AmzKeysBalance[]; card_types: AmzKeysCardType[] }
 
 export type HeroSMSQuote = { price: number; count: number }
 export type HeroSMSCountry = { id: number; name: string; phone_code?: number; quotes: HeroSMSQuote[] }

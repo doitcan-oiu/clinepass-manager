@@ -28,6 +28,8 @@ type Result struct {
 	CookiesJSON  string
 	CookieHeader string
 	PaymentURL   string
+	Paid         bool
+	PayError     string
 }
 
 func Run(cfg config.Config, acc model.Account, log Logger) (Result, error) {
@@ -55,7 +57,7 @@ func Run(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 }
 
 func runOnceDispatch(cfg config.Config, acc model.Account, log Logger) (Result, error) {
-	if Engine() == "python" {
+	if Engine() == "python" || cfg.AutoPay {
 		return runPythonOnce(cfg, acc, "login", log)
 	}
 	return runOnce(cfg, acc, log)
@@ -166,7 +168,7 @@ func RefreshPayment(cfg config.Config, acc model.Account, log Logger) (Result, e
 	if log == nil {
 		log = func(string, ...any) {}
 	}
-	if Engine() == "python" {
+	if Engine() == "python" || cfg.AutoPay {
 		return runPythonOnce(cfg, acc, "refresh", log)
 	}
 	if strings.TrimSpace(acc.CookiesJSON) == "" && strings.TrimSpace(acc.CookieHeader) == "" {

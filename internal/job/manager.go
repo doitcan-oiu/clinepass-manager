@@ -90,11 +90,11 @@ func (m *Manager) Subscribe(jobID string) (chan model.JobEvent, func()) {
 	}
 }
 
-func (m *Manager) Enqueue(accountID string) (*model.Job, error) {
-	return m.enqueue(accountID, "login")
+func (m *Manager) Enqueue(accountID string, autoPay bool) (*model.Job, error) {
+	return m.enqueue(accountID, "login", autoPay)
 }
 
-func (m *Manager) EnqueueRefresh(accountID string) (*model.Job, error) {
+func (m *Manager) EnqueueRefresh(accountID string, autoPay bool) (*model.Job, error) {
 	acc, err := m.store.Get(accountID)
 	if err != nil {
 		return nil, err
@@ -102,10 +102,10 @@ func (m *Manager) EnqueueRefresh(accountID string) (*model.Job, error) {
 	if strings.TrimSpace(acc.CookiesJSON) == "" || strings.TrimSpace(acc.WorkspaceID) == "" {
 		return nil, fmt.Errorf("没有可用 Cookie")
 	}
-	return m.enqueue(accountID, "refresh")
+	return m.enqueue(accountID, "refresh", autoPay)
 }
 
-func (m *Manager) enqueue(accountID, kind string) (*model.Job, error) {
+func (m *Manager) enqueue(accountID, kind string, autoPay bool) (*model.Job, error) {
 	acc, err := m.store.Get(accountID)
 	if err != nil {
 		return nil, err
@@ -121,6 +121,7 @@ func (m *Manager) enqueue(accountID, kind string) (*model.Job, error) {
 		AccountID: acc.ID,
 		Email:     acc.Email,
 		Kind:      kind,
+		AutoPay:   autoPay,
 		Status:    "queued",
 		StartedAt: time.Now().Unix(),
 	}
@@ -201,6 +202,10 @@ func (m *Manager) run(job *model.Job) {
 	if st, err := m.store.GetSettings(); err == nil {
 		cfg = store.ApplySettings(cfg, st)
 	}
+	cfg.AutoPay = job.AutoPay
+	if job.AutoPay {
+		m.logf(job, "info", "自动支付=开")
+	}
 
 	var res login.Result
 	if job.Kind == "refresh" {
@@ -241,6 +246,22 @@ func (m *Manager) run(job *model.Job) {
 	}
 	if err := m.store.SaveLoginResult(acc); err != nil {
 		m.fail(job, err.Error())
+		return
+	}
+	if res.Paid {
+		if err := m.store.SetAccountPaid(acc.ID, true); err != nil {
+			m.fail(job, err.Error())
+			return
+		}
+		m.logf(job, "info", "自动支付成功")
+	} else if job.AutoPay {
+		msg := strings.TrimSpace(res.PayError)
+		if msg == "" {
+			msg = "自动支付未完成"
+		}
+		m.logf(job, "error", "%s", msg)
+		_ = m.store.UpdateStatus(acc.ID, "ready", msg)
+		m.setStatus(job, "failed", msg)
 		return
 	}
 	if job.Kind == "refresh" {

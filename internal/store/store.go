@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
@@ -142,6 +143,27 @@ CREATE TABLE IF NOT EXISTS batches (
 		return err
 	}
 	if err := s.ensureColumn("settings", "cloakbrowser_license_key", `ALTER TABLE settings ADD COLUMN cloakbrowser_license_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "amzkeys_host", `ALTER TABLE settings ADD COLUMN amzkeys_host TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "amzkeys_app_id", `ALTER TABLE settings ADD COLUMN amzkeys_app_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "amzkeys_app_key", `ALTER TABLE settings ADD COLUMN amzkeys_app_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "amzkeys_private_key", `ALTER TABLE settings ADD COLUMN amzkeys_private_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "amzkeys_card_type", `ALTER TABLE settings ADD COLUMN amzkeys_card_type INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "amzkeys_card_amount", `ALTER TABLE settings ADD COLUMN amzkeys_card_amount REAL NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "amzkeys_active_card", `ALTER TABLE settings ADD COLUMN amzkeys_active_card TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn("accounts", "login_provider", `ALTER TABLE accounts ADD COLUMN login_provider TEXT NOT NULL DEFAULT 'google'`); err != nil {
@@ -426,7 +448,9 @@ func (s *Store) GetSettings() (model.Settings, error) {
 		IFNULL(max_concurrent, 1), IFNULL(max_retries, 3), IFNULL(email_suffix_blacklist, ''),
 		IFNULL(provider_mode, 'keep'), IFNULL(provider_value, ''),
 		IFNULL(usage_refresh_sec, 60), IFNULL(usage_refresh_concurrency, 10), IFNULL(account_rpm, 5), IFNULL(api_proxy, 1),
-		IFNULL(cloakbrowser_version, ''), IFNULL(cloakbrowser_license_key, '')
+		IFNULL(cloakbrowser_version, ''), IFNULL(cloakbrowser_license_key, ''),
+		IFNULL(amzkeys_host, ''), IFNULL(amzkeys_app_id, ''), IFNULL(amzkeys_app_key, ''), IFNULL(amzkeys_private_key, ''),
+		IFNULL(amzkeys_card_type, 0), IFNULL(amzkeys_card_amount, 0)
 		FROM settings WHERE id = 1`)
 	var out model.Settings
 	var headless, apiProxy int
@@ -434,7 +458,8 @@ func (s *Store) GetSettings() (model.Settings, error) {
 	if err := row.Scan(&out.Proxy, &headless, &out.InviteURL, &out.UsageJSURL,
 		&out.HeroSMSAPIKey, &out.HeroSMSService, &out.HeroSMSCountry, &out.HeroSMSMaxPrice, &out.MaxConcurrent, &out.MaxRetries, &blacklist,
 		&out.ProviderMode, &out.ProviderValue, &out.UsageRefreshSec, &out.UsageRefreshConcurrency, &out.AccountRPM, &apiProxy,
-		&out.CloakVersion, &out.CloakLicenseKey); err != nil {
+		&out.CloakVersion, &out.CloakLicenseKey,
+		&out.AmzKeysHost, &out.AmzKeysAppID, &out.AmzKeysAppKey, &out.AmzKeysPrivateKey, &out.AmzKeysCardType, &out.AmzKeysCardAmount); err != nil {
 		return model.Settings{Headless: true, MaxRetries: 3, AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, UsageRefreshConcurrency: 10}, err
 	}
 	out.Headless = headless != 0
@@ -475,8 +500,8 @@ func (s *Store) SaveSettings(in model.Settings) error {
 	blacklist := EncodeSuffixList(in.EmailSuffixBlacklist)
 	providerMode := normalizeProviderMode(in.ProviderMode)
 	_, err := s.db.Exec(`
-INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, usage_refresh_concurrency, account_rpm, api_proxy, cloakbrowser_version, cloakbrowser_license_key, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, usage_refresh_concurrency, account_rpm, api_proxy, cloakbrowser_version, cloakbrowser_license_key, amzkeys_host, amzkeys_app_id, amzkeys_app_key, amzkeys_private_key, amzkeys_card_type, amzkeys_card_amount, updated_at)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	proxy = excluded.proxy,
 	headless = excluded.headless,
@@ -497,11 +522,19 @@ ON CONFLICT(id) DO UPDATE SET
 	api_proxy = excluded.api_proxy,
 	cloakbrowser_version = excluded.cloakbrowser_version,
 	cloakbrowser_license_key = excluded.cloakbrowser_license_key,
+	amzkeys_host = excluded.amzkeys_host,
+	amzkeys_app_id = excluded.amzkeys_app_id,
+	amzkeys_app_key = excluded.amzkeys_app_key,
+	amzkeys_private_key = excluded.amzkeys_private_key,
+	amzkeys_card_type = excluded.amzkeys_card_type,
+	amzkeys_card_amount = excluded.amzkeys_card_amount,
 	updated_at = excluded.updated_at`,
 		strings.TrimSpace(in.Proxy), headless, strings.TrimSpace(in.InviteURL), strings.TrimSpace(in.UsageJSURL),
 		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, retries, blacklist,
 		providerMode, in.ProviderValue, refreshSec, refreshConc, rpm, apiProxy,
-		strings.TrimSpace(in.CloakVersion), strings.TrimSpace(in.CloakLicenseKey), time.Now().Unix())
+		strings.TrimSpace(in.CloakVersion), strings.TrimSpace(in.CloakLicenseKey),
+		strings.TrimSpace(in.AmzKeysHost), strings.TrimSpace(in.AmzKeysAppID), strings.TrimSpace(in.AmzKeysAppKey),
+		strings.TrimSpace(in.AmzKeysPrivateKey), in.AmzKeysCardType, in.AmzKeysCardAmount, time.Now().Unix())
 	return err
 }
 
@@ -521,11 +554,55 @@ func ApplySettings(cfg config.Config, s model.Settings) config.Config {
 	if v := strings.TrimSpace(s.CloakLicenseKey); v != "" {
 		cfg.LicenseKey = v
 	}
+	cfg.AmzKeysHost = strings.TrimSpace(s.AmzKeysHost)
+	cfg.AmzKeysAppID = strings.TrimSpace(s.AmzKeysAppID)
+	cfg.AmzKeysAppKey = strings.TrimSpace(s.AmzKeysAppKey)
+	cfg.AmzKeysPrivateKey = strings.TrimSpace(s.AmzKeysPrivateKey)
+	cfg.AmzKeysCardType = s.AmzKeysCardType
+	cfg.AmzKeysCardAmount = s.AmzKeysCardAmount
 	if s.MaxConcurrent >= 1 {
 		cfg.MaxConcurrent = s.MaxConcurrent
 	}
 	cfg.MaxRetries = clampMaxRetries(s.MaxRetries)
 	return cfg
+}
+
+func (s *Store) GetAmzKeysCard() (model.AmzKeysCard, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT IFNULL(amzkeys_active_card, '') FROM settings WHERE id = 1`).Scan(&raw)
+	if err != nil {
+		return model.AmzKeysCard{}, err
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return model.AmzKeysCard{}, nil
+	}
+	var c model.AmzKeysCard
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		return model.AmzKeysCard{}, nil
+	}
+	c.CardNo = strings.TrimSpace(c.CardNo)
+	c.CVV = strings.TrimSpace(c.CVV)
+	c.ValidDate = strings.TrimSpace(c.ValidDate)
+	c.RequestID = strings.TrimSpace(c.RequestID)
+	return c, nil
+}
+
+func (s *Store) SetAmzKeysCard(c model.AmzKeysCard) error {
+	c.CardNo = strings.TrimSpace(c.CardNo)
+	c.CVV = strings.TrimSpace(c.CVV)
+	c.ValidDate = strings.TrimSpace(c.ValidDate)
+	c.RequestID = strings.TrimSpace(c.RequestID)
+	raw := ""
+	if c.Ready() {
+		b, err := json.Marshal(c)
+		if err != nil {
+			return err
+		}
+		raw = string(b)
+	}
+	_, err := s.db.Exec(`UPDATE settings SET amzkeys_active_card = ?, updated_at = ? WHERE id = 1`, raw, time.Now().Unix())
+	return err
 }
 
 func clampAccountRPM(n int) int {

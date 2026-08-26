@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { api } from "@/lib/api"
 import type { Account, Batch, Job, JobEvent } from "@/lib/types"
 import { AccountTable } from "@/components/accounts/account-table"
+import { AutoPayDialog } from "@/components/accounts/auto-pay-dialog"
 import { DetailDialog } from "@/components/accounts/detail-dialog"
 import { JobLogPanel } from "@/components/accounts/job-log-panel"
 import { Button } from "@/components/ui/button"
@@ -29,6 +30,8 @@ export function BatchDetailPage() {
   const [remove, setRemove] = useState<Account | null>(null)
   const [removeRadar, setRemoveRadar] = useState(false)
   const [removingRadar, setRemovingRadar] = useState(false)
+  const [payAsk, setPayAsk] = useState<null | { mode: "login" | "refresh"; account?: Account }>(null)
+  const [payPending, setPayPending] = useState(false)
   const [logs, setLogs] = useState<JobEvent[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [logFilter, setLogFilter] = useState("")
@@ -123,51 +126,37 @@ export function BatchDetailPage() {
     scheduleReload()
   }
 
-  async function loginBatch() {
-    if (!id) return
+  async function startWithAutoPay(autoPay: boolean) {
+    if (!id || !payAsk) return
+    setPayPending(true)
     try {
-      const jobs = await api.loginBatch(id)
-      if (!jobs?.length) {
-        toast.message("这批账号都已经登录过了")
-        return
+      if (payAsk.account) {
+        setLogFilter(payAsk.account.id)
+        const job =
+          payAsk.mode === "refresh"
+            ? await api.refreshAccount(payAsk.account.id, autoPay)
+            : await api.loginAccount(payAsk.account.id, autoPay)
+        followJobs([job])
+      } else if (payAsk.mode === "refresh") {
+        const jobs = await api.refreshBatch(id, autoPay)
+        if (!jobs?.length) toast.message("这批还没有登录成功的账号，请先生成支付链接")
+        else {
+          toast.success(`开始刷新支付链接，共 ${jobs.length} 个账号${autoPay ? "，并自动支付" : ""}`)
+          followJobs(jobs)
+        }
+      } else {
+        const jobs = await api.loginBatch(id, autoPay)
+        if (!jobs?.length) toast.message("这批账号都已经登录过了")
+        else {
+          toast.success(`开始登录并生成支付链接，共 ${jobs.length} 个账号${autoPay ? "，并自动支付" : ""}`)
+          followJobs(jobs)
+        }
       }
-      toast.success(`开始登录并生成支付链接，共 ${jobs.length} 个账号`)
-      followJobs(jobs)
+      setPayAsk(null)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "启动失败")
-    }
-  }
-
-  async function refreshBatch() {
-    if (!id) return
-    try {
-      const jobs = await api.refreshBatch(id)
-      if (!jobs?.length) {
-        toast.message("这批还没有登录成功的账号，请先生成支付链接")
-        return
-      }
-      toast.success(`开始刷新支付链接，共 ${jobs.length} 个账号（不用重新登录）`)
-      followJobs(jobs)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "启动失败")
-    }
-  }
-
-  async function refreshOne(a: Account) {
-    try {
-      setLogFilter(a.id)
-      followJobs([await api.refreshAccount(a.id)])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "刷新失败")
-    }
-  }
-
-  async function loginOne(a: Account) {
-    try {
-      setLogFilter(a.id)
-      followJobs([await api.loginAccount(a.id)])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "登录失败")
+    } finally {
+      setPayPending(false)
     }
   }
 
@@ -246,14 +235,14 @@ export function BatchDetailPage() {
         <Button
           variant={batch && batchStatus(batch).primary === "login" ? "default" : "outline"}
           disabled={!batch || !(waitingCount(batch) > 0 || batch.failed > 0)}
-          onClick={loginBatch}
+          onClick={() => setPayAsk({ mode: "login" })}
         >
           登录并生成支付链接
         </Button>
         <Button
           variant={batch && batchStatus(batch).primary === "refresh" ? "default" : "outline"}
           disabled={!batch?.unpaid_cookie_count}
-          onClick={refreshBatch}
+          onClick={() => setPayAsk({ mode: "refresh" })}
         >
           刷新过期的支付链接
         </Button>
@@ -285,8 +274,8 @@ export function BatchDetailPage() {
 
       <AccountTable
         accounts={accounts}
-        onLogin={loginOne}
-        onRefresh={refreshOne}
+        onLogin={(a) => setPayAsk({ mode: "login", account: a })}
+        onRefresh={(a) => setPayAsk({ mode: "refresh", account: a })}
         onDetail={setDetail}
         onRemove={setRemove}
         currentSteps={currentSteps}
@@ -300,6 +289,19 @@ export function BatchDetailPage() {
         statuses={jobStatuses}
         filterId={logFilter}
         onFilter={setLogFilter}
+      />
+
+      <AutoPayDialog
+        open={!!payAsk}
+        title={payAsk?.mode === "refresh" ? "刷新支付链接" : "登录并生成支付链接"}
+        description={
+          payAsk?.mode === "refresh"
+            ? "用已有 Cookie 重新抽出支付链接。勾选自动支付后会立刻用 AmzKeys 虚拟卡去付 Stripe。"
+            : "登录成功后抽出支付链接。勾选自动支付后不再下载 Excel，会开虚拟卡填 Stripe。"
+        }
+        pending={payPending}
+        onOpenChange={(v) => !v && !payPending && setPayAsk(null)}
+        onConfirm={startWithAutoPay}
       />
 
       <DetailDialog account={detail} open={!!detail} onOpenChange={(v) => !v && setDetail(null)} />

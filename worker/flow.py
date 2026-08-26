@@ -7,6 +7,7 @@ from google import CONSENT, accept_workspace_tos, recover_unknown_error, start_g
 from microsoft import start_microsoft
 from pageutil import click_one_of, human_idle_authkit, on_radar_flow, serialize_cookies, sleep_ms, visible
 from payment import capture_payment
+from stripe_pay import autopay
 from protocol import log
 from radar import handle_radar, handle_terms
 from urls import (
@@ -114,10 +115,10 @@ def run_login(page, context, acc: dict, settings: dict) -> dict:
         log("支付链接: %s", payment)
     except Exception as exc:
         log("获取支付链接失败: %s", exc)
-    return {"cookies_json": cookies_json, "cookie_header": cookie_header, "payment_url": payment}
+    return finish_payment(page, cookies_json, cookie_header, payment, settings)
 
 
-def run_refresh(page, context, acc: dict) -> dict:
+def run_refresh(page, context, acc: dict, settings: dict | None = None) -> dict:
     from pageutil import cookies_for_context
 
     raw = (acc.get("cookies_json") or "").strip()
@@ -135,4 +136,23 @@ def run_refresh(page, context, acc: dict) -> dict:
     else:
         cookies_json = acc.get("cookies_json") or ""
         cookie_header = acc.get("cookie_header") or ""
-    return {"cookies_json": cookies_json, "cookie_header": cookie_header, "payment_url": payment}
+    return finish_payment(page, cookies_json, cookie_header, payment, settings or {})
+
+
+def finish_payment(page, cookies_json: str, cookie_header: str, payment: str, settings: dict) -> dict:
+    out = {"cookies_json": cookies_json, "cookie_header": cookie_header, "payment_url": payment}
+    if not settings.get("auto_pay"):
+        return out
+    if not (payment or "").strip():
+        out["paid"] = False
+        out["pay_error"] = "没有支付链接，无法自动支付"
+        return out
+    try:
+        paid, err = autopay(page, payment, settings)
+    except Exception as exc:
+        paid, err = False, str(exc).strip() or exc.__class__.__name__
+        log("自动支付失败: %s", err)
+    out["paid"] = bool(paid)
+    if err:
+        out["pay_error"] = err
+    return out
