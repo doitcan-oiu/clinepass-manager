@@ -138,6 +138,12 @@ CREATE TABLE IF NOT EXISTS batches (
 	if err := s.ensureColumn("settings", "api_proxy", `ALTER TABLE settings ADD COLUMN api_proxy INTEGER NOT NULL DEFAULT 1`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("settings", "cloakbrowser_version", `ALTER TABLE settings ADD COLUMN cloakbrowser_version TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("settings", "cloakbrowser_license_key", `ALTER TABLE settings ADD COLUMN cloakbrowser_license_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("accounts", "login_provider", `ALTER TABLE accounts ADD COLUMN login_provider TEXT NOT NULL DEFAULT 'google'`); err != nil {
 		return err
 	}
@@ -419,14 +425,16 @@ func (s *Store) GetSettings() (model.Settings, error) {
 		IFNULL(hero_sms_api_key, ''), IFNULL(hero_sms_service, ''), IFNULL(hero_sms_country, 0), IFNULL(hero_sms_max_price, 0),
 		IFNULL(max_concurrent, 1), IFNULL(max_retries, 3), IFNULL(email_suffix_blacklist, ''),
 		IFNULL(provider_mode, 'keep'), IFNULL(provider_value, ''),
-		IFNULL(usage_refresh_sec, 60), IFNULL(usage_refresh_concurrency, 10), IFNULL(account_rpm, 5), IFNULL(api_proxy, 1)
+		IFNULL(usage_refresh_sec, 60), IFNULL(usage_refresh_concurrency, 10), IFNULL(account_rpm, 5), IFNULL(api_proxy, 1),
+		IFNULL(cloakbrowser_version, ''), IFNULL(cloakbrowser_license_key, '')
 		FROM settings WHERE id = 1`)
 	var out model.Settings
 	var headless, apiProxy int
 	var blacklist string
 	if err := row.Scan(&out.Proxy, &headless, &out.InviteURL, &out.UsageJSURL,
 		&out.HeroSMSAPIKey, &out.HeroSMSService, &out.HeroSMSCountry, &out.HeroSMSMaxPrice, &out.MaxConcurrent, &out.MaxRetries, &blacklist,
-		&out.ProviderMode, &out.ProviderValue, &out.UsageRefreshSec, &out.UsageRefreshConcurrency, &out.AccountRPM, &apiProxy); err != nil {
+		&out.ProviderMode, &out.ProviderValue, &out.UsageRefreshSec, &out.UsageRefreshConcurrency, &out.AccountRPM, &apiProxy,
+		&out.CloakVersion, &out.CloakLicenseKey); err != nil {
 		return model.Settings{Headless: true, MaxRetries: 3, AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, UsageRefreshConcurrency: 10}, err
 	}
 	out.Headless = headless != 0
@@ -467,8 +475,8 @@ func (s *Store) SaveSettings(in model.Settings) error {
 	blacklist := EncodeSuffixList(in.EmailSuffixBlacklist)
 	providerMode := normalizeProviderMode(in.ProviderMode)
 	_, err := s.db.Exec(`
-INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, usage_refresh_concurrency, account_rpm, api_proxy, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, usage_refresh_concurrency, account_rpm, api_proxy, cloakbrowser_version, cloakbrowser_license_key, updated_at)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	proxy = excluded.proxy,
 	headless = excluded.headless,
@@ -487,10 +495,13 @@ ON CONFLICT(id) DO UPDATE SET
 	usage_refresh_concurrency = excluded.usage_refresh_concurrency,
 	account_rpm = excluded.account_rpm,
 	api_proxy = excluded.api_proxy,
+	cloakbrowser_version = excluded.cloakbrowser_version,
+	cloakbrowser_license_key = excluded.cloakbrowser_license_key,
 	updated_at = excluded.updated_at`,
 		strings.TrimSpace(in.Proxy), headless, strings.TrimSpace(in.InviteURL), strings.TrimSpace(in.UsageJSURL),
 		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, retries, blacklist,
-		providerMode, in.ProviderValue, refreshSec, refreshConc, rpm, apiProxy, time.Now().Unix())
+		providerMode, in.ProviderValue, refreshSec, refreshConc, rpm, apiProxy,
+		strings.TrimSpace(in.CloakVersion), strings.TrimSpace(in.CloakLicenseKey), time.Now().Unix())
 	return err
 }
 
@@ -504,6 +515,12 @@ func ApplySettings(cfg config.Config, s model.Settings) config.Config {
 	cfg.HeroSMSService = strings.TrimSpace(s.HeroSMSService)
 	cfg.HeroSMSCountry = s.HeroSMSCountry
 	cfg.HeroSMSMaxPrice = s.HeroSMSMaxPrice
+	if v := strings.TrimSpace(s.CloakVersion); v != "" {
+		cfg.CloakVersion = v
+	}
+	if v := strings.TrimSpace(s.CloakLicenseKey); v != "" {
+		cfg.LicenseKey = v
+	}
 	if s.MaxConcurrent >= 1 {
 		cfg.MaxConcurrent = s.MaxConcurrent
 	}
@@ -569,10 +586,12 @@ func (s *Store) SeedDefaults(cfg config.Config) error {
 		return nil
 	}
 	return s.SaveSettings(model.Settings{
-		Proxy:      cfg.Proxy,
-		Headless:   cfg.Headless,
-		InviteURL:  cfg.InviteURL,
-		MaxRetries: 3,
-		APIProxy:   true,
+		Proxy:           cfg.Proxy,
+		Headless:        cfg.Headless,
+		InviteURL:       cfg.InviteURL,
+		MaxRetries:      3,
+		APIProxy:        true,
+		CloakVersion:    cfg.CloakVersion,
+		CloakLicenseKey: cfg.LicenseKey,
 	})
 }

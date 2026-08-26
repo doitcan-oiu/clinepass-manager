@@ -16,9 +16,9 @@ max_retries: 3
 login_engine: python
 # login_python: "./worker/.venv/bin/python"
 
+# 初始值。版本和 license 也可以在网页「设置 → 运行环境」里改，保存后以设置为准。
 # 151 必须带 license，走官方 https://cloakbrowser.dev/api/download/{version}（Bearer）。
-# GitHub 公开页只有 SHA256SUMS，没有 tar.gz，直链会 404。换 key 后重启。
-# 这是密钥，不要推到公开仓库。环境变量 CLOAKBROWSER_LICENSE_KEY 会盖过这里。
+# 这是密钥，不要推到公开仓库。环境变量 CLOAKBROWSER_LICENSE_KEY 会盖过这里的初始值。
 cloakbrowser_version: "151.0.7922.108.2"
 cloakbrowser_cache_dir: ""
 cloakbrowser_binary_path: ""

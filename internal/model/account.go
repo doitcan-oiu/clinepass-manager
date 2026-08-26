@@ -127,6 +127,8 @@ type Settings struct {
 	HeroSMSService          string   `json:"hero_sms_service,omitempty"`
 	HeroSMSCountry          int      `json:"hero_sms_country,omitempty"`
 	HeroSMSMaxPrice         float64  `json:"hero_sms_max_price,omitempty"`
+	CloakVersion            string   `json:"cloak_version,omitempty"`
+	CloakLicenseKey         string   `json:"cloak_license_key,omitempty"`
 	MaxConcurrent           int      `json:"max_concurrent,omitempty"`
 	MaxRetries              int      `json:"max_retries"`
 	AccountRPM              int      `json:"account_rpm"`

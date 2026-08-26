@@ -95,6 +95,9 @@ export type AppConfig = {
   api_proxy: boolean
   usage_refresh_sec: number
   usage_refresh_concurrency: number
+  cloak_version: string
+  cloak_license_key: string
+  cloak_license_configured: boolean
   hero_sms_api_key: string
   hero_sms_configured: boolean
   hero_sms_service: string

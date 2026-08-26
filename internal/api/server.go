@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -129,6 +130,8 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		UsageRefreshConcurrency *int     `json:"usage_refresh_concurrency"`
 		ProviderMode            *string  `json:"provider_mode"`
 		ProviderValue           *string  `json:"provider_value"`
+		CloakVersion            *string  `json:"cloak_version"`
+		CloakLicenseKey         *string  `json:"cloak_license_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 无效")
@@ -202,12 +205,49 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	if in.ProviderValue != nil {
 		cur.ProviderValue = *in.ProviderValue
 	}
+	if in.CloakVersion != nil {
+		cur.CloakVersion = strings.TrimSpace(*in.CloakVersion)
+	}
+	if in.CloakLicenseKey != nil {
+		key := strings.TrimSpace(*in.CloakLicenseKey)
+		if !strings.Contains(key, "********") {
+			cur.CloakLicenseKey = key
+		}
+	}
+	cloakChanged := in.CloakVersion != nil || in.CloakLicenseKey != nil
 	if err := s.store.SaveSettings(cur); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.jobs.Pump()
+	if cloakChanged {
+		s.refreshCloak()
+	}
 	writeJSON(w, http.StatusOK, s.publicConfig())
+}
+
+func (s *Server) refreshCloak() {
+	go func() {
+		cfg := s.cfg
+		if st, err := s.store.GetSettings(); err == nil {
+			cfg = store.ApplySettings(cfg, st)
+		}
+		s.jobs.SetCloakBinaryPath("")
+		log.Printf("按设置准备 CloakBrowser %s", cfg.CloakVersion)
+		info, err := browser.EnsureBinary(cfg.CloakVersion, cfg.CloakCacheDir, "", browser.ResolveLicense(cfg.LicenseKey), log.Printf)
+		if err != nil {
+			log.Printf("按设置准备 CloakBrowser 失败: %v", err)
+			return
+		}
+		if key := browser.ResolveLicense(cfg.LicenseKey); key != "" {
+			_ = os.Setenv("CLOAKBROWSER_LICENSE_KEY", key)
+		}
+		if cfg.CloakVersion != "" {
+			_ = os.Setenv("CLOAKBROWSER_VERSION", cfg.CloakVersion)
+		}
+		s.jobs.SetCloakBinaryPath(info.Path)
+		log.Printf("CloakBrowser 已按设置就绪: %s", info.Path)
+	}()
 }
 
 func (s *Server) publicConfig() map[string]any {
@@ -223,6 +263,8 @@ func (s *Server) publicConfig() map[string]any {
 		"headless":                  cfg.Headless,
 		"proxy":                     cfg.Proxy,
 		"cloak_version":             cfg.CloakVersion,
+		"cloak_license_key":         maskSecret(cfg.LicenseKey),
+		"cloak_license_configured":  browser.ResolveLicense(cfg.LicenseKey) != "",
 		"max_concurrent":            cfg.MaxConcurrent,
 		"max_retries":               cfg.MaxRetries,
 		"account_rpm":               st.AccountRPM,

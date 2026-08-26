@@ -144,12 +144,8 @@ func (m *Manager) snapshotConfig() config.Config {
 }
 
 func (m *Manager) SetCloakBinaryPath(path string) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return
-	}
 	m.mu.Lock()
-	m.cfg.CloakBinaryPath = path
+	m.cfg.CloakBinaryPath = strings.TrimSpace(path)
 	m.mu.Unlock()
 }
 

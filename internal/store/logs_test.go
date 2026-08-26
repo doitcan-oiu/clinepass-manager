@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"opencode-go-manager/internal/config"
 	"opencode-go-manager/internal/model"
 )
 
@@ -201,5 +202,19 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	gotRefresh, err := s.GetSettings()
 	if err != nil || gotRefresh.UsageRefreshSec != 120 || gotRefresh.UsageRefreshConcurrency != 16 {
 		t.Fatalf("usage refresh %+v %v", gotRefresh, err)
+	}
+	again = gotRefresh
+	again.CloakVersion = "151.0.7922.108.2"
+	again.CloakLicenseKey = "ck_test_license"
+	if err := s.SaveSettings(again); err != nil {
+		t.Fatal(err)
+	}
+	gotCloak, err := s.GetSettings()
+	if err != nil || gotCloak.CloakVersion != "151.0.7922.108.2" || gotCloak.CloakLicenseKey != "ck_test_license" {
+		t.Fatalf("cloak %+v %v", gotCloak, err)
+	}
+	cfg := ApplySettings(config.Config{CloakVersion: "146.0", LicenseKey: "yaml-key"}, gotCloak)
+	if cfg.CloakVersion != "151.0.7922.108.2" || cfg.LicenseKey != "ck_test_license" {
+		t.Fatalf("apply cloak %+v", cfg)
 	}
 }

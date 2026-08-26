@@ -34,7 +34,7 @@ async function json<T>(res: Response): Promise<T> {
 
 export const api = {
   config: () => fetch("/api/config").then((r) => json<AppConfig>(r)),
-  saveConfig: (body: Partial<AppConfig> & { hero_sms_api_key?: string }) =>
+  saveConfig: (body: Partial<AppConfig> & { hero_sms_api_key?: string; cloak_license_key?: string }) =>
     fetch("/api/config", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

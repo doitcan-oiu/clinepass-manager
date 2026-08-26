@@ -33,7 +33,7 @@ bin/server       生产二进制（make build 生成）
 
 已经装好的会跳过。用 `apt` 时需要 sudo。
 
-首次启动会在后台下载 CloakBrowser 到缓存目录（约 200MB），HTTP 先起来，不会因此 502。systemd 开了 `ProtectHome` 时，缓存和运行目录在 `data/` 下。也可在设置里填 `CLOAKBROWSER_LICENSE_KEY`。
+首次启动会在后台下载 CloakBrowser 到缓存目录（约 200MB），HTTP 先起来，不会因此 502。systemd 开了 `ProtectHome` 时，缓存和运行目录在 `data/` 下。版本和 license 在网页「设置 → 运行环境」里改，不用每次改 yaml。
 
 ## 常用命令
 
@@ -147,9 +147,9 @@ LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 huma
 | `MAX_CONCURRENT` | `1` | 同时登录数。Cloak 免费版通常为 1 |
 | `LOGIN_ENGINE` | `python` | `python` 走官方包装；`go` 走旧 Playwright-Go |
 | `LOGIN_PYTHON` | `worker/.venv/bin/python` | 工人解释器 |
-| `CLOAKBROWSER_VERSION` | `151.0.7922.108.2` | 二进制版本。151 需 Cloak license；没 key 时包装会回落免费 146 |
+| `CLOAKBROWSER_VERSION` | `151.0.7922.108.2` | 二进制初始版本，可在设置里改。151 需 Cloak license；没 key 时包装会回落免费 146 |
 | `CLOAKBROWSER_CACHE_DIR` | `$HOME/.cloakbrowser` | 缓存目录。HOME 不可写时落到 `data/home/.cloakbrowser` |
 | `CLOAKBROWSER_BINARY_PATH` | 空 | 跳过下载，使用本地 chrome |
-| `CLOAKBROWSER_LICENSE_KEY` | 空 | Cloak key。151 必须有，下载走 `cloakbrowser.dev/api/download/{version}`，不是 GitHub 直链 |
+| `CLOAKBROWSER_LICENSE_KEY` | 空 | Cloak key 初始值，可在设置里改。151 必须有，下载走 `cloakbrowser.dev/api/download/{version}` |
 
 登录失败截图在 `data/screenshots/<账号ID>.png`。每个账号的浏览器配置在 `data/profiles/<账号ID>/`。
