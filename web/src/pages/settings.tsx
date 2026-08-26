@@ -51,6 +51,7 @@ export function SettingsPage() {
   const [maxPrice, setMaxPrice] = useState(0)
   const [catalog, setCatalog] = useState<HeroSMSCatalog | null>(null)
   const [pending, setPending] = useState(false)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [loadingCatalog, setLoadingCatalog] = useState(false)
 
   useEffect(() => {
@@ -125,27 +126,14 @@ export function SettingsPage() {
         toast.error("并发数至少为 1")
         return
       }
-      const version = cloakVersion.trim()
-      if (!version) {
-        toast.error("请填写 CloakBrowser 版本")
-        return
-      }
-      const body: Parameters<typeof api.saveConfig>[0] = {
+      await api.saveConfig({
         proxy,
         headless,
         max_concurrent: n,
         provider_mode: providerMode,
         provider_value: providerValue,
-        cloak_version: version,
-      }
-      if (cloakLicense && !cloakLicense.includes("********")) {
-        body.cloak_license_key = cloakLicense.trim()
-      }
-      const cfg = await api.saveConfig(body)
+      })
       setMaxConcurrent(n)
-      setCloakVersion(cfg.cloak_version || version)
-      setCloakLicense(cfg.cloak_license_key || "")
-      setCloakConfigured(!!cfg.cloak_license_configured)
       toast.success("运行环境已保存")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存失败")
@@ -197,6 +185,53 @@ export function SettingsPage() {
     }
   }
 
+  async function saveCloak(e?: FormEvent) {
+    e?.preventDefault()
+    setPending(true)
+    try {
+      const version = cloakVersion.trim()
+      if (!version) {
+        toast.error("请填写 CloakBrowser 版本")
+        return
+      }
+      const body: Parameters<typeof api.saveConfig>[0] = { cloak_version: version }
+      if (cloakLicense && !cloakLicense.includes("********")) {
+        body.cloak_license_key = cloakLicense.trim()
+      }
+      const cfg = await api.saveConfig(body)
+      setCloakVersion(cfg.cloak_version || version)
+      setCloakLicense(cfg.cloak_license_key || "")
+      setCloakConfigured(!!cfg.cloak_license_configured)
+      toast.success("CloakBrowser 设置已保存")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "保存失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function checkCloakUpdate() {
+    setCheckingUpdate(true)
+    try {
+      if (cloakLicense && !cloakLicense.includes("********")) {
+        const cfg = await api.saveConfig({ cloak_license_key: cloakLicense.trim() })
+        setCloakLicense(cfg.cloak_license_key || "")
+        setCloakConfigured(!!cfg.cloak_license_configured)
+      }
+      const out = await api.updateCloak()
+      setCloakVersion(out.latest || out.current)
+      if (out.updated) {
+        toast.success(`发现新版本 ${out.latest}，正在后台下载并启用`)
+      } else {
+        toast.success(`已是最新版本 ${out.latest}`)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "检测更新失败")
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
+
   async function saveHeroSMS(e?: FormEvent) {
     e?.preventDefault()
     setPending(true)
@@ -227,8 +262,9 @@ export function SettingsPage() {
         <p className="text-sm text-muted-foreground">按分组切换，只改当前这一组。</p>
       </div>
       <Tabs defaultValue="runtime">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="runtime">运行环境</TabsTrigger>
+          <TabsTrigger value="cloak">CloakBrowser</TabsTrigger>
           <TabsTrigger value="account">账号设置</TabsTrigger>
           <TabsTrigger value="herosms">Hero SMS</TabsTrigger>
         </TabsList>
@@ -258,32 +294,6 @@ export function SettingsPage() {
                     <p className="text-xs text-muted-foreground">开启后不弹出浏览器窗口。</p>
                   </div>
                   <Switch id="headless" checked={headless} onCheckedChange={setHeadless} />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="cloak-version">CloakBrowser 版本</Label>
-                  <Input
-                    id="cloak-version"
-                    placeholder="151.0.7922.108.2"
-                    value={cloakVersion}
-                    onChange={(e) => setCloakVersion(e.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    151 必须带 license。改完保存后会在后台按这个版本重新下载/准备浏览器，不用改 yaml。
-                  </p>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="cloak-license">CloakBrowser License</Label>
-                  <Input
-                    id="cloak-license"
-                    type="password"
-                    autoComplete="off"
-                    placeholder={cloakConfigured ? "已保存，留空不改" : "CloakBrowser Pro license key"}
-                    value={cloakLicense}
-                    onChange={(e) => setCloakLicense(e.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    缺 key 时官方包装会报 license invalid/expired/missing。免费 key 在 cloakbrowser.dev/free。这里保存后立即用于登录和下载。
-                  </p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="max-concurrent">提取支付链接并发</Label>
@@ -324,6 +334,52 @@ export function SettingsPage() {
                 <Button type="submit" disabled={pending} className="w-fit">
                   保存运行环境
                 </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="cloak" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>CloakBrowser</CardTitle>
+              <CardDescription>登录用的浏览器版本和 License，可检测官方最新版并下载启用。</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={saveCloak} className="grid gap-6">
+                <div className="grid gap-2">
+                  <Label htmlFor="cloak-version">当前版本</Label>
+                  <Input
+                    id="cloak-version"
+                    placeholder="151.0.7922.108.2"
+                    value={cloakVersion}
+                    onChange={(e) => setCloakVersion(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    151 必须带 license。也可以点检测更新，有新版本会自动下载并切过去。
+                  </p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="cloak-license">License</Label>
+                  <Input
+                    id="cloak-license"
+                    type="password"
+                    autoComplete="off"
+                    placeholder={cloakConfigured ? "已保存，留空不改" : "CloakBrowser Pro license key"}
+                    value={cloakLicense}
+                    onChange={(e) => setCloakLicense(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    缺 key 时官方包装会报 license invalid/expired/missing。免费 key 在 cloakbrowser.dev/free。
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="submit" disabled={pending} className="w-fit">
+                    保存 CloakBrowser
+                  </Button>
+                  <Button type="button" variant="outline" disabled={pending || checkingUpdate} onClick={checkCloakUpdate}>
+                    {checkingUpdate ? "检测中…" : "检测更新"}
+                  </Button>
+                </div>
               </form>
             </CardContent>
           </Card>

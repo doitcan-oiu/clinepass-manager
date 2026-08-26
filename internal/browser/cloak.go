@@ -85,6 +85,10 @@ func freeDownloadURLs(version string) []string {
 	}
 }
 
+func NeedsLicense(version string) bool {
+	return needsLicense(version)
+}
+
 func needsLicense(version string) bool {
 	return !strings.HasPrefix(version, "145.") && !strings.HasPrefix(version, "146.")
 }

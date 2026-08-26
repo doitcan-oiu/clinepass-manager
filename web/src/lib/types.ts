@@ -107,6 +107,13 @@ export type AppConfig = {
   provider_value: string
 }
 
+export type CloakUpdate = {
+  current: string
+  latest: string
+  updated: boolean
+  downloading: boolean
+}
+
 export type Job = {
   id: string
   account_id: string

@@ -80,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/logs", s.listLogs)
 	mux.HandleFunc("DELETE /api/logs", s.clearLogs)
 	mux.HandleFunc("GET /api/logs/stats", s.logStats)
+	mux.HandleFunc("POST /api/cloak/update", s.updateCloak)
 	mux.Handle("/v1/", s.proxy)
 	mux.HandleFunc("/", s.frontend)
 	return cors(mux)
@@ -248,6 +249,50 @@ func (s *Server) refreshCloak() {
 		s.jobs.SetCloakBinaryPath(info.Path)
 		log.Printf("CloakBrowser 已按设置就绪: %s", info.Path)
 	}()
+}
+
+func (s *Server) updateCloak(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfg
+	st, err := s.store.GetSettings()
+	if err == nil {
+		cfg = store.ApplySettings(cfg, st)
+	} else {
+		st = model.Settings{Headless: true, APIProxy: true}
+	}
+	current := strings.TrimSpace(cfg.CloakVersion)
+	if current == "" {
+		current = "151.0.7922.108.2"
+	}
+	latest, err := browser.LatestStableVersion(nil)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if browser.CompareVersion(latest, current) <= 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"current":    current,
+			"latest":     latest,
+			"updated":    false,
+			"downloading": false,
+		})
+		return
+	}
+	if browser.NeedsLicense(latest) && browser.ResolveLicense(cfg.LicenseKey) == "" {
+		writeErr(w, http.StatusBadRequest, "最新版 "+latest+" 需要 License，请先保存 CloakBrowser License")
+		return
+	}
+	st.CloakVersion = latest
+	if err := s.store.SaveSettings(st); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.refreshCloak()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"current":     current,
+		"latest":      latest,
+		"updated":     true,
+		"downloading": true,
+	})
 }
 
 func (s *Server) publicConfig() map[string]any {

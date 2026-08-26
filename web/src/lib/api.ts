@@ -1,4 +1,4 @@
-import type { Account, AppConfig, Batch, BatchPage, Job, PoolAccount, PoolPage, RequestLogPage, UsageSyncStatus } from "@/lib/types"
+import type { Account, AppConfig, Batch, BatchPage, CloakUpdate, Job, PoolAccount, PoolPage, RequestLogPage, UsageSyncStatus } from "@/lib/types"
 
 export type AccountBackup = {
   version: number
@@ -40,6 +40,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => json<AppConfig>(r)),
+  updateCloak: () =>
+    fetch("/api/cloak/update", { method: "POST" }).then((r) => json<CloakUpdate>(r)),
   account: (id: string) => fetch(`/api/accounts/${id}`).then((r) => json<Account>(r)),
   deleteAccount: (id: string) => fetch(`/api/accounts/${id}`, { method: "DELETE" }).then((r) => json<null>(r)),
   loginAccount: (id: string) =>
