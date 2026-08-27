@@ -581,20 +581,14 @@ func (s *Store) GetAmzKeysCard() (model.AmzKeysCard, error) {
 	if err := json.Unmarshal([]byte(raw), &c); err != nil {
 		return model.AmzKeysCard{}, nil
 	}
-	c.CardNo = strings.TrimSpace(c.CardNo)
-	c.CVV = strings.TrimSpace(c.CVV)
-	c.ValidDate = strings.TrimSpace(c.ValidDate)
-	c.RequestID = strings.TrimSpace(c.RequestID)
+	normalizeAmzKeysCard(&c)
 	return c, nil
 }
 
 func (s *Store) SetAmzKeysCard(c model.AmzKeysCard) error {
-	c.CardNo = strings.TrimSpace(c.CardNo)
-	c.CVV = strings.TrimSpace(c.CVV)
-	c.ValidDate = strings.TrimSpace(c.ValidDate)
-	c.RequestID = strings.TrimSpace(c.RequestID)
+	normalizeAmzKeysCard(&c)
 	raw := ""
-	if c.Ready() {
+	if c.Ready() || c.Pending() || (c.Next != nil && (c.Next.Ready() || c.Next.Pending())) {
 		b, err := json.Marshal(c)
 		if err != nil {
 			return err
@@ -603,6 +597,31 @@ func (s *Store) SetAmzKeysCard(c model.AmzKeysCard) error {
 	}
 	_, err := s.db.Exec(`UPDATE settings SET amzkeys_active_card = ?, updated_at = ? WHERE id = 1`, raw, time.Now().Unix())
 	return err
+}
+
+func normalizeAmzKeysCard(c *model.AmzKeysCard) {
+	if c == nil {
+		return
+	}
+	c.CardNo = strings.TrimSpace(c.CardNo)
+	c.CVV = strings.TrimSpace(c.CVV)
+	c.ValidDate = strings.TrimSpace(c.ValidDate)
+	c.RequestID = strings.TrimSpace(c.RequestID)
+	c.TaskID = strings.TrimSpace(c.TaskID)
+	c.RAM = strings.TrimSpace(c.RAM)
+	if c.PayCount < 0 {
+		c.PayCount = 0
+	}
+	if c.InUse < 0 {
+		c.InUse = 0
+	}
+	if c.Next != nil {
+		c.Next.Next = nil
+		normalizeAmzKeysCard(c.Next)
+		if !c.Next.Ready() && !c.Next.Pending() {
+			c.Next = nil
+		}
+	}
 }
 
 func clampAccountRPM(n int) int {

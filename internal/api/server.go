@@ -44,6 +44,8 @@ func New(cfg config.Config, st *store.Store, jobs *job.Manager, webRoot string) 
 	}
 	s.proxy.SetUsageRefresher(s.usage)
 	s.usage.StartLoop()
+	jobs.SetCardWarmer(s.WarmAmzKeysCard)
+	s.WarmAmzKeysCard()
 	go s.expireLoop()
 	return s
 }
@@ -56,6 +58,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/herosms/catalog", s.heroSMSCatalog)
 	mux.HandleFunc("GET /api/amzkeys/status", s.amzKeysStatus)
 	mux.HandleFunc("POST /api/amzkeys/cards", s.amzKeysCheckoutCard)
+	mux.HandleFunc("POST /api/amzkeys/cards/warm", s.amzKeysWarmCard)
+	mux.HandleFunc("POST /api/amzkeys/cards/release", s.amzKeysReleaseCard)
 	mux.HandleFunc("DELETE /api/amzkeys/cards", s.amzKeysClearCard)
 	mux.HandleFunc("GET /api/amzkeys/auth-codes", s.amzKeysAuthCodes)
 	mux.HandleFunc("POST /api/accounts", s.createPaidAccount)
@@ -101,6 +105,7 @@ func (s *Server) expireLoop() {
 		now := time.Now()
 		_, _ = s.store.DeleteExpiredAccounts(now.Unix())
 		_ = s.store.PruneRequestLogs(now.UnixMilli())
+		s.WarmAmzKeysCard()
 	}
 }
 
@@ -264,6 +269,9 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	if cloakChanged {
 		s.refreshCloak()
 	}
+	if amzKeysConfigured(cur) {
+		s.WarmAmzKeysCard()
+	}
 	writeJSON(w, http.StatusOK, s.publicConfig())
 }
 
@@ -343,6 +351,7 @@ func (s *Server) publicConfig() map[string]any {
 	} else {
 		st = model.Settings{AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, UsageRefreshConcurrency: 10}
 	}
+	last4, pending, payCount, maxPays, nextLast4, nextPending := amzKeysCardView(s)
 	return map[string]any{
 		"invite_url":                cfg.InviteURL,
 		"headless":                  cfg.Headless,
@@ -371,7 +380,12 @@ func (s *Server) publicConfig() map[string]any {
 		"amzkeys_card_type":         amzKeysCardType(st.AmzKeysCardType),
 		"amzkeys_card_amount":       amzKeysCardAmount(st.AmzKeysCardAmount),
 		"amzkeys_configured":        amzKeysConfigured(st),
-		"amzkeys_card_last4":        amzKeysCardLast4(s),
+		"amzkeys_card_last4":        last4,
+		"amzkeys_card_pending":      pending,
+		"amzkeys_card_pay_count":    payCount,
+		"amzkeys_card_max_pays":     maxPays,
+		"amzkeys_card_next_last4":   nextLast4,
+		"amzkeys_card_next_pending": nextPending,
 	}
 }
 

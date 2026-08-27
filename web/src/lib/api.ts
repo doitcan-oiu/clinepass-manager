@@ -94,6 +94,8 @@ export const api = {
       body: JSON.stringify({ auto_pay: autoPay }),
     }).then((r) => json<Job>(r)),
   amzKeysStatus: () => fetch("/api/amzkeys/status").then((r) => json<AmzKeysStatus>(r)),
+  warmAmzKeysCard: () =>
+    fetch("/api/amzkeys/cards/warm", { method: "POST" }).then((r) => json<{ ok: boolean; pending: boolean; last4: string }>(r)),
   clearAmzKeysCard: () => fetch("/api/amzkeys/cards", { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
   dispatchBatch: (id: string) =>
     fetch(`/api/batches/${id}/dispatch`, { method: "POST" }).then((r) =>

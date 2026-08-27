@@ -148,13 +148,24 @@ type Settings struct {
 }
 
 type AmzKeysCard struct {
-	CardNo    string `json:"card_no"`
-	CVV       string `json:"cvv"`
-	ValidDate string `json:"valid_date"`
-	RequestID string `json:"request_id,omitempty"`
-	CardType  int    `json:"card_type,omitempty"`
+	CardNo        string       `json:"card_no"`
+	CVV           string       `json:"cvv"`
+	ValidDate     string       `json:"valid_date"`
+	RequestID     string       `json:"request_id,omitempty"`
+	CardType      int          `json:"card_type,omitempty"`
+	TaskID        string       `json:"task_id,omitempty"`
+	RAM           string       `json:"ram,omitempty"`
+	TaskStartedAt int64        `json:"task_started_at,omitempty"`
+	Amount        float64      `json:"amount,omitempty"`
+	PayCount      int          `json:"pay_count,omitempty"`
+	InUse         int          `json:"in_use,omitempty"`
+	Next          *AmzKeysCard `json:"next,omitempty"`
 }
 
 func (c AmzKeysCard) Ready() bool {
 	return c.CardNo != "" && c.CVV != ""
+}
+
+func (c AmzKeysCard) Pending() bool {
+	return !c.Ready() && c.TaskID != "" && c.RAM != ""
 }

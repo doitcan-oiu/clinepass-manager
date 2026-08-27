@@ -235,12 +235,12 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if cfg.AmzKeysAppID != "2026240003167464" || cfg.AmzKeysCardType != 467845 {
 		t.Fatalf("apply amzkeys %+v", cfg)
 	}
-	card := model.AmzKeysCard{CardNo: "4111111111111111", CVV: "123", ValidDate: "2028-12", RequestID: "r1"}
+	card := model.AmzKeysCard{CardNo: "4111111111111111", CVV: "123", ValidDate: "2028-12", RequestID: "r1", Amount: 20, PayCount: 1, Next: &model.AmzKeysCard{TaskID: "n1", RAM: "abcdefghijklmnop", TaskStartedAt: 2}}
 	if err := s.SetAmzKeysCard(card); err != nil {
 		t.Fatal(err)
 	}
 	gotCard, err := s.GetAmzKeysCard()
-	if err != nil || !gotCard.Ready() || gotCard.CardNo != card.CardNo || gotCard.CVV != "123" {
+	if err != nil || !gotCard.Ready() || gotCard.CardNo != card.CardNo || gotCard.CVV != "123" || gotCard.PayCount != 1 || gotCard.Next == nil || !gotCard.Next.Pending() {
 		t.Fatalf("active card %+v %v", gotCard, err)
 	}
 	if err := s.SaveSettings(gotAmz); err != nil {
@@ -249,6 +249,14 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	gotCard, err = s.GetAmzKeysCard()
 	if err != nil || gotCard.CardNo != card.CardNo {
 		t.Fatalf("card must survive settings save %+v %v", gotCard, err)
+	}
+	pending := model.AmzKeysCard{TaskID: "2434", RAM: "abcdefghijklmnop", TaskStartedAt: 1}
+	if err := s.SetAmzKeysCard(pending); err != nil {
+		t.Fatal(err)
+	}
+	gotPending, err := s.GetAmzKeysCard()
+	if err != nil || !gotPending.Pending() || gotPending.TaskID != "2434" || gotPending.RAM != "abcdefghijklmnop" {
+		t.Fatalf("pending card %+v %v", gotPending, err)
 	}
 	if err := s.SetAmzKeysCard(model.AmzKeysCard{}); err != nil {
 		t.Fatal(err)

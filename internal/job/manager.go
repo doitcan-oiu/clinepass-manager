@@ -19,12 +19,13 @@ type Manager struct {
 	cfg   config.Config
 	store *store.Store
 
-	mu      sync.Mutex
-	jobs    map[string]*model.Job
-	subs    map[string][]chan model.JobEvent
-	active  int
-	queue   []string
-	running map[string]string
+	mu       sync.Mutex
+	jobs     map[string]*model.Job
+	subs     map[string][]chan model.JobEvent
+	active   int
+	queue    []string
+	running  map[string]string
+	warmCard func()
 }
 
 func New(cfg config.Config, st *store.Store) *Manager {
@@ -130,6 +131,14 @@ func (m *Manager) enqueue(accountID, kind string, autoPay bool) (*model.Job, err
 	m.queue = append(m.queue, job.ID)
 	m.mu.Unlock()
 	_ = m.store.UpdateStatus(acc.ID, "queued", "")
+	if autoPay {
+		m.mu.Lock()
+		warm := m.warmCard
+		m.mu.Unlock()
+		if warm != nil {
+			warm()
+		}
+	}
 	m.pump()
 	return job, nil
 }
@@ -147,6 +156,12 @@ func (m *Manager) snapshotConfig() config.Config {
 func (m *Manager) SetCloakBinaryPath(path string) {
 	m.mu.Lock()
 	m.cfg.CloakBinaryPath = strings.TrimSpace(path)
+	m.mu.Unlock()
+}
+
+func (m *Manager) SetCardWarmer(fn func()) {
+	m.mu.Lock()
+	m.warmCard = fn
 	m.mu.Unlock()
 }
 
@@ -204,7 +219,7 @@ func (m *Manager) run(job *model.Job) {
 	}
 	cfg.AutoPay = job.AutoPay
 	if job.AutoPay {
-		m.logf(job, "info", "自动支付=开")
+		m.logf(job, "info", "自动支付=开；后台只备一张卡，登录同时开卡")
 	}
 
 	var res login.Result

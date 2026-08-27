@@ -204,7 +204,23 @@ def checkout_card(api_base: str, replace: bool = False) -> dict:
         "expiry": data.get("expiry") or expiry_mm_yy(data.get("valid_date") or ""),
         "last4": data.get("last4") or last4(card_no),
         "reused": bool(data.get("reused")),
+        "pay_count": data.get("pay_count") or 0,
+        "max_pays": data.get("max_pays") or 0,
+        "remaining": data.get("remaining") or 0,
     }
+
+
+def release_card(api_base: str, card: dict, success: bool, rejected: bool = False) -> None:
+    last4 = (card or {}).get("last4") or ""
+    try:
+        api_json(
+            api_base,
+            "/api/amzkeys/cards/release",
+            method="POST",
+            body={"last4": last4, "success": success, "rejected": rejected},
+        )
+    except Exception as exc:
+        log("回写虚拟卡次数失败: %s", exc)
 
 
 def fetch_auth_code(api_base: str, card_last4: str) -> str:
@@ -232,7 +248,7 @@ def api_json(api_base: str, path: str, method: str = "GET", body: dict | None = 
         headers={"Content-Type": "application/json", "Accept": "application/json"},
         data=data,
     )
-    timeout = 200 if "cards" in path else 30
+    timeout = 420 if "cards" in path else 30
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
@@ -317,22 +333,35 @@ def pay_with_card(page, payment_url: str, card: dict, api_base: str) -> tuple[bo
     return wait_pay_result(page, api_base, card)
 
 
+def _card_uses(card: dict) -> str:
+    pay_count = card.get("pay_count") or 0
+    max_pays = card.get("max_pays") or 0
+    if max_pays:
+        return f"，本张 {pay_count}/{max_pays}"
+    return ""
+
+
 def autopay(page, payment_url: str, settings: dict) -> tuple[bool, str]:
     api_base = (settings.get("manager_api") or "").strip()
     card = checkout_card(api_base, replace=False)
     if card.get("reused"):
-        log("复用当前虚拟卡，后四位 %s", card["last4"])
+        log("复用当前虚拟卡，后四位 %s%s", card["last4"], _card_uses(card))
     else:
-        log("没有可用卡，新开一张，后四位 %s", card["last4"])
+        log("没有可用卡，新开一张，后四位 %s%s", card["last4"], _card_uses(card))
     paid, err = pay_with_card(page, payment_url, card, api_base)
     if paid:
+        release_card(api_base, card, True)
         return True, ""
     if not is_card_rejected(err):
+        release_card(api_base, card, False)
         return False, err
     log("当前卡被拒绝（%s），换一张再付", err)
+    release_card(api_base, card, False, rejected=True)
     card = checkout_card(api_base, replace=True)
-    log("已开新卡，后四位 %s", card["last4"])
+    log("已开新卡，后四位 %s%s", card["last4"], _card_uses(card))
     paid, err = pay_with_card(page, payment_url, card, api_base)
     if paid:
+        release_card(api_base, card, True)
         return True, ""
+    release_card(api_base, card, False, rejected=is_card_rejected(err))
     return False, err

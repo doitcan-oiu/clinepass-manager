@@ -24,6 +24,7 @@ import (
 
 const (
 	DefaultHost      = "https://testapi.amzkeys.com"
+	ProductionHost   = "https://ymapi.amzkeys.com:15970"
 	DefaultCardType  = 467845
 	DefaultAmount    = 20
 	AESIV            = "SADEUT78WE23HGKW"
@@ -33,7 +34,7 @@ const (
 	balancePath      = "/api/v1/account/balance"
 	authCodePath     = "/api/v1/authorization/authCode"
 	taskPollInterval = 5 * time.Second
-	taskPollTimeout  = 180 * time.Second
+	taskPollTimeout  = 6 * time.Minute
 )
 
 type Client struct {
@@ -169,7 +170,7 @@ func (c *Client) CardTypes() ([]CardType, error) {
 	return out, nil
 }
 
-func (c *Client) CreateCard() (Card, error) {
+func (c *Client) SubmitCreate() (taskID, ram string, err error) {
 	raw, err := c.call(createPath, map[string]any{
 		"card_type":    c.CardType,
 		"number":       1,
@@ -177,22 +178,31 @@ func (c *Client) CreateCard() (Card, error) {
 		"account_type": "USD",
 	})
 	if err != nil {
-		return Card{}, err
+		return "", "", err
 	}
 	var created struct {
 		TaskID  any    `json:"task_id"`
 		OrderNo string `json:"order_no"`
 	}
 	if err := json.Unmarshal(raw, &created); err != nil {
-		return Card{}, fmt.Errorf("解析开卡任务失败: %w", err)
+		return "", "", fmt.Errorf("解析开卡任务失败: %w", err)
 	}
-	taskID := anyString(created.TaskID)
+	taskID = anyString(created.TaskID)
 	if taskID == "" {
-		return Card{}, fmt.Errorf("开卡任务没有返回 task_id")
+		return "", "", fmt.Errorf("开卡任务没有返回 task_id")
 	}
-	ram, err := randomRAM()
+	ram, err = randomRAM()
 	if err != nil {
-		return Card{}, err
+		return "", "", err
+	}
+	return taskID, ram, nil
+}
+
+func (c *Client) WaitTask(taskID, ram string) (Card, error) {
+	taskID = strings.TrimSpace(taskID)
+	ram = strings.TrimSpace(ram)
+	if taskID == "" || ram == "" {
+		return Card{}, fmt.Errorf("缺少开卡任务")
 	}
 	deadline := time.Now().Add(taskPollTimeout)
 	var last string
@@ -220,6 +230,14 @@ func (c *Client) CreateCard() (Card, error) {
 		return Card{}, fmt.Errorf("等待开卡超时: %s", last)
 	}
 	return Card{}, fmt.Errorf("等待开卡超时")
+}
+
+func (c *Client) CreateCard() (Card, error) {
+	taskID, ram, err := c.SubmitCreate()
+	if err != nil {
+		return Card{}, err
+	}
+	return c.WaitTask(taskID, ram)
 }
 
 func (c *Client) AuthCodes() ([]AuthCode, error) {
@@ -547,17 +565,31 @@ func randomRAM() (string, error) {
 func okCode(code any) bool {
 	switch v := code.(type) {
 	case float64:
-		return int(v) == 10000
+		return successCode(int64(v))
 	case json.Number:
 		n, _ := v.Int64()
-		return n == 10000
+		return successCode(n)
 	case string:
-		return v == "10000" || strings.EqualFold(v, "SUCCESS")
+		s := strings.TrimSpace(v)
+		return s == "10000" || s == "200" || strings.EqualFold(s, "SUCCESS")
 	case int:
-		return v == 10000
+		return successCode(int64(v))
+	case int64:
+		return successCode(v)
 	default:
 		return false
 	}
+}
+
+func successCode(n int64) bool {
+	return n == 10000 || n == 200
+}
+
+func TaskStale(startedAt int64) bool {
+	if startedAt <= 0 {
+		return true
+	}
+	return time.Since(time.Unix(startedAt, 0)) > taskPollTimeout+time.Minute
 }
 
 func anyString(v any) string {

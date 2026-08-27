@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSignPlainSortsKeys(t *testing.T) {
@@ -112,8 +113,38 @@ func TestReady(t *testing.T) {
 	}
 }
 
+func TestMaxPays(t *testing.T) {
+	if got := MaxPays(20); got != 3 {
+		t.Fatalf("20 -> %d", got)
+	}
+	if got := MaxPays(15.9); got != 3 {
+		t.Fatalf("15.9 -> %d", got)
+	}
+	if got := MaxPays(10); got != 1 {
+		t.Fatalf("10 -> %d", got)
+	}
+	if got := MaxPays(0); got != 3 {
+		t.Fatalf("default -> %d", got)
+	}
+	if got := RemainingPays(20, 2); got != 1 {
+		t.Fatalf("remaining=%d", got)
+	}
+	if got := RemainingPays(20, 3); got != 0 {
+		t.Fatalf("exhausted remaining=%d", got)
+	}
+}
+
+func TestTaskStale(t *testing.T) {
+	if !TaskStale(0) {
+		t.Fatal("zero")
+	}
+	if TaskStale(time.Now().Unix()) {
+		t.Fatal("fresh")
+	}
+}
+
 func TestOkCode(t *testing.T) {
-	if !okCode(float64(10000)) || !okCode("10000") {
+	if !okCode(float64(10000)) || !okCode("10000") || !okCode(200) || !okCode("200") {
 		t.Fatal("ok")
 	}
 	if okCode(float64(40001)) {

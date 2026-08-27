@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 import { api, type AmzKeysStatus, type HeroSMSCatalog, type HeroSMSCountry } from "@/lib/api"
+import type { AppConfig } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -62,9 +63,23 @@ export function SettingsPage() {
   const [amzAmount, setAmzAmount] = useState(20)
   const [amzConfigured, setAmzConfigured] = useState(false)
   const [amzLast4, setAmzLast4] = useState("")
+  const [amzPending, setAmzPending] = useState(false)
+  const [amzPayCount, setAmzPayCount] = useState(0)
+  const [amzMaxPays, setAmzMaxPays] = useState(3)
+  const [amzNextLast4, setAmzNextLast4] = useState("")
+  const [amzNextPending, setAmzNextPending] = useState(false)
   const [amzStatus, setAmzStatus] = useState<AmzKeysStatus | null>(null)
   const [checkingAmz, setCheckingAmz] = useState(false)
   const [clearingCard, setClearingCard] = useState(false)
+
+  function applyAmzCard(cfg: AppConfig) {
+    setAmzLast4(cfg.amzkeys_card_last4 || "")
+    setAmzPending(!!cfg.amzkeys_card_pending)
+    setAmzPayCount(cfg.amzkeys_card_pay_count || 0)
+    setAmzMaxPays(cfg.amzkeys_card_max_pays || 3)
+    setAmzNextLast4(cfg.amzkeys_card_next_last4 || "")
+    setAmzNextPending(!!cfg.amzkeys_card_next_pending)
+  }
 
   useEffect(() => {
     api
@@ -95,7 +110,7 @@ export function SettingsPage() {
         setAmzCardType(cfg.amzkeys_card_type || 467845)
         setAmzAmount(cfg.amzkeys_card_amount || 20)
         setAmzConfigured(!!cfg.amzkeys_configured)
-        setAmzLast4(cfg.amzkeys_card_last4 || "")
+        applyAmzCard(cfg)
         if (cfg.hero_sms_configured) {
           loadCatalog(cfg.hero_sms_service || "ot").catch(() => {})
         }
@@ -286,7 +301,7 @@ export function SettingsPage() {
       setAmzCardType(cfg.amzkeys_card_type || type)
       setAmzAmount(cfg.amzkeys_card_amount || amount)
       setAmzConfigured(!!cfg.amzkeys_configured)
-      setAmzLast4(cfg.amzkeys_card_last4 || "")
+      applyAmzCard(cfg)
       toast.success("amzkeys卡台已保存")
       return true
     } catch (err) {
@@ -302,9 +317,26 @@ export function SettingsPage() {
     try {
       await api.clearAmzKeysCard()
       setAmzLast4("")
-      toast.success("已弃用当前卡，下次支付会开新卡")
+      setAmzPending(true)
+      setAmzPayCount(0)
+      setAmzNextLast4("")
+      setAmzNextPending(false)
+      toast.success("已弃用当前卡，后台会再提前备一张")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "弃用失败")
+    } finally {
+      setClearingCard(false)
+    }
+  }
+
+  async function warmAmzCard() {
+    setClearingCard(true)
+    try {
+      await api.warmAmzKeysCard()
+      setAmzPending(true)
+      toast.success("已提交开卡，后台只备这一张，付到还剩 1 次再开下一张")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "开卡失败")
     } finally {
       setClearingCard(false)
     }
@@ -662,7 +694,7 @@ export function SettingsPage() {
             <CardHeader>
               <CardTitle>amzkeys卡台</CardTitle>
               <CardDescription>
-                自动支付共用一张卡，被 Stripe 拒绝后再开新卡。测试环境 Host 是 https://testapi.amzkeys.com，测试卡段 467845。
+                一张卡大约能付 3 个账户（每个 5.3 美金）。平时只提前备一张，用到还剩 1 次时再开下一张，被拒了也会换新卡。测试 Host 是 https://testapi.amzkeys.com，生产是 https://ymapi.amzkeys.com:15970。
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -675,6 +707,9 @@ export function SettingsPage() {
                     value={amzHost}
                     onChange={(e) => setAmzHost(e.target.value)}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    测试用 https://testapi.amzkeys.com。切生产改成 https://ymapi.amzkeys.com:15970，并在卡台网页配好 RSA 公钥和本机出口 IP 白名单。
+                  </p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="amz-app-id">AppID</Label>
@@ -718,7 +753,7 @@ export function SettingsPage() {
                     onChange={(e) => setAmzCardType(Number(e.target.value))}
                   />
                   <p className="text-xs text-muted-foreground">
-                    测试环境固定 467845。生产卡段用检测连接返回的可开卡列表，或问商务。
+                    测试卡段 467845。生产卡段不是这个，点「检测连接」看可开卡列表再填，金额不要低于卡台返回的最低开卡额。
                   </p>
                 </div>
                 <div className="grid gap-2">
@@ -732,19 +767,36 @@ export function SettingsPage() {
                     onChange={(e) => setAmzAmount(Number(e.target.value))}
                   />
                   <p className="text-xs text-muted-foreground">
-                    只在开新卡时扣这一笔。同一张卡会一直用来付，被拒了才再开。
+                    只在开新卡时扣这一笔。建议不少于 16（3×5.3），默认 20 刚好够付 3 个账户。
                   </p>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border p-3">
                   <div>
                     <Label>当前在用的卡</Label>
                     <p className="text-xs text-muted-foreground">
-                      {amzLast4 ? `**** ${amzLast4}，被拒前一直复用` : "还没有卡，第一次自动支付时会开"}
+                      {amzLast4
+                        ? `**** ${amzLast4}，已付 ${amzPayCount}/${amzMaxPays || 3} 个账户${
+                            amzNextLast4
+                              ? `，下一张 **** ${amzNextLast4} 已备好`
+                              : amzNextPending
+                                ? "，下一张正在开"
+                                : (amzMaxPays || 3) - amzPayCount <= 1
+                                  ? "，快用完了会自动再开一张"
+                                  : ""
+                          }`
+                        : amzPending
+                          ? "正在开卡，登录抽链接时会并行等这张，不会再开第二张"
+                          : "还没有卡。保存卡台后会自动提前备一张"}
                     </p>
                   </div>
-                  <Button type="button" variant="outline" disabled={!amzLast4 || clearingCard} onClick={clearAmzCard}>
-                    {clearingCard ? "处理中…" : "弃用当前卡"}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" disabled={!amzConfigured || !!amzLast4 || amzPending || clearingCard} onClick={warmAmzCard}>
+                      {amzPending ? "开卡中…" : "提前开一张"}
+                    </Button>
+                    <Button type="button" variant="outline" disabled={!amzLast4 || clearingCard} onClick={clearAmzCard}>
+                      {clearingCard ? "处理中…" : "弃用当前卡"}
+                    </Button>
+                  </div>
                 </div>
                 {amzStatus?.balances?.length ? (
                   <p className="text-sm text-muted-foreground">
