@@ -118,6 +118,7 @@ export type AppConfig = {
   amzkeys_card_max_pays: number
   amzkeys_card_next_last4: string
   amzkeys_card_next_pending: boolean
+  amzkeys_card_error: string
 }
 
 export type CloakUpdate = {

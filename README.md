@@ -41,12 +41,12 @@ bin/server       生产二进制（make build 生成）
 
 | 命令 | 做什么 |
 |---|---|
-| `make` / `make dev` | 先 `ensure-env`，再 `go mod tidy`、装前端依赖，同时起后端 `:8080` 和 Vite `:5173` |
+| `make` / `make dev` | 先 `ensure-env`，再 `go mod tidy`、装前端依赖，同时起后端 `:8081` 和 Vite `:5173` |
 | `make build` | 先 `ensure-env`，构建 `web/dist`，再编译 `bin/server`（生产） |
 | `make start` | `make build` 后生成 systemd 单元并启动。没有 systemd 则前台跑 `bin/server` |
 | `make ensure-env` | 只检查/安装 Python、uv、工人虚拟环境，不启动服务 |
 | `make worker-venv` | 与 `ensure-env` 相同（兼容旧名字） |
-| `make api` | 只起后端，开发端口 `:8080`（不跑 ensure-env，不启前端） |
+| `make api` | 只起后端，开发端口 `:8081`（不跑 ensure-env，不启前端） |
 | `make web` | 只起 Vite 前端 `:5173` |
 | `make install-web` | `cd web && npm install` |
 | `make build-web` | 先 `npm install`，再 `npm run build` |
@@ -71,7 +71,7 @@ make
 
 | 服务 | 地址 |
 |---|---|
-| 后端 API | http://127.0.0.1:8080 |
+| 后端 API | http://127.0.0.1:8081 |
 | 前端（Vite，`/api` 代理到后端） | http://127.0.0.1:5173 |
 
 浏览器打开 **http://127.0.0.1:5173**。`Ctrl+C` 同时退出两边。后端 `go run` 就绪后才会起前端。
@@ -79,7 +79,7 @@ make
 已经 `ensure-env` 过、只想重开服务：
 
 ```bash
-make api    # 仅后端，:8080
+make api    # 仅后端，:8081
 make web    # 仅前端，:5173
 ```
 
@@ -106,7 +106,7 @@ make build
 
 `bin/server` 会自己切到项目根目录，再找 `worker/login.py`、`worker/.venv`、`web/dist`。HTTP 先监听，Cloak 二进制在后台下载。
 
-改过 Go 或前端后，再执行一次 `make start`。只改 Python 工人时 `sudo systemctl restart clinepass-manager` 即可。不要把开发态的 `:8080` 当生产。
+改过 Go 或前端后，再执行一次 `make start`。只改 Python 工人时 `sudo systemctl restart clinepass-manager` 即可。不要把开发态的 `:8081` 当生产。
 
 指定解释器或回退旧引擎：
 
@@ -130,7 +130,7 @@ LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 huma
 
 优先级：**环境变量 > config.yaml > 代码默认值**。
 
-`make` / `make api` 仍会设 `ADDR=:8080`，所以开发端口不受 yaml 影响。生产 `make start` 读 yaml 里的 `addr`（默认 `:9999`）。
+`make` / `make api` 仍会设 `ADDR=:8081`，所以开发端口不受 yaml 影响。生产 `make start` 读 yaml 里的 `addr`（默认 `:9999`）。
 
 也可以用 `CONFIG_FILE=/path/to.yaml` 指定别的文件。
 
@@ -138,7 +138,7 @@ LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 huma
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `ADDR` | `:9999` | 监听地址，也可写在 `config.yaml` 的 `addr`。`make` / `make api` 开发固定 `:8080` |
+| `ADDR` | `:9999` | 监听地址，也可写在 `config.yaml` 的 `addr`。`make` / `make api` 开发固定 `:8081` |
 | `DATA_DIR` | `./data` | SQLite、浏览器配置目录、截图、HOME 不可写时的回退目录 |
 | `HOME` | 进程用户家目录 | systemd `ProtectHome` 时请指到 `DATA_DIR/home` |
 | `INVITE_URL` | `https://authkit.cline.bot` | 邀请链接，可在设置里改 |

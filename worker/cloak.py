@@ -2,6 +2,10 @@ import os
 
 from protocol import log
 
+DEFAULT_TIMEZONE = "Asia/Shanghai"
+DEFAULT_LOCALE = "zh-CN"
+GEOIP_MIN_BYTES = 1_000_000
+
 
 def apply_cloak_env(settings: dict) -> None:
     mapping = {
@@ -35,6 +39,40 @@ def chrome_args(settings: dict, seed: int) -> list[str]:
     return args
 
 
+def cloak_cache_dir() -> str:
+    return os.environ.get("CLOAKBROWSER_CACHE_DIR") or os.path.expanduser("~/.cloakbrowser")
+
+
+def geoip_db_path(root: str | None = None) -> str:
+    return os.path.join(root or cloak_cache_dir(), "geoip", "GeoLite2-City.mmdb")
+
+
+def geoip_db_ready(root: str | None = None) -> bool:
+    path = geoip_db_path(root)
+    try:
+        return os.path.isfile(path) and os.path.getsize(path) >= GEOIP_MIN_BYTES
+    except OSError:
+        return False
+
+
+def apply_geo_settings(kwargs: dict, proxy: str | None, root: str | None = None) -> dict:
+    """Only follow Cloak geoip when the 70MB City DB is already on disk.
+
+    First launch otherwise downloads GeoLite2 from GitHub (httpx timeout 300s)
+    and that download is not bounded by CLOAKBROWSER_GEOIP_TIMEOUT_SECONDS.
+    A stalled GitHub fetch looks like a hang at「正在启动浏览器」.
+    """
+    if proxy and geoip_db_ready(root):
+        kwargs["geoip"] = True
+        kwargs.pop("timezone", None)
+        kwargs.pop("locale", None)
+        return kwargs
+    kwargs["geoip"] = False
+    kwargs["timezone"] = DEFAULT_TIMEZONE
+    kwargs["locale"] = DEFAULT_LOCALE
+    return kwargs
+
+
 def launch_ctx(settings: dict, seed: int):
     from cloakbrowser import launch_persistent_context
 
@@ -50,14 +88,6 @@ def launch_ctx(settings: dict, seed: int):
     args = chrome_args(settings, seed)
     if not license_key and not os.environ.get("CLOAKBROWSER_LICENSE_KEY"):
         log("没有 Cloak license，官方包装只会下免费 146；151 需要 cloakbrowser.dev/free 的 key，否则 AuthKit Radar 更容易拦截")
-    log(
-        "Cloak 官方包装启动 humanize=careful geoip=True headless=%s seed=%s version=%s cache=%s runtime=%s",
-        headless,
-        seed,
-        version or "latest",
-        os.environ.get("CLOAKBROWSER_CACHE_DIR") or "",
-        os.environ.get("XDG_RUNTIME_DIR") or "",
-    )
     kwargs = {
         "user_data_dir": profile,
         "headless": headless,
@@ -68,14 +98,28 @@ def launch_ctx(settings: dict, seed: int):
             "idle_between_duration": [0.35, 0.9],
             "mistype_chance": 0.04,
         },
-        "geoip": True,
         "args": args,
     }
+    apply_geo_settings(kwargs, proxy)
     if proxy:
         kwargs["proxy"] = proxy
-        log("使用全局代理，geoip 跟出口 IP")
+        if kwargs.get("geoip"):
+            log("使用全局代理，geoip 跟已有本地库解析出口")
+        else:
+            log("使用全局代理，但没有本地 GeoIP 库，跳过 70MB 下载，时区固定 %s", DEFAULT_TIMEZONE)
     else:
-        log("未设代理，geoip 跟本机出口，避免默认 UTC/en-US 被当成机器人")
+        log("未设代理，不下载 GeoIP，时区固定 %s / %s，避免默认 UTC/en-US", DEFAULT_TIMEZONE, DEFAULT_LOCALE)
+    log(
+        "Cloak 官方包装启动 humanize=careful geoip=%s tz=%s locale=%s headless=%s seed=%s version=%s cache=%s runtime=%s",
+        kwargs.get("geoip"),
+        kwargs.get("timezone") or "",
+        kwargs.get("locale") or "",
+        headless,
+        seed,
+        version or "latest",
+        os.environ.get("CLOAKBROWSER_CACHE_DIR") or "",
+        os.environ.get("XDG_RUNTIME_DIR") or "",
+    )
     if license_key:
         kwargs["license_key"] = license_key
     if version and (license_key or os.environ.get("CLOAKBROWSER_LICENSE_KEY")):
@@ -85,8 +129,10 @@ def launch_ctx(settings: dict, seed: int):
         ctx = launch_persistent_context(**kwargs)
     except Exception as exc:
         if kwargs.get("geoip"):
-            log("geoip 启动失败，改为不跟出口时区: %s", exc)
+            log("geoip 启动失败，改为固定时区 %s: %s", DEFAULT_TIMEZONE, exc)
             kwargs["geoip"] = False
+            kwargs["timezone"] = DEFAULT_TIMEZONE
+            kwargs["locale"] = DEFAULT_LOCALE
             ctx = launch_persistent_context(**kwargs)
         else:
             raise

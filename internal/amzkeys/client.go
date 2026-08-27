@@ -63,13 +63,33 @@ type CardType struct {
 }
 
 type Card struct {
-	CardType       int     `json:"card_type"`
-	RequestID      string  `json:"request_id"`
-	CardNo         string  `json:"card_no"`
-	CVV            string  `json:"cvv"`
-	ValidDate      string  `json:"valid_date"`
-	OpenCardAmount float64 `json:"open_card_amount,string"`
-	CreateTime     string  `json:"create_time"`
+	CardType       int         `json:"card_type"`
+	RequestID      looseString `json:"request_id"`
+	CardNo         string      `json:"card_no"`
+	CVV            string      `json:"cvv"`
+	ValidDate      string      `json:"valid_date"`
+	OpenCardAmount float64     `json:"open_card_amount,string"`
+	CreateTime     string      `json:"create_time"`
+}
+
+type looseString string
+
+func (s *looseString) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		*s = ""
+		return nil
+	}
+	if b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*s = looseString(v)
+		return nil
+	}
+	*s = looseString(string(b))
+	return nil
 }
 
 type AuthCode struct {
@@ -89,10 +109,7 @@ type Status struct {
 }
 
 func New(host, appID, appKey, privateKey string, cardType int, amount float64) *Client {
-	host = strings.TrimRight(strings.TrimSpace(host), "/")
-	if host == "" {
-		host = DefaultHost
-	}
+	host, appID, appKey, privateKey = Resolve(host, appID, appKey, privateKey)
 	if cardType <= 0 {
 		cardType = DefaultCardType
 	}
@@ -101,9 +118,9 @@ func New(host, appID, appKey, privateKey string, cardType int, amount float64) *
 	}
 	return &Client{
 		Host:       host,
-		AppID:      strings.TrimSpace(appID),
-		AppKey:     strings.TrimSpace(appKey),
-		PrivateKey: strings.TrimSpace(privateKey),
+		AppID:      appID,
+		AppKey:     appKey,
+		PrivateKey: privateKey,
 		CardType:   cardType,
 		Amount:     amount,
 		http:       &http.Client{Timeout: 30 * time.Second},
@@ -112,14 +129,20 @@ func New(host, appID, appKey, privateKey string, cardType int, amount float64) *
 }
 
 func Ready(host, appID, appKey, privateKey string, cardType int, amount float64) error {
-	if strings.TrimSpace(appID) == "" {
+	savedHost := strings.TrimSpace(host)
+	savedAppID := strings.TrimSpace(appID)
+	host, appID, appKey, privateKey = Resolve(host, appID, appKey, privateKey)
+	if IsTestHost(host) && savedHost == "" && savedAppID == "" {
+		return fmt.Errorf("请先在设置里保存 amzkeys卡台")
+	}
+	if appID == "" {
 		return fmt.Errorf("缺少 AppID")
 	}
-	if strings.TrimSpace(appKey) == "" {
+	if appKey == "" {
 		return fmt.Errorf("缺少 AppKey")
 	}
-	if strings.TrimSpace(privateKey) == "" {
-		return fmt.Errorf("缺少 RSA2 私钥")
+	if privateKey == "" {
+		return fmt.Errorf("生产环境请填写商务给的 RSA2 私钥，测试环境不用自己生成")
 	}
 	if _, err := ParsePrivateKey(privateKey); err != nil {
 		return fmt.Errorf("RSA2 私钥无效: %w", err)
@@ -209,6 +232,9 @@ func (c *Client) WaitTask(taskID, ram string) (Card, error) {
 	for time.Now().Before(deadline) {
 		cards, status, err := c.taskCards(1, taskID, ram)
 		if err != nil {
+			if status == "1" || status == "3" || status == "4" || status == "5" {
+				return Card{}, err
+			}
 			last = err.Error()
 			time.Sleep(taskPollInterval)
 			continue
@@ -258,10 +284,18 @@ func (c *Client) AuthCodes() ([]AuthCode, error) {
 	return items, nil
 }
 
+func jsonTaskID(taskID string) any {
+	taskID = strings.TrimSpace(taskID)
+	if n, err := strconv.ParseInt(taskID, 10, 64); err == nil {
+		return n
+	}
+	return taskID
+}
+
 func (c *Client) taskCards(taskType int, taskID, ram string) ([]Card, string, error) {
 	raw, err := c.call(taskDetailPath, map[string]any{
 		"task_type": taskType,
-		"task_id":   taskID,
+		"task_id":   jsonTaskID(taskID),
 		"ram":       ram,
 	})
 	if err != nil {

@@ -77,11 +77,12 @@ func amzKeysCardLast4(s *Server) string {
 	return ""
 }
 
-func amzKeysCardView(s *Server) (last4 string, pending bool, payCount, maxPays int, nextLast4 string, nextPending bool) {
+func amzKeysCardView(s *Server) (last4 string, pending bool, payCount, maxPays int, nextLast4 string, nextPending bool, lastErr string) {
 	c, err := s.store.GetAmzKeysCard()
 	if err != nil {
 		return
 	}
+	lastErr = strings.TrimSpace(c.LastError)
 	if c.Ready() {
 		last4 = amzkeys.Last4(c.CardNo)
 		payCount = c.PayCount
@@ -132,6 +133,13 @@ func amzHasStock(c model.AmzKeysCard) bool {
 		return true
 	}
 	return false
+}
+
+func amzRecentCreateError(c model.AmzKeysCard) bool {
+	if strings.TrimSpace(c.LastError) == "" || c.LastErrorAt <= 0 {
+		return false
+	}
+	return time.Since(time.Unix(c.LastErrorAt, 0)) < 5*time.Minute
 }
 
 func amzShouldWarmNext(c model.AmzKeysCard) bool {
@@ -340,9 +348,15 @@ func (s *Server) finishAmzKeysCreate(taskID, ram string, asNext bool) (model.Amz
 		if cur, gerr := s.store.GetAmzKeysCard(); gerr == nil {
 			if asNext && cur.Next != nil && cur.Next.TaskID == taskID && !cur.Next.Ready() {
 				cur.Next = nil
+				cur.LastError = err.Error()
+				cur.LastErrorAt = time.Now().Unix()
 				_ = s.store.SetAmzKeysCard(cur)
 			} else if !asNext && cur.TaskID == taskID && !cur.Ready() {
-				_ = s.store.SetAmzKeysCard(model.AmzKeysCard{Next: cur.Next})
+				_ = s.store.SetAmzKeysCard(model.AmzKeysCard{
+					Next:        cur.Next,
+					LastError:   err.Error(),
+					LastErrorAt: time.Now().Unix(),
+				})
 			}
 		}
 		s.amzCardMu.Unlock()
@@ -356,7 +370,7 @@ func (s *Server) finishAmzKeysCreate(taskID, ram string, asNext bool) (model.Amz
 		CardNo:        strings.TrimSpace(created.CardNo),
 		CVV:           strings.TrimSpace(created.CVV),
 		ValidDate:     strings.TrimSpace(created.ValidDate),
-		RequestID:     strings.TrimSpace(created.RequestID),
+		RequestID:     strings.TrimSpace(string(created.RequestID)),
 		CardType:      created.CardType,
 		TaskID:        taskID,
 		RAM:           ram,
@@ -389,23 +403,43 @@ func (s *Server) finishAmzKeysCreate(taskID, ram string, asNext bool) (model.Amz
 	card.PayCount = cur.PayCount
 	card.InUse = cur.InUse
 	card.Next = cur.Next
+	card.LastError = ""
+	card.LastErrorAt = 0
 	if err := s.store.SetAmzKeysCard(card); err != nil {
 		return model.AmzKeysCard{}, err
 	}
 	return publicCard(card), nil
 }
 
-func (s *Server) WarmAmzKeysCard() {
-	go s.warmAmzKeysCard()
+func (s *Server) rememberCardError(err error) {
+	if err == nil {
+		return
+	}
+	s.amzCardMu.Lock()
+	defer s.amzCardMu.Unlock()
+	cur, gerr := s.store.GetAmzKeysCard()
+	if gerr != nil || cur.Ready() || cur.Pending() {
+		return
+	}
+	if cur.Next != nil && (cur.Next.Ready() || cur.Next.Pending()) {
+		return
+	}
+	cur.LastError = err.Error()
+	cur.LastErrorAt = time.Now().Unix()
+	_ = s.store.SetAmzKeysCard(cur)
 }
 
-func (s *Server) warmAmzKeysCard() {
+func (s *Server) WarmAmzKeysCard() {
+	go s.warmAmzKeysCard(false)
+}
+
+func (s *Server) warmAmzKeysCard(force bool) {
 	if _, err := s.amzKeysClient(); err != nil {
 		return
 	}
 	s.amzCardMu.Lock()
 	cur, err := s.store.GetAmzKeysCard()
-	if err == nil && amzHasStock(cur) && !amzShouldWarmNext(cur) {
+	if err == nil && ((amzHasStock(cur) && !amzShouldWarmNext(cur)) || (!force && amzRecentCreateError(cur))) {
 		s.amzCardMu.Unlock()
 		return
 	}
@@ -413,6 +447,7 @@ func (s *Server) warmAmzKeysCard() {
 	s.amzCardMu.Unlock()
 	if err != nil {
 		log.Printf("提前开卡失败: %v", err)
+		s.rememberCardError(err)
 		return
 	}
 	if taskID == "" {
@@ -469,7 +504,7 @@ func (s *Server) amzKeysWarmCard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "自动支付需要先在设置里配好 amzkeys卡台："+err.Error())
 		return
 	}
-	s.WarmAmzKeysCard()
+	go s.warmAmzKeysCard(true)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"ok":      true,
 		"pending": true,

@@ -68,6 +68,7 @@ export function SettingsPage() {
   const [amzMaxPays, setAmzMaxPays] = useState(3)
   const [amzNextLast4, setAmzNextLast4] = useState("")
   const [amzNextPending, setAmzNextPending] = useState(false)
+  const [amzCardError, setAmzCardError] = useState("")
   const [amzStatus, setAmzStatus] = useState<AmzKeysStatus | null>(null)
   const [checkingAmz, setCheckingAmz] = useState(false)
   const [clearingCard, setClearingCard] = useState(false)
@@ -79,6 +80,7 @@ export function SettingsPage() {
     setAmzMaxPays(cfg.amzkeys_card_max_pays || 3)
     setAmzNextLast4(cfg.amzkeys_card_next_last4 || "")
     setAmzNextPending(!!cfg.amzkeys_card_next_pending)
+    setAmzCardError(cfg.amzkeys_card_error || "")
   }
 
   useEffect(() => {
@@ -117,6 +119,20 @@ export function SettingsPage() {
       })
       .catch((e) => toast.error(e.message))
   }, [])
+
+  useEffect(() => {
+    if (!amzPending && !amzNextPending) return
+    const timer = window.setInterval(() => {
+      api
+        .config()
+        .then((cfg) => {
+          setAmzConfigured(!!cfg.amzkeys_configured)
+          applyAmzCard(cfg)
+        })
+        .catch(() => {})
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [amzPending, amzNextPending])
 
   async function loadCatalog(nextService = service, key = apiKey) {
     setLoadingCatalog(true)
@@ -302,6 +318,15 @@ export function SettingsPage() {
       setAmzAmount(cfg.amzkeys_card_amount || amount)
       setAmzConfigured(!!cfg.amzkeys_configured)
       applyAmzCard(cfg)
+      window.setTimeout(() => {
+        api
+          .config()
+          .then((next) => {
+            setAmzConfigured(!!next.amzkeys_configured)
+            applyAmzCard(next)
+          })
+          .catch(() => {})
+      }, 1000)
       toast.success("amzkeys卡台已保存")
       return true
     } catch (err) {
@@ -321,6 +346,7 @@ export function SettingsPage() {
       setAmzPayCount(0)
       setAmzNextLast4("")
       setAmzNextPending(false)
+      setAmzCardError("")
       toast.success("已弃用当前卡，后台会再提前备一张")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "弃用失败")
@@ -333,8 +359,9 @@ export function SettingsPage() {
     setClearingCard(true)
     try {
       await api.warmAmzKeysCard()
-      setAmzPending(true)
-      toast.success("已提交开卡，后台只备这一张，付到还剩 1 次再开下一张")
+      const cfg = await api.config()
+      applyAmzCard(cfg)
+      toast.success("已提交开卡。测试环境大约 2–5 分钟，页面会自动刷新状态")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "开卡失败")
     } finally {
@@ -694,7 +721,7 @@ export function SettingsPage() {
             <CardHeader>
               <CardTitle>amzkeys卡台</CardTitle>
               <CardDescription>
-                一张卡大约能付 3 个账户（每个 5.3 美金）。平时只提前备一张，用到还剩 1 次时再开下一张，被拒了也会换新卡。测试 Host 是 https://testapi.amzkeys.com，生产是 https://ymapi.amzkeys.com:15970。
+                一张卡大约能付 3 个账户（每个 5.3 美金）。测试环境用官方文档凭据，不用填自己的 AppID/密钥。生产才需要商务给的那套，并把公钥配到卡台。
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -708,14 +735,16 @@ export function SettingsPage() {
                     onChange={(e) => setAmzHost(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    测试用 https://testapi.amzkeys.com。切生产改成 https://ymapi.amzkeys.com:15970，并在卡台网页配好 RSA 公钥和本机出口 IP 白名单。
+                    测试用 https://testapi.amzkeys.com，不用填 AppID/AppKey/私钥。切生产改成 https://ymapi.amzkeys.com:15970，再填商务给的凭据，并在卡台网页配好 RSA 公钥和本机出口 IP 白名单。
                   </p>
                 </div>
+                {!/testapi\.amzkeys\.com/i.test(amzHost.trim() || "https://testapi.amzkeys.com") ? (
+                  <>
                 <div className="grid gap-2">
                   <Label htmlFor="amz-app-id">AppID</Label>
                   <Input
                     id="amz-app-id"
-                    placeholder="测试环境文档里的 AppID"
+                    placeholder="商务提供的生产 AppID"
                     value={amzAppID}
                     onChange={(e) => setAmzAppID(e.target.value)}
                   />
@@ -726,7 +755,7 @@ export function SettingsPage() {
                     id="amz-app-key"
                     type="password"
                     autoComplete="off"
-                    placeholder={amzConfigured ? "已保存，留空不改" : "平台提供的 AppKey"}
+                    placeholder={amzConfigured ? "已保存，留空不改" : "商务提供的生产 AppKey"}
                     value={amzAppKey}
                     onChange={(e) => setAmzAppKey(e.target.value)}
                   />
@@ -737,11 +766,17 @@ export function SettingsPage() {
                     id="amz-private-key"
                     rows={6}
                     autoComplete="off"
-                    placeholder={amzConfigured ? "已保存，留空不改" : "PEM 或纯 Base64，文档里的测试私钥也可以"}
+                    placeholder={amzConfigured ? "已保存，留空不改" : "生产私钥，公钥要先配到卡台网页"}
                     value={amzPrivateKey}
                     onChange={(e) => setAmzPrivateKey(e.target.value)}
                   />
                 </div>
+                  </>
+                ) : (
+                  <p className="rounded-lg border p-3 text-xs text-muted-foreground">
+                    当前是测试环境，已自动使用官方文档里的测试 AppID、AppKey 和私钥。你自己生成或商务给的那套只在生产有效。
+                  </p>
+                )}
                 <div className="grid gap-2">
                   <Label htmlFor="amz-card-type">卡段</Label>
                   <Input
@@ -779,14 +814,16 @@ export function SettingsPage() {
                             amzNextLast4
                               ? `，下一张 **** ${amzNextLast4} 已备好`
                               : amzNextPending
-                                ? "，下一张正在开"
+                                ? "，下一张正在开（大约 2–5 分钟）"
                                 : (amzMaxPays || 3) - amzPayCount <= 1
                                   ? "，快用完了会自动再开一张"
                                   : ""
                           }`
                         : amzPending
-                          ? "正在开卡，登录抽链接时会并行等这张，不会再开第二张"
-                          : "还没有卡。保存卡台后会自动提前备一张"}
+                          ? "开卡任务已提交，测试环境大约要 2–5 分钟，不会再开第二张。登录抽链接时会一起等。"
+                          : amzCardError
+                            ? `上次开卡失败：${amzCardError}`
+                            : "还没有卡。保存卡台后会自动提前备一张"}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">

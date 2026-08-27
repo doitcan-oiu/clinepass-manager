@@ -6,16 +6,16 @@ dev: ensure-env
 	@echo "==> 安装依赖"
 	go mod tidy
 	cd web && npm install
-	@echo "==> 启动后端 http://127.0.0.1:8080 （开发模式固定 8080，go run 编译期间请等待）"
+	@echo "==> 启动后端 http://127.0.0.1:8081 （开发模式固定 8081，go run 编译期间请等待）"
 	@echo "==> Ctrl+C 会同时退出两边"
 	@bash -c 'set -u; \
 		cleanup() { kill 0 2>/dev/null || true; }; \
 		trap cleanup EXIT INT TERM; \
-		ADDR=:8080 go run ./cmd/server & \
+		ADDR=:8081 go run ./cmd/server & \
 		echo "==> 等待后端 /api/health ..."; \
 		ready=0; \
 		for i in $$(seq 1 120); do \
-			if curl -sf http://127.0.0.1:8080/api/health >/dev/null 2>&1; then \
+			if curl -sf http://127.0.0.1:8081/api/health >/dev/null 2>&1; then \
 				ready=1; \
 				break; \
 			fi; \
@@ -30,7 +30,7 @@ dev: ensure-env
 		wait'
 
 api:
-	ADDR=:8080 go run ./cmd/server
+	ADDR=:8081 go run ./cmd/server
 
 web:
 	cd web && npm run dev

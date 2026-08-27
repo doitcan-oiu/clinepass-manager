@@ -58,7 +58,7 @@ export function AutoPayDialog({
             <p className="text-xs text-muted-foreground">
               {configured
                 ? "勾选后立刻只开一张卡（已有或正在开则不再开），登录抽链接同时等待。被拒了才换新卡。"
-                : "先到设置 → amzkeys卡台 填好 Host、AppID、AppKey、RSA2 私钥和卡段。"}
+                : "先到设置 → amzkeys卡台 保存。测试环境不用填密钥；生产再填商务给的 AppID、AppKey 和 RSA2 私钥。"}
             </p>
           </div>
         </div>

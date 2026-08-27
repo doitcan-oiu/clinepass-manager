@@ -93,7 +93,13 @@ func TestExpiryAndLast4(t *testing.T) {
 }
 
 func TestReady(t *testing.T) {
-	if err := Ready(DefaultHost, "", "k", "p", DefaultCardType, DefaultAmount); err == nil {
+	if err := Ready("", "", "", "", DefaultCardType, DefaultAmount); err == nil {
+		t.Fatal("not saved")
+	}
+	if err := Ready(DefaultHost, "", "", "", DefaultCardType, DefaultAmount); err != nil {
+		t.Fatal(err)
+	}
+	if err := Ready(ProductionHost, "", "k", "p", DefaultCardType, DefaultAmount); err == nil {
 		t.Fatal("empty app id")
 	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -105,11 +111,38 @@ func TestReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
-	if err := Ready(DefaultHost, "id", "key", pemKey, DefaultCardType, DefaultAmount); err != nil {
+	if err := Ready(ProductionHost, "id", "key", pemKey, DefaultCardType, DefaultAmount); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(Ready(DefaultHost, "id", "key", "not-a-key", DefaultCardType, DefaultAmount).Error(), "私钥") {
+	if !strings.Contains(Ready(ProductionHost, "id", "key", "not-a-key", DefaultCardType, DefaultAmount).Error(), "私钥") {
 		t.Fatal("bad key")
+	}
+}
+
+func TestResolveUsesOfficialSandbox(t *testing.T) {
+	host, appID, appKey, priv := Resolve(DefaultHost, "prod-id", "prod-key", "prod-priv")
+	if host != DefaultHost || appID != TestAppID || appKey != TestAppKey || priv != TestPrivateKey {
+		t.Fatalf("%s %s %s", host, appID, appKey)
+	}
+	if _, err := ParsePrivateKey(TestPrivateKey); err != nil {
+		t.Fatal(err)
+	}
+	if IsTestHost(ProductionHost) {
+		t.Fatal("production")
+	}
+}
+
+func TestParseCardsNumericRequestID(t *testing.T) {
+	plain := []byte(`[{"card_type":467845,"request_id":46754741,"card_no":"4678454663786647","cvv":"525","valid_date":"2026-08","open_card_amount":"20.00","create_time":"2026-08-27 15:27:12","currency":"USD"}]`)
+	cards, err := parseCards(plain)
+	if err != nil || len(cards) != 1 {
+		t.Fatalf("%+v %v", cards, err)
+	}
+	if cards[0].CardNo != "4678454663786647" || cards[0].CVV != "525" || string(cards[0].RequestID) != "46754741" {
+		t.Fatalf("%+v", cards[0])
+	}
+	if cards[0].OpenCardAmount != 20 {
+		t.Fatalf("amount=%v", cards[0].OpenCardAmount)
 	}
 }
 

@@ -351,7 +351,7 @@ func (s *Server) publicConfig() map[string]any {
 	} else {
 		st = model.Settings{AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, UsageRefreshConcurrency: 10}
 	}
-	last4, pending, payCount, maxPays, nextLast4, nextPending := amzKeysCardView(s)
+	last4, pending, payCount, maxPays, nextLast4, nextPending, lastErr := amzKeysCardView(s)
 	return map[string]any{
 		"invite_url":                cfg.InviteURL,
 		"headless":                  cfg.Headless,
@@ -386,6 +386,7 @@ func (s *Server) publicConfig() map[string]any {
 		"amzkeys_card_max_pays":     maxPays,
 		"amzkeys_card_next_last4":   nextLast4,
 		"amzkeys_card_next_pending": nextPending,
+		"amzkeys_card_error":        lastErr,
 	}
 }
 

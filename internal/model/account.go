@@ -159,6 +159,8 @@ type AmzKeysCard struct {
 	Amount        float64      `json:"amount,omitempty"`
 	PayCount      int          `json:"pay_count,omitempty"`
 	InUse         int          `json:"in_use,omitempty"`
+	LastError     string       `json:"last_error,omitempty"`
+	LastErrorAt   int64        `json:"last_error_at,omitempty"`
 	Next          *AmzKeysCard `json:"next,omitempty"`
 }
 

@@ -122,7 +122,7 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 	if err != nil {
 		return Result{}, err
 	}
-	log("登录引擎=python cloak humanize/geoip")
+	log("登录引擎=python cloak humanize")
 	cmd := exec.Command(python, script)
 	browser.IsolateProcess(cmd)
 	cmd.Dir = filepath.Dir(filepath.Dir(script))

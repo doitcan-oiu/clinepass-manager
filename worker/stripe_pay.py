@@ -12,12 +12,33 @@ from urls import is_stripe
 BILLING_NAME = "魏春苗"
 BILLING_COUNTRY = "HK"
 BILLING_ADDRESS = "香港荃湾区荃湾禾笛街799号"
-SUCCESS_TEXT = ("支付成功", "付款成功", "已完成支付", "订阅成功", "Thank you", "Payment successful", "You're all set")
+SUCCESS_TEXT = (
+    "支付成功",
+    "付款成功",
+    "已完成支付",
+    "订阅成功",
+    "Thank you",
+    "Payment successful",
+    "You're all set",
+    "Payment complete",
+)
+SUCCESS_URL_MARKS = ("/success", "payment_status=paid", "redirect_status=succeeded")
+UNPAID_PATHS = ("/onboarding/", "/checkout", "/individual-plan")
 SUBMIT = [
     'button[data-testid="hosted-payment-submit-button"]',
-    "button.SubmitButton",
-    'form button[type="submit"]',
+    "button.SubmitButton:not(.CurrencyOptionButton)",
 ]
+USD_TOGGLE = [
+    '[data-testid="equal-presentment-currency-toggle-toggles"] button.CurrencyOptionButton:has-text("USD")',
+    '[aria-label="选择货币"] button.CurrencyOptionButton:has-text("USD")',
+    '[aria-label="Select currency"] button.CurrencyOptionButton:has-text("USD")',
+    'button.CurrencyOptionButton:has-text("USD")',
+]
+CURRENCY_TOGGLE = (
+    '[data-testid="equal-presentment-currency-toggle-toggles"], '
+    '[aria-label="选择货币"], [aria-label="Select currency"], '
+    "button.CurrencyOptionButton"
+)
 OTP = [
     'input[autocomplete="one-time-code"]',
     'input[name="code"]',
@@ -55,32 +76,127 @@ def last4(card_no: str) -> str:
     return d[-4:] if len(d) >= 4 else d
 
 
-def payment_succeeded(page) -> bool:
-    url = ""
+def page_url(page) -> str:
     try:
-        url = page.url or ""
+        return page.url or ""
     except Exception:
-        url = ""
-    if "checkout.stripe.com" not in url and "js.stripe.com" not in url:
-        if "app.cline.bot" in url or "cline.bot" in url:
+        return ""
+
+
+def page_html(page) -> str:
+    try:
+        return page.content() or ""
+    except Exception:
+        return ""
+
+
+def visible_text(page) -> str:
+    try:
+        return (page.locator("body").inner_text() or "").strip()
+    except Exception:
+        return ""
+
+
+def still_on_unpaid_checkout(url: str) -> bool:
+    return any(part in (url or "") for part in UNPAID_PATHS)
+
+
+def cline_quota_present(html: str) -> bool:
+    low = html or ""
+    return "rollingUsage" in low or "weeklyUsage" in low or "monthlyUsage" in low
+
+
+def card_form_visible(page) -> bool:
+    return visible(page, "#cardNumber")
+
+
+def card_input_invalid(page) -> bool:
+    loc = page.locator("#cardNumber").first
+    try:
+        if not loc.is_visible():
+            return False
+        if (loc.get_attribute("aria-invalid") or "").lower() == "true":
             return True
-    if "/success" in url or "payment_status=paid" in url:
-        return True
-    if visible(page, ".SubmitButton-CheckmarkIcon, .SubmitButton-Icon--success"):
-        return True
-    try:
-        html = page.content() or ""
+        cls = loc.get_attribute("class") or ""
+        if "CheckoutInput--invalid" in cls or "is-invalid" in cls:
+            return True
     except Exception:
-        html = ""
-    return any(n in html for n in SUCCESS_TEXT)
+        pass
+    return visible(page, "#cardNumber.CheckoutInput--invalid, #cardNumber[aria-invalid='true']")
+
+
+SUCCESS_BUTTON = (
+    ".SubmitButton-CheckmarkIcon",
+    ".SubmitButton-Icon--success",
+    ".SubmitButton-Icon--complete",
+    "button.SubmitButton.SubmitButton--complete",
+)
+
+
+def stripe_success_ui(page) -> bool:
+    if checkout_error(page):
+        return False
+    for sel in SUCCESS_BUTTON:
+        if visible(page, sel):
+            return True
+    loc = page.locator("button.SubmitButton").first
+    try:
+        if not loc.is_visible():
+            return False
+        cls = loc.get_attribute("class") or ""
+    except Exception:
+        return False
+    return "SubmitButton--complete" in cls or "SubmitButton--success" in cls
+
+
+def checkout_processing(page) -> bool:
+    if stripe_success_ui(page):
+        return False
+    return visible(page, ".SubmitButton-SpinnerIcon, .SubmitButton--processing")
+
+
+def url_has_success(url: str) -> bool:
+    u = (url or "").lower()
+    if "payment_status=paid" in u or "redirect_status=succeeded" in u:
+        return True
+    path = u.split("?", 1)[0]
+    return "/success" in path or path.rstrip("/").endswith("/success")
+
+
+def payment_succeeded(page) -> bool:
+    if checkout_error(page):
+        return False
+    if stripe_success_ui(page):
+        return True
+    url = page_url(page)
+    if card_form_visible(page):
+        return False
+    if url_has_success(url):
+        return True
+    text = visible_text(page)
+    if any(n in text for n in SUCCESS_TEXT):
+        return True
+    if "checkout.stripe.com" in url or "js.stripe.com" in url:
+        return False
+    if "cline.bot" not in url:
+        return False
+    if still_on_unpaid_checkout(url):
+        return False
+    return cline_quota_present(page_html(page))
 
 
 def checkout_error(page) -> str:
     sels = [
+        ".FieldError span[role='alert']",
+        "span.FieldError",
+        ".FieldError",
+        ".FieldError-container",
+        "span[role='alert']",
+        '[data-qa="FormFieldGroup-cardForm"] .FormFieldGroup-errorPresence',
+        "#cardNumber-fieldset .FormFieldGroup-errorPresence",
         ".FormFieldGroup-errorPresence",
+        ".FormFieldError",
         "[role='alert']",
-        ".Error",
-        ".CheckoutInput--invalid",
     ]
     for sel in sels:
         loc = page.locator(sel)
@@ -95,8 +211,14 @@ def checkout_error(page) -> str:
                 text = (loc.nth(i).inner_text() or "").strip()
             except Exception:
                 continue
-            if text:
-                return text
+            if not text or len(text) < 3:
+                continue
+            low = text.lower()
+            if "汇率" in text or "conversion" in low or "1 usd" in low:
+                continue
+            return text
+    if card_input_invalid(page):
+        return "卡号无效或卡片被拒绝"
     return ""
 
 
@@ -150,6 +272,43 @@ def fill_if_present(page, selector: str, value: str) -> None:
     sleep_ms(200)
 
 
+def button_is_active(page, selector: str) -> bool:
+    loc = page.locator(selector).first
+    try:
+        if not loc.is_visible():
+            return False
+        cls = loc.get_attribute("class") or ""
+    except Exception:
+        return False
+    return "is-active" in cls
+
+
+def select_usd_currency(page, wait_s: float = 5) -> None:
+    deadline = time.time() + max(wait_s, 0)
+    while True:
+        if visible(page, CURRENCY_TOGGLE):
+            break
+        if time.time() >= deadline:
+            log("没有货币选择，按页面默认货币继续")
+            return
+        sleep_ms(250)
+    for sel in USD_TOGGLE:
+        loc = page.locator(sel).first
+        try:
+            if not loc.is_visible():
+                continue
+            if button_is_active(page, sel):
+                log("结算货币已是 USD")
+                return
+            loc.click(timeout=5000)
+            log("已选择结算货币 USD")
+            sleep_ms(600)
+            return
+        except Exception as exc:
+            log("点击 USD 失败: %s", exc)
+    log("看到货币选择但没点到 USD，继续提交")
+
+
 def click_terms(page) -> None:
     box = page.locator("#termsOfServiceConsentCheckbox").first
     try:
@@ -178,12 +337,22 @@ DECLINE_HINTS = (
     "交易失败",
     "expired card",
     "invalid account",
+    "无效",
+    "invalid card",
+    "card number is invalid",
+    "卡片无效",
+    "not valid",
 )
-FORM_HINTS = ("required", "incomplete", "格式", "expiry date", "invalid expiry")
+FORM_HINTS = ("required", "incomplete", "不完整", "格式", "expiry date", "invalid expiry")
 
 
 def is_card_rejected(err: str) -> bool:
-    text = (err or "").strip().lower()
+    text = (err or "").strip()
+    for prefix in ("Stripe 拒付: ", "Stripe 结账报错: ", "Stripe 报错: "):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    text = text.lower()
     if not text:
         return False
     if any(h in text for h in FORM_HINTS) and "declin" not in text and "拒" not in text:
@@ -281,6 +450,7 @@ def fill_card(page, card: dict) -> None:
     fill_if_present(page, "#billingAddressLine1", BILLING_ADDRESS)
     fill_if_present(page, "#billingAddressLine2", BILLING_ADDRESS)
     click_terms(page)
+    select_usd_currency(page)
 
 
 def handle_3ds(page, api_base: str, card_last4: str) -> None:
@@ -308,21 +478,47 @@ def handle_3ds(page, api_base: str, card_last4: str) -> None:
 
 
 def wait_pay_result(page, api_base: str, card: dict) -> tuple[bool, str]:
-    deadline = time.time() + 90
+    started = time.time()
+    deadline = started + 90
+    last_url = ""
     while time.time() < deadline:
+        url = page_url(page)
+        if url and url != last_url:
+            log("等待支付结果，当前 URL=%s", url)
+            last_url = url
+        if checkout_processing(page):
+            sleep_ms(400)
+            continue
+        err = checkout_error(page)
+        if err:
+            log("Stripe 结账报错: %s", err)
+            return False, "Stripe 拒付: " + err
+        if visible(page, ",".join(OTP)) or "three-ds" in url or "3ds" in url.lower():
+            handle_3ds(page, api_base, card["last4"])
+            err = checkout_error(page)
+            if err:
+                log("Stripe 结账报错: %s", err)
+                return False, "Stripe 拒付: " + err
+            if payment_succeeded(page):
+                log("Stripe 支付成功")
+                return True, ""
+            sleep_ms(800)
+            continue
         if payment_succeeded(page):
             log("Stripe 支付成功")
             return True, ""
-        err = checkout_error(page)
-        if err:
-            return False, "Stripe 拒付: " + err
-        if visible(page, ",".join(OTP)) or "three-ds" in (page.url or "") or "3ds" in (page.url or "").lower():
-            handle_3ds(page, api_base, card["last4"])
-            if payment_succeeded(page):
-                return True, ""
         sleep_ms(800)
+    if checkout_error(page):
+        err = checkout_error(page)
+        return False, "Stripe 拒付: " + err
     if payment_succeeded(page):
+        log("Stripe 支付成功")
         return True, ""
+    url = page_url(page)
+    if still_on_unpaid_checkout(url) or card_form_visible(page):
+        return False, "订购已点，但支付未完成，仍在结账页"
+    if "cline.bot" in url and not cline_quota_present(page_html(page)):
+        return False, "已离开 Stripe，但 Cline 还没有订阅配额，不能当作已支付"
     return False, "等待 Stripe 支付结果超时"
 
 

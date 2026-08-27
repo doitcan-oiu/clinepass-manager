@@ -588,7 +588,7 @@ func (s *Store) GetAmzKeysCard() (model.AmzKeysCard, error) {
 func (s *Store) SetAmzKeysCard(c model.AmzKeysCard) error {
 	normalizeAmzKeysCard(&c)
 	raw := ""
-	if c.Ready() || c.Pending() || (c.Next != nil && (c.Next.Ready() || c.Next.Pending())) {
+	if c.Ready() || c.Pending() || strings.TrimSpace(c.LastError) != "" || (c.Next != nil && (c.Next.Ready() || c.Next.Pending())) {
 		b, err := json.Marshal(c)
 		if err != nil {
 			return err
