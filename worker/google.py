@@ -4,7 +4,6 @@ from authkit import GOOGLE_AUTH, handle_authkit_wait
 from errors import LoggedIn
 from pageutil import (
     click_one_of,
-    human_idle_authkit,
     human_scroll,
     logged_in,
     sleep_ms,
@@ -13,7 +12,6 @@ from pageutil import (
     wait_any_url,
     wait_leave,
     wait_overlay_gone,
-    wait_path_contains,
     wait_visible,
 )
 from protocol import log
@@ -89,7 +87,7 @@ def recover_unknown_error(page) -> None:
         click_one_of(page, ["#next button", 'div[id$="Next"] button', 'button[type="submit"]'], 2500, "错误页下一步")
     except Exception:
         pass
-    sleep_ms(800)
+    sleep_ms(200)
     if classify_google(page.url) != "unknownerror":
         return
     nxt = google_continue_url(page.url)
@@ -97,7 +95,7 @@ def recover_unknown_error(page) -> None:
         raise RuntimeError("谷歌 unknownerror，没有 continue 可跳转")
     log("打开 continue 继续授权")
     page.goto(nxt, wait_until="domcontentloaded", timeout=30000)
-    sleep_ms(800)
+    sleep_ms(200)
     if classify_google(page.url) == "unknownerror":
         raise RuntimeError(f"谷歌 unknownerror 恢复失败，当前 URL={page.url}")
 
@@ -106,8 +104,12 @@ def google_login(page, acc: dict) -> None:
     deadline = time.time() + 180
     chooser = f'div[data-identifier="{acc.get("email") or ""}"]'
     email_done = False
+    pass_done = False
     last_unknown = 0.0
     last_click = [0.0]
+    last_consent = 0.0
+    email_at = 0.0
+    pass_at = 0.0
     while time.time() < deadline:
         raw = page.url
         if logged_in(page):
@@ -127,19 +129,17 @@ def google_login(page, acc: dict) -> None:
             recover_unknown_error(page)
             continue
         if step == "consent":
-            log("检测到授权页，点击同意授权")
-            click_one_of(page, CONSENT, 25000, "同意授权")
-            log("等待离开授权页")
-            try:
-                wait_leave(page, "/signin/oauth", 45000, "授权页")
-            except Exception as exc:
-                log("%s", exc)
+            if time.time() - last_consent > 6:
+                log("检测到授权页，点击同意授权")
+                click_one_of(page, CONSENT, 15000, "同意授权")
+                last_consent = time.time()
+            sleep_ms(200)
             continue
         if visible(page, RECOVERY_SEL) and (acc.get("recovery_email") or "").strip():
             log("填写辅助邮箱")
             type_field(page, RECOVERY_SEL, acc["recovery_email"])
             click_one_of(page, ['#idvPreregisteredEmailNext button', 'div[id$="Next"] button'], 15000, "辅助邮箱下一步")
-            sleep_ms(1200)
+            sleep_ms(200)
             continue
         if step == "chooser" or visible(page, chooser):
             if visible(page, chooser):
@@ -154,49 +154,55 @@ def google_login(page, acc: dict) -> None:
                 pass
             continue
         if step == "password" or (email_done and visible(page, PASS_SEL)):
+            if pass_done and time.time() - pass_at < 8:
+                sleep_ms(200)
+                continue
             if not visible(page, PASS_SEL):
                 log("已到密码页，等待密码框出现")
                 try:
-                    wait_visible(page, PASS_SEL, 20000)
+                    wait_visible(page, PASS_SEL, 12000)
                 except LoggedIn:
                     return
                 except Exception:
-                    sleep_ms(500)
+                    sleep_ms(200)
                     continue
             log("填写 Google 密码")
             wait_overlay_gone(page)
             type_field(page, PASS_SEL, acc.get("password") or "")
-            sleep_ms(800)
             click_one_of(page, ["#passwordNext button"], 15000, "密码下一步")
-            log("等待离开密码页")
-            try:
-                wait_leave(page, "/challenge/pwd", 30000)
-            except Exception:
-                pass
+            pass_done = True
+            pass_at = time.time()
             if logged_in(page):
                 return
+            continue
+        if email_done and step == "email" and not visible(page, PASS_SEL):
+            if time.time() - email_at > 8:
+                email_done = False
+            else:
+                sleep_ms(200)
             continue
         if not email_done and (step == "email" or (not step and visible(page, EMAIL_SEL) and not visible(page, PASS_SEL))):
             log("填写 Google 账号")
             wait_overlay_gone(page)
             type_field(page, EMAIL_SEL, acc.get("email") or "")
-            sleep_ms(800)
             click_one_of(page, ["#identifierNext button"], 15000, "账号下一步")
             email_done = True
-            log("等待跳转到密码页")
+            email_at = time.time()
             try:
-                wait_path_contains(page, "/challenge/pwd", 30000)
+                wait_visible(page, PASS_SEL, 12000)
+            except LoggedIn:
+                return
             except Exception:
-                log("尚未进入密码页，当前 %s", page.url)
+                pass
             continue
         if visible(page, 'iframe[src*="recaptcha"], iframe[src*="challenge"], #captcha, div[id*="captcha"]'):
             log("检测到验证码/安全检查，请在打开的浏览器中手动完成后等待")
-            sleep_ms(3000)
+            sleep_ms(1500)
             continue
         if "accounts.google.com" in raw and time.time() - last_unknown > 8:
             log("谷歌页面未识别，当前 URL=%s", raw)
             last_unknown = time.time()
-        sleep_ms(500)
+        sleep_ms(200)
     if logged_in(page):
         return
     raise RuntimeError(f"Google 登录未完成，当前 URL={page.url}")
@@ -206,8 +212,6 @@ def start_google(page, acc: dict, context=None):
     from pageutil import follow_identity_page, page_url
     from urls import google_ready_url
 
-    if url_host(page_url(page)) == AUTH_HOST and not on_radar_flow_safe(page):
-        human_idle_authkit(page)
     if "accounts.google.com" not in page_url(page):
         try:
             click_one_of(page, GOOGLE_AUTH, 20000, "选择 Google 登录")
@@ -216,7 +220,6 @@ def start_google(page, acc: dict, context=None):
                 raise
             log("已在授权相关页面，继续")
         log("谷歌点击后 URL=%s", page_url(page))
-        sleep_ms(800)
     try:
         page = wait_any_url(page, [], 45000, context=context, ready=google_ready_url)
     except Exception:
@@ -225,9 +228,3 @@ def start_google(page, acc: dict, context=None):
     if "accounts.google.com" in page_url(page) or visible(page, 'input#identifierId, input[name="identifier"], input[name="Passwd"]'):
         google_login(page, acc)
     return page
-
-
-def on_radar_flow_safe(page) -> bool:
-    from pageutil import on_radar_flow
-
-    return on_radar_flow(page)

@@ -58,7 +58,7 @@ def fill_microsoft(page, selector: str, value: str, label: str) -> None:
     if got != value.strip():
         log("%s未落到输入框，再按真人节奏填一次", label)
         type_field(page, selector, value)
-    sleep_ms(400)
+    sleep_ms(80)
 
 
 def wait_leave_field(page, selector: str, timeout_ms: float) -> None:
@@ -66,7 +66,7 @@ def wait_leave_field(page, selector: str, timeout_ms: float) -> None:
     while time.time() < deadline:
         if logged_in(page) or not field_ready(page, selector):
             return
-        sleep_ms(300)
+        sleep_ms(150)
     raise RuntimeError("仍停在微软输入页")
 
 
@@ -115,7 +115,7 @@ def microsoft_login(page, acc: dict) -> None:
             except LoggedIn:
                 return
             if not sel:
-                sleep_ms(400)
+                sleep_ms(150)
                 continue
             log("填写 Microsoft 账号")
             fill_microsoft(page, sel, acc.get("email") or "", "账号")
@@ -141,7 +141,7 @@ def microsoft_login(page, acc: dict) -> None:
             except LoggedIn:
                 return
             if not sel or (first_ready_field(page, EMAIL_SELS) and not email_done):
-                sleep_ms(400)
+                sleep_ms(150)
                 continue
             log("填写 Microsoft 密码")
             fill_microsoft(page, sel, acc.get("password") or "", "密码")
@@ -169,23 +169,21 @@ def microsoft_login(page, acc: dict) -> None:
                 click_one_of(page, NEXT_SELS, 8000, "微软下一步")
             except Exception:
                 pass
-            sleep_ms(1000)
+            sleep_ms(200)
             continue
         if on_microsoft_url(raw) and time.time() - last_unknown > 8:
             log("微软页面未识别，当前 URL=%s", raw)
             last_unknown = time.time()
-        sleep_ms(500)
+        sleep_ms(200)
     if logged_in(page):
         return
     raise RuntimeError(f"Microsoft 登录未完成，当前 URL={page.url}")
 
 
 def start_microsoft(page, acc: dict, context=None):
-    from pageutil import human_idle_authkit, page_url
+    from pageutil import page_url
     from urls import microsoft_ready_url
 
-    if url_host(page_url(page)) == AUTH_HOST and not on_radar_flow_safe(page):
-        human_idle_authkit(page)
     if not on_microsoft_url(page_url(page)):
         try:
             click_one_of(page, MICROSOFT_AUTH, 20000, "选择 Microsoft 登录")
@@ -194,7 +192,6 @@ def start_microsoft(page, acc: dict, context=None):
                 raise
             log("已在授权相关页面，继续")
         log("微软点击后 URL=%s", page_url(page))
-        sleep_ms(800)
     page = _wait_microsoft_page(page, context, 10000)
     if not microsoft_ready_url(page_url(page)) and url_host(page_url(page)) == AUTH_HOST:
         log("仍停在 AuthKit，再点一次微软登录")
@@ -222,9 +219,3 @@ def _wait_microsoft_page(page, context, timeout_ms: float):
         page = follow_identity_page(context, page, microsoft_ready_url)
         log("等待微软授权页超时，当前 URL=%s", page_url(page))
         return page
-
-
-def on_radar_flow_safe(page) -> bool:
-    from pageutil import on_radar_flow
-
-    return on_radar_flow(page)

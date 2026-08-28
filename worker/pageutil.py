@@ -61,20 +61,15 @@ def click_one_of(page, selectors, timeout_ms: float, step: str) -> None:
             except Exception:
                 continue
             try:
-                try:
-                    page.hover(sel, timeout=4000)
-                    sleep_ms(180 + random.randint(0, 220))
-                except Exception:
-                    pass
                 page.click(sel, timeout=8000)
                 from protocol import log
 
                 log("%s 成功", step)
-                sleep_ms(900 + random.randint(0, 700))
+                sleep_ms(120)
                 return
             except Exception as exc:
                 last_err = exc
-        sleep_ms(250)
+        sleep_ms(150)
     if last_err is not None:
         raise RuntimeError(f"{step} 失败: {last_err}")
     raise RuntimeError(f"{step} 失败: 未找到可点击按钮")
@@ -82,18 +77,8 @@ def click_one_of(page, selectors, timeout_ms: float, step: str) -> None:
 
 def type_field(page, selector: str, value: str) -> None:
     wait_overlay_gone(page)
-    try:
-        page.hover(selector, timeout=4000)
-        sleep_ms(160 + random.randint(0, 200))
-    except Exception:
-        pass
-    page.click(selector, timeout=12000)
-    sleep_ms(120 + random.randint(0, 180))
-    page.keyboard.press("Control+a")
-    sleep_ms(40 + random.randint(0, 50))
-    page.keyboard.press("Backspace")
-    sleep_ms(80 + random.randint(0, 80))
-    page.type(selector, value)
+    loc = page.locator(selector).first
+    loc.fill(value, timeout=12000)
 
 
 def input_value(page, selector: str) -> str:
@@ -202,24 +187,8 @@ def wait_leave(page, part: str, timeout_ms: float, name: str = "") -> None:
     raise RuntimeError(f"等待离开 {part} 超时，当前 URL={page.url}")
 
 
-def human_idle_authkit(page) -> None:
-    from protocol import log
-
-    log("在 AuthKit 停留，让 Radar 采集页面信号")
-    for _ in range(4 + random.randint(0, 2)):
-        page.mouse.move(72 + random.random() * 520, 64 + random.random() * 280)
-        sleep_ms(280 + random.randint(0, 420))
-    try:
-        human_scroll(page)
-    except Exception:
-        pass
-    sleep_ms(1400 + random.randint(0, 900))
-
-
 def human_scroll(page) -> None:
-    for _ in range(4 + random.randint(0, 3)):
-        page.mouse.wheel(0, 280 + random.random() * 220)
-        sleep_ms(90 + random.randint(0, 110))
+    page.mouse.wheel(0, 360 + random.random() * 180)
 
 
 def screenshot(page, path: str) -> None:

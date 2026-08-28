@@ -26,64 +26,37 @@ func humanClick(page playwright.Page, loc playwright.Locator) error {
 		if err := page.Mouse().Move(p.X, p.Y); err != nil {
 			return loc.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(8000)})
 		}
-		sleep(4 + rand.IntN(12))
+		sleep(2 + rand.IntN(6))
 	}
-	sleep(40 + rand.IntN(90))
+	sleep(15 + rand.IntN(25))
 	if err := page.Mouse().Down(); err != nil {
 		return loc.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(8000)})
 	}
-	sleep(30 + rand.IntN(70))
+	sleep(10 + rand.IntN(20))
 	if err := page.Mouse().Up(); err != nil {
 		return loc.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(8000)})
 	}
-	sleep(80 + rand.IntN(140))
+	sleep(20 + rand.IntN(30))
 	return nil
 }
 
 func humanType(page playwright.Page, loc playwright.Locator, value string) error {
+	if err := loc.Fill(value, playwright.LocatorFillOptions{Timeout: playwright.Float(12000)}); err == nil {
+		return nil
+	}
 	if err := humanClick(page, loc); err != nil {
 		return err
 	}
-	sleep(120 + rand.IntN(180))
 	_ = page.Keyboard().Press("Control+a")
-	sleep(30 + rand.IntN(40))
 	_ = page.Keyboard().Press("Backspace")
-	for _, r := range value {
-		if err := page.Keyboard().Type(string(r), playwright.KeyboardTypeOptions{
-			Delay: playwright.Float(float64(36 + rand.IntN(70))),
-		}); err != nil {
-			return loc.Type(value, playwright.LocatorTypeOptions{
-				Timeout: playwright.Float(12000),
-				Delay:   playwright.Float(55),
-			})
-		}
-		sleep(18 + rand.IntN(55))
-		if rand.IntN(11) == 0 {
-			sleep(160 + rand.IntN(220))
-		}
-	}
-	sleep(200 + rand.IntN(180))
-	return nil
-}
-
-func humanIdleAuthkit(page playwright.Page, log Logger) {
-	if log != nil {
-		log("在 AuthKit 停留，让 Radar 采集页面信号")
-	}
-	for i := 0; i < 3; i++ {
-		x := 80 + rand.Float64()*400
-		y := 80 + rand.Float64()*240
-		_ = page.Mouse().Move(x, y)
-		sleep(350 + rand.IntN(400))
-	}
-	sleep(1200 + rand.IntN(800))
+	return loc.Type(value, playwright.LocatorTypeOptions{
+		Timeout: playwright.Float(12000),
+		Delay:   playwright.Float(18),
+	})
 }
 
 func humanScroll(page playwright.Page) {
-	for i := 0; i < 4+rand.IntN(3); i++ {
-		_ = page.Mouse().Wheel(0, 280+rand.Float64()*220)
-		sleep(90 + rand.IntN(110))
-	}
+	_ = page.Mouse().Wheel(0, 360+rand.Float64()*180)
 }
 
 func bezierPoints(from, to point, steps int) []point {

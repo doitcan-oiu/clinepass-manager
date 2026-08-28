@@ -71,7 +71,7 @@ func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Clie
 		}
 	}()
 	log("已取号 +%d %s id=%s", num.PhoneCode, num.LocalNumber, num.ID)
-	sleep(1500)
+	sleep(200)
 
 	if num.PhoneCode <= 0 || num.LocalNumber == "" {
 		return fmt.Errorf("取到的号码无法拆分区号: %s", num.Phone)
@@ -80,11 +80,11 @@ func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Clie
 	if err := fillAuthkitField(page, `input[name="country_code"]`, cc); err != nil {
 		return fmt.Errorf("填写区号失败: %w", err)
 	}
-	sleep(800)
+	sleep(150)
 	if err := fillAuthkitField(page, `input[name="local_number"]`, num.LocalNumber); err != nil {
 		return fmt.Errorf("填写手机号失败: %w", err)
 	}
-	sleep(1200)
+	sleep(200)
 	if err := clickOneOf(page, []string{
 		`button[data-hak-cta][type="submit"]`,
 		`button.ak-PrimaryButton[type="submit"]`,
@@ -98,7 +98,7 @@ func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Clie
 		}
 		return fmt.Errorf("没有进入验证码页: %w", err)
 	}
-	sleep(1200)
+	sleep(200)
 
 	log("等待短信验证码")
 	code, err := sms.WaitCode(num.ID, 2*time.Minute)
@@ -106,11 +106,10 @@ func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Clie
 		return err
 	}
 	log("收到验证码")
-	sleep(800)
+	sleep(120)
 	if err := fillOTP(page, code); err != nil {
 		return err
 	}
-	sleep(1000)
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		if !strings.Contains(page.URL(), "radar-challenge") {
@@ -147,7 +146,7 @@ func gotoRadarSend(page playwright.Page, sendURL string, log Logger) error {
 	} else {
 		_, _ = page.GoBack()
 	}
-	sleep(1500)
+	sleep(300)
 	if onRadarSend(page.URL()) || visible(page, `input[name="local_number"]`) {
 		return nil
 	}
@@ -206,7 +205,7 @@ func fillOTP(page playwright.Page, code string) error {
 		if err := humanType(page, loc, string(code[i])); err != nil {
 			_ = loc.Press(string(code[i]), playwright.LocatorPressOptions{Timeout: playwright.Float(2000)})
 		}
-		sleep(80 + i*20)
+		sleep(20)
 	}
 	return nil
 }
@@ -236,7 +235,7 @@ func captureClinePayment(page playwright.Page, log Logger) (string, error) {
 		}); err != nil {
 			return "", fmt.Errorf("打开套餐页失败: %w", err)
 		}
-		sleep(1000)
+		sleep(250)
 	}
 	if cookieExpired(page.URL()) {
 		return "", fmt.Errorf("Cookie 已失效，需要重新登录")

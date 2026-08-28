@@ -55,6 +55,26 @@ def geoip_db_ready(root: str | None = None) -> bool:
         return False
 
 
+def humanize_options() -> dict:
+    """Keep Cloak mouse curves, but do not use the slow careful preset.
+
+    careful + idle_between_actions made every click/key wait 350–900ms, so a
+    single Google email took ~20s. Paid Cloak fingerprints no longer need that.
+    """
+    return {
+        "humanize": True,
+        "human_preset": "default",
+        "human_config": {
+            "typing_delay": 22,
+            "typing_delay_spread": 10,
+            "typing_pause_chance": 0.02,
+            "mistype_chance": 0,
+            "idle_between_actions": False,
+            "idle_between_duration": [0.05, 0.12],
+        },
+    }
+
+
 def apply_geo_settings(kwargs: dict, proxy: str | None, root: str | None = None) -> dict:
     """Only follow Cloak geoip when the 70MB City DB is already on disk.
 
@@ -91,13 +111,7 @@ def launch_ctx(settings: dict, seed: int):
     kwargs = {
         "user_data_dir": profile,
         "headless": headless,
-        "humanize": True,
-        "human_preset": "careful",
-        "human_config": {
-            "idle_between_actions": True,
-            "idle_between_duration": [0.35, 0.9],
-            "mistype_chance": 0.04,
-        },
+        **humanize_options(),
         "args": args,
     }
     apply_geo_settings(kwargs, proxy)
@@ -110,7 +124,7 @@ def launch_ctx(settings: dict, seed: int):
     else:
         log("未设代理，不下载 GeoIP，时区固定 %s / %s，避免默认 UTC/en-US", DEFAULT_TIMEZONE, DEFAULT_LOCALE)
     log(
-        "Cloak 官方包装启动 humanize=careful geoip=%s tz=%s locale=%s headless=%s seed=%s version=%s cache=%s runtime=%s",
+        "Cloak 官方包装启动 humanize=default geoip=%s tz=%s locale=%s headless=%s seed=%s version=%s cache=%s runtime=%s",
         kwargs.get("geoip"),
         kwargs.get("timezone") or "",
         kwargs.get("locale") or "",

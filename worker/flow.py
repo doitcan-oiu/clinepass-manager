@@ -1,11 +1,10 @@
-import random
 import time
 
 from authkit import handle_authkit_wait
 from errors import WorkerError
 from google import CONSENT, accept_workspace_tos, recover_unknown_error, start_google
 from microsoft import start_microsoft
-from pageutil import click_one_of, human_idle_authkit, on_radar_flow, serialize_cookies, sleep_ms, visible
+from pageutil import click_one_of, on_radar_flow, serialize_cookies, sleep_ms, visible
 from payment import capture_payment
 from stripe_pay import autopay
 from protocol import log
@@ -50,7 +49,7 @@ def wait_cline(page, timeout_ms: float, provider: str) -> None:
         if time.time() - last > 8:
             log("仍在等待进入 Cline，当前 URL=%s", page.url)
             last = time.time()
-        sleep_ms(500)
+        sleep_ms(200)
     wrap_authkit(RuntimeError(f"等待进入 Cline 超时，当前 URL={page.url}"), page.url)
 
 
@@ -80,9 +79,7 @@ def run_login(page, context, acc: dict, settings: dict) -> dict:
     log("登录方式=%s", provider)
     log("打开邀请链接 %s", invite)
     page.goto(invite, wait_until="domcontentloaded", timeout=60000)
-    sleep_ms(1400 + random.randint(0, 900))
-    if url_host(page.url) == AUTH_HOST and not on_radar_flow(page):
-        human_idle_authkit(page)
+    sleep_ms(250)
     if on_cline_app(page.url) and "radar-challenge" not in page.url:
         log("当前已在 Cline，跳过身份登录")
     else:
@@ -104,7 +101,7 @@ def run_login(page, context, acc: dict, settings: dict) -> dict:
         page.goto(APP_DASHBOARD, wait_until="domcontentloaded", timeout=60000)
     except Exception as exc:
         log("打开 dashboard 失败: %s", exc)
-    sleep_ms(800)
+    sleep_ms(250)
     if cookie_expired(page.url):
         wrap_authkit(RuntimeError(f"登录后没有进入 Cline，当前 URL={page.url}"), page.url)
     cookies_json, cookie_header = serialize_cookies(context.cookies())
@@ -126,12 +123,12 @@ def run_keepalive(page, context, acc: dict, settings: dict | None = None) -> dic
     log("已注入 %d 条 Cookie，打开 dashboard", len(cookies))
     log("打开 %s", APP_DASHBOARD)
     page.goto(APP_DASHBOARD, wait_until="domcontentloaded", timeout=60000)
-    sleep_ms(1200)
+    sleep_ms(400)
     if cookie_expired(page.url):
         wrap_authkit(RuntimeError(f"Cookie 已失效，当前 URL={page.url}"), page.url)
     if not on_cline_app(page.url):
         raise RuntimeError(f"没有进入 Cline dashboard，当前 URL={page.url}")
-    sleep_ms(800)
+    sleep_ms(200)
     fresh = context.cookies()
     if not fresh:
         raise RuntimeError("打开 dashboard 后没有拿到 Cookie")

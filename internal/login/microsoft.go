@@ -156,14 +156,14 @@ func microsoftLogin(page playwright.Page, acc model.Account, log Logger) error {
 		if passDone && emailSel == "" && passSel == "" && onMicrosoftURL(rawURL) && visible(page, `input#idSIButton9, button[data-testid="primaryButton"]`) {
 			log("点击微软页面下一步")
 			_ = clickOneOf(page, microsoftNextSelectors(), 8000, log, "微软下一步")
-			sleep(1000)
+			sleep(200)
 			continue
 		}
 		if onMicrosoftURL(rawURL) && time.Since(lastUnknown) > 8*time.Second {
 			log("微软页面未识别，当前 URL=%s", rawURL)
 			lastUnknown = time.Now()
 		}
-		sleep(500)
+		sleep(200)
 	}
 	if loggedIn(page) {
 		return nil
@@ -256,7 +256,7 @@ func fillMicrosoftField(page playwright.Page, selector, value string, log Logger
 			return CompactError(err)
 		}
 	}
-	sleep(400)
+	sleep(80)
 	return nil
 }
 

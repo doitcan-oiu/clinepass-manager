@@ -39,12 +39,10 @@ def fill_otp(page, code: str) -> None:
     log("填写验证码")
     first = 'input[data-test="otp-input"], input[data-index], .ak-Otp input, input[name="code"], input[autocomplete="one-time-code"]'
     page.click(first, timeout=12000)
-    sleep_ms(120)
     page.keyboard.press("Control+a")
-    sleep_ms(30)
     page.keyboard.press("Backspace")
-    page.keyboard.type(code, delay=40)
-    sleep_ms(400)
+    page.keyboard.type(code, delay=18)
+    sleep_ms(120)
     try:
         click_one_of(
             page,
@@ -81,7 +79,7 @@ def goto_radar_send(page, send_url: str) -> None:
             page.go_back()
         except Exception:
             pass
-    sleep_ms(1500)
+    sleep_ms(300)
     if on_radar_send(page.url) or visible(page, 'input[name="local_number"]'):
         return
     raise RuntimeError(f"无法回到手机号输入页，当前 URL={page.url}")
@@ -95,14 +93,14 @@ def request_radar_code(page, settings: dict, sms: Client, attempt: int) -> None:
     finished = False
     try:
         log("已取号 +%s %s id=%s", num["phone_code"], num["local_number"], num["id"])
-        sleep_ms(1500)
+        sleep_ms(200)
         if int(num.get("phone_code") or 0) <= 0 or not num.get("local_number"):
             raise RuntimeError(f'取到的号码无法拆分区号: {num.get("phone")}')
         cc = f'+{num["phone_code"]}'
         fill_authkit_field(page, 'input[name="country_code"]', cc)
-        sleep_ms(800)
+        sleep_ms(150)
         fill_authkit_field(page, 'input[name="local_number"]', num["local_number"])
-        sleep_ms(1200)
+        sleep_ms(200)
         click_one_of(
             page,
             ['button[data-hak-cta][type="submit"]', 'button.ak-PrimaryButton[type="submit"]', 'button[type="submit"]'],
@@ -115,11 +113,11 @@ def request_radar_code(page, settings: dict, sms: Client, attempt: int) -> None:
             if on_radar_send(page.url) or visible(page, 'input[name="local_number"]'):
                 raise RuntimeError("发送验证码失败，号码可能已被使用") from exc
             raise
-        sleep_ms(1200)
+        sleep_ms(200)
         log("等待短信验证码")
         code = sms.wait_code(num["id"], 120)
         log("收到验证码")
-        sleep_ms(400)
+        sleep_ms(120)
         fill_otp(page, code)
         log("验证码已填，等待离开验证页")
         deadline = time.time() + 45
@@ -134,7 +132,7 @@ def request_radar_code(page, settings: dict, sms: Client, attempt: int) -> None:
             if time.time() - last > 6:
                 log("仍在验证页，当前 URL=%s", u)
                 last = time.time()
-            sleep_ms(400)
+            sleep_ms(200)
         raise RuntimeError(f"提交验证码后仍停在验证页，当前 URL={page.url}")
     finally:
         if not finished:
@@ -181,7 +179,7 @@ def handle_radar(page, settings: dict) -> None:
             log("第 %d/%d 次接码失败: %s", i, attempts, exc)
             if i < attempts:
                 log("返回手机号输入页，换一个 Hero SMS 号码重试")
-                sleep_ms(1500)
+                sleep_ms(300)
                 goto_radar_send(page, send_url)
     raise WorkerError("多次接码失败，需要重新登录", "sms_relogin") from last
 

@@ -49,7 +49,7 @@ def wait_authkit_advance(page, timeout_ms: float) -> bool:
             return True
         if authkit_callback_error(page.url):
             return False
-        sleep_ms(400)
+        sleep_ms(150)
     return on_cline(page.url) or on_radar_flow(page) or url_host(page.url) != AUTH_HOST
 
 
@@ -71,7 +71,7 @@ def handle_authkit_wait(page, last_click: list, provider: str) -> bool:
         auth_visible,
         provider,
     )
-    wait_ms = 10000 if sid else 8000
+    wait_ms = 2500 if sid else 1500
     if sid:
         log("OAuth 已回到 AuthKit（有 authorization_session_id），先确认是否跳到接码页")
     if wait_authkit_advance(page, wait_ms):
@@ -89,7 +89,7 @@ def handle_authkit_wait(page, last_click: list, provider: str) -> bool:
     if authkit_banned_after_wait(after):
         log("仍停在 AuthKit，账号已被封禁，跳过")
         raise WorkerError("账号已被封禁，已跳过", "banned")
-    if on_authkit_login(after) and visible_auth_button(page, provider) and time.time() - last_click[0] > 12:
+    if on_authkit_login(after) and visible_auth_button(page, provider) and time.time() - last_click[0] > 5:
         label = "再次选择 Microsoft 登录" if provider == "microsoft" else "再次选择 Google 登录"
         log("AuthKit 仍是登录页，%s", label)
         try:
@@ -97,5 +97,5 @@ def handle_authkit_wait(page, last_click: list, provider: str) -> bool:
         except Exception:
             pass
         last_click[0] = time.time()
-    sleep_ms(500)
+    sleep_ms(150)
     return False

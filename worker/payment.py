@@ -26,7 +26,7 @@ def capture_payment(page) -> str:
     u = page.url
     if "/onboarding/" not in u and "/checkout" not in u:
         page.goto(APP_BASE + "/onboarding/individual-plan", wait_until="domcontentloaded", timeout=60000)
-        sleep_ms(1000)
+        sleep_ms(250)
     if cookie_expired(page.url):
         raise RuntimeError("Cookie 已失效，需要重新登录")
     if "/checkout" not in page.url:

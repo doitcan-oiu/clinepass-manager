@@ -2,7 +2,18 @@ import os
 import tempfile
 import unittest
 
-from cloak import apply_geo_settings, chrome_args, geoip_db_ready
+from cloak import apply_geo_settings, chrome_args, geoip_db_ready, humanize_options
+
+
+class HumanizeOptionsTest(unittest.TestCase):
+    def test_not_careful_and_no_idle(self):
+        opts = humanize_options()
+        self.assertTrue(opts["humanize"])
+        self.assertEqual(opts["human_preset"], "default")
+        cfg = opts["human_config"]
+        self.assertFalse(cfg["idle_between_actions"])
+        self.assertEqual(cfg["mistype_chance"], 0)
+        self.assertLessEqual(cfg["typing_delay"], 30)
 
 
 class ChromeArgsTest(unittest.TestCase):
