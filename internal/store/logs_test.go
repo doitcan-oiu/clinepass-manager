@@ -182,7 +182,7 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if err != nil || !again.APIProxy {
 		t.Fatalf("api_proxy on %+v %v", again, err)
 	}
-	if again.UsageRefreshSec != 60 || again.UsageRefreshConcurrency != 10 {
+	if again.UsageRefreshSec != 60 || again.ModelUsageRefreshSec != 600 || again.UsageRefreshConcurrency != 10 {
 		t.Fatalf("usage refresh defaults %+v", again)
 	}
 	again.AccountRPM = 8
@@ -195,12 +195,13 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	}
 	again = gotRPM
 	again.UsageRefreshSec = 120
+	again.ModelUsageRefreshSec = 900
 	again.UsageRefreshConcurrency = 16
 	if err := s.SaveSettings(again); err != nil {
 		t.Fatal(err)
 	}
 	gotRefresh, err := s.GetSettings()
-	if err != nil || gotRefresh.UsageRefreshSec != 120 || gotRefresh.UsageRefreshConcurrency != 16 {
+	if err != nil || gotRefresh.UsageRefreshSec != 120 || gotRefresh.ModelUsageRefreshSec != 900 || gotRefresh.UsageRefreshConcurrency != 16 {
 		t.Fatalf("usage refresh %+v %v", gotRefresh, err)
 	}
 	if !gotRefresh.CookieKeepEnabled || gotRefresh.CookieKeepHour != 4 {

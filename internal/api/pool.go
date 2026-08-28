@@ -143,7 +143,7 @@ func (s *Server) getUsageSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startUsageSync(w http.ResponseWriter, r *http.Request) {
-	if err := s.usage.StartAll(); err != nil {
+	if err := s.usage.StartAllForced(); err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -188,7 +188,7 @@ func (s *Server) importAccounts(w http.ResponseWriter, r *http.Request) {
 	sync := s.usage.Status()
 	warning := ""
 	if imported+updated > 0 {
-		if err := s.usage.StartAll(); err != nil {
+		if err := s.usage.StartAllForced(); err != nil {
 			warning = err.Error()
 		} else {
 			sync = s.usage.Status()

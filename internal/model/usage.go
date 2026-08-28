@@ -35,10 +35,11 @@ type AccountUsage struct {
 	Rolling  UsageWindow  `json:"rolling"`
 	Weekly   UsageWindow  `json:"weekly"`
 	Monthly  UsageWindow  `json:"monthly"`
-	Days     []ModelDay   `json:"days,omitempty"`
-	Models   []ModelSpend `json:"models"`
-	SyncedAt int64        `json:"synced_at"`
-	Error    string       `json:"error"`
+	Days          []ModelDay   `json:"days,omitempty"`
+	Models        []ModelSpend `json:"models"`
+	SyncedAt      int64        `json:"synced_at"`
+	ModelSyncedAt int64        `json:"model_synced_at,omitempty"`
+	Error         string       `json:"error"`
 }
 
 func (u AccountUsage) MonthlyExpiresAt() int64 {

@@ -17,7 +17,7 @@ func TestStartAllRejectsOverlap(t *testing.T) {
 	mustPaid(t, st, "a@x.com")
 	s := NewSyncer(st)
 	started := make(chan struct{})
-	s.fetch = func(model.Account, string) (model.AccountUsage, bool, error) {
+	s.fetch = func(model.Account, string, bool) (model.AccountUsage, bool, error) {
 		close(started)
 		time.Sleep(80 * time.Millisecond)
 		return okUsage(10), true, nil
@@ -36,7 +36,7 @@ func TestRefreshCoalescesConcurrentCalls(t *testing.T) {
 	a := mustPaid(t, st, "a@x.com")
 	s := NewSyncer(st)
 	var n atomic.Int32
-	s.fetch = func(model.Account, string) (model.AccountUsage, bool, error) {
+	s.fetch = func(model.Account, string, bool) (model.AccountUsage, bool, error) {
 		n.Add(1)
 		time.Sleep(50 * time.Millisecond)
 		return okUsage(40), true, nil
@@ -77,7 +77,7 @@ func TestRunHonorsRefreshConcurrency(t *testing.T) {
 	}
 	s := NewSyncer(st)
 	var inflight, peak atomic.Int32
-	s.fetch = func(model.Account, string) (model.AccountUsage, bool, error) {
+	s.fetch = func(model.Account, string, bool) (model.AccountUsage, bool, error) {
 		n := inflight.Add(1)
 		for {
 			cur := peak.Load()
@@ -118,7 +118,7 @@ func TestFetchErrorKeepsPreviousUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := NewSyncer(st)
-	s.fetch = func(model.Account, string) (model.AccountUsage, bool, error) {
+	s.fetch = func(model.Account, string, bool) (model.AccountUsage, bool, error) {
 		return model.AccountUsage{}, false, fmt.Errorf("network down")
 	}
 	_, err := s.One(a.ID)
@@ -160,6 +160,68 @@ func mustPaid(t *testing.T, st *store.Store, email string) model.Account {
 		t.Fatal(err)
 	}
 	return a
+}
+
+func TestBackgroundSkipFreshModels(t *testing.T) {
+	st := openStore(t)
+	a := mustPaid(t, st, "a@x.com")
+	now := time.Now().Unix()
+	if err := st.SaveAccountUsage(a.ID, model.AccountUsage{
+		SyncedAt:      now,
+		ModelSyncedAt: now,
+		Rolling:       model.UsageWindow{Status: "ok", UsagePercent: 11, ResetInSec: 300},
+		Weekly:        model.UsageWindow{Status: "ok", UsagePercent: 10},
+		Monthly:       model.UsageWindow{Status: "ok", UsagePercent: 10},
+		Days:          []model.ModelDay{{Date: "2026-08-01", Model: "glm-5.3", USD: 1.2}},
+		Models:        []model.ModelSpend{{Model: "glm-5.3", USD: 1.2}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ModelUsageRefreshSec = 600
+	if err := st.SaveSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSyncer(st)
+	var models atomic.Int32
+	s.fetch = func(_ model.Account, _ string, includeModels bool) (model.AccountUsage, bool, error) {
+		if includeModels {
+			models.Add(1)
+		}
+		u := okUsage(22)
+		if includeModels {
+			u.Days = []model.ModelDay{{Date: "2026-08-01", Model: "new", USD: 9}}
+			u.Models = []model.ModelSpend{{Model: "new", USD: 9}}
+			u.ModelSyncedAt = time.Now().Unix()
+		}
+		return u, true, nil
+	}
+	if err := s.StartAll(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for s.Status().Running {
+		if time.Now().After(deadline) {
+			t.Fatal("sync did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if models.Load() != 0 {
+		t.Fatalf("background fetched models=%d", models.Load())
+	}
+	u, err := st.GetAccountUsage(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Rolling.UsagePercent != 22 {
+		t.Fatalf("quota not refreshed %+v", u.Rolling)
+	}
+	if len(u.Models) != 1 || u.Models[0].Model != "glm-5.3" {
+		t.Fatalf("kept models %+v", u.Models)
+	}
 }
 
 func okUsage(rolling float64) model.AccountUsage {

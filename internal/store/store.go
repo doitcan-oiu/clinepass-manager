@@ -133,6 +133,9 @@ CREATE TABLE IF NOT EXISTS batches (
 	if err := s.ensureColumn("settings", "usage_refresh_concurrency", `ALTER TABLE settings ADD COLUMN usage_refresh_concurrency INTEGER NOT NULL DEFAULT 10`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("settings", "model_usage_refresh_sec", `ALTER TABLE settings ADD COLUMN model_usage_refresh_sec INTEGER NOT NULL DEFAULT 600`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("settings", "account_rpm", `ALTER TABLE settings ADD COLUMN account_rpm INTEGER NOT NULL DEFAULT 5`); err != nil {
 		return err
 	}
@@ -476,7 +479,7 @@ func (s *Store) GetSettings() (model.Settings, error) {
 		IFNULL(hero_sms_api_key, ''), IFNULL(hero_sms_service, ''), IFNULL(hero_sms_country, 0), IFNULL(hero_sms_max_price, 0),
 		IFNULL(max_concurrent, 1), IFNULL(max_retries, 3), IFNULL(email_suffix_blacklist, ''),
 		IFNULL(provider_mode, 'keep'), IFNULL(provider_value, ''),
-		IFNULL(usage_refresh_sec, 60), IFNULL(usage_refresh_concurrency, 10), IFNULL(account_rpm, 5), IFNULL(api_proxy, 1),
+		IFNULL(usage_refresh_sec, 60), IFNULL(model_usage_refresh_sec, 600), IFNULL(usage_refresh_concurrency, 10), IFNULL(account_rpm, 5), IFNULL(api_proxy, 1),
 		IFNULL(cloakbrowser_version, ''), IFNULL(cloakbrowser_license_key, ''),
 		IFNULL(amzkeys_host, ''), IFNULL(amzkeys_app_id, ''), IFNULL(amzkeys_app_key, ''), IFNULL(amzkeys_private_key, ''),
 		IFNULL(amzkeys_card_type, 0), IFNULL(amzkeys_card_amount, 0),
@@ -487,11 +490,11 @@ func (s *Store) GetSettings() (model.Settings, error) {
 	var blacklist string
 	if err := row.Scan(&out.Proxy, &headless, &out.InviteURL, &out.UsageJSURL,
 		&out.HeroSMSAPIKey, &out.HeroSMSService, &out.HeroSMSCountry, &out.HeroSMSMaxPrice, &out.MaxConcurrent, &out.MaxRetries, &blacklist,
-		&out.ProviderMode, &out.ProviderValue, &out.UsageRefreshSec, &out.UsageRefreshConcurrency, &out.AccountRPM, &apiProxy,
+		&out.ProviderMode, &out.ProviderValue, &out.UsageRefreshSec, &out.ModelUsageRefreshSec, &out.UsageRefreshConcurrency, &out.AccountRPM, &apiProxy,
 		&out.CloakVersion, &out.CloakLicenseKey,
 		&out.AmzKeysHost, &out.AmzKeysAppID, &out.AmzKeysAppKey, &out.AmzKeysPrivateKey, &out.AmzKeysCardType, &out.AmzKeysCardAmount,
 		&cookieKeep, &out.CookieKeepHour, &out.CookieKeepLastDate); err != nil {
-		return model.Settings{Headless: true, MaxRetries: 3, AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, UsageRefreshConcurrency: 10, CookieKeepEnabled: true, CookieKeepHour: 4}, err
+		return model.Settings{Headless: true, MaxRetries: 3, AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, ModelUsageRefreshSec: 600, UsageRefreshConcurrency: 10, CookieKeepEnabled: true, CookieKeepHour: 4}, err
 	}
 	out.Headless = headless != 0
 	out.APIProxy = apiProxy != 0
@@ -502,6 +505,7 @@ func (s *Store) GetSettings() (model.Settings, error) {
 	out.MaxRetries = clampMaxRetries(out.MaxRetries)
 	out.AccountRPM = clampAccountRPM(out.AccountRPM)
 	out.UsageRefreshSec = clampUsageRefreshSec(out.UsageRefreshSec)
+	out.ModelUsageRefreshSec = clampModelUsageRefreshSec(out.ModelUsageRefreshSec)
 	out.UsageRefreshConcurrency = clampUsageRefreshConcurrency(out.UsageRefreshConcurrency)
 	out.EmailSuffixBlacklist = DecodeSuffixList(blacklist)
 	out.ProviderMode = normalizeProviderMode(out.ProviderMode)
@@ -529,6 +533,7 @@ func (s *Store) SaveSettings(in model.Settings) error {
 	retries := clampMaxRetries(in.MaxRetries)
 	rpm := clampAccountRPM(in.AccountRPM)
 	refreshSec := clampUsageRefreshSec(in.UsageRefreshSec)
+	modelRefreshSec := clampModelUsageRefreshSec(in.ModelUsageRefreshSec)
 	refreshConc := clampUsageRefreshConcurrency(in.UsageRefreshConcurrency)
 	blacklist := EncodeSuffixList(in.EmailSuffixBlacklist)
 	providerMode := normalizeProviderMode(in.ProviderMode)
@@ -538,8 +543,8 @@ func (s *Store) SaveSettings(in model.Settings) error {
 	}
 	keepHour := clampCookieKeepHour(in.CookieKeepHour)
 	_, err := s.db.Exec(`
-INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, usage_refresh_concurrency, account_rpm, api_proxy, cloakbrowser_version, cloakbrowser_license_key, amzkeys_host, amzkeys_app_id, amzkeys_app_key, amzkeys_private_key, amzkeys_card_type, amzkeys_card_amount, cookie_keep_enabled, cookie_keep_hour, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, model_usage_refresh_sec, usage_refresh_concurrency, account_rpm, api_proxy, cloakbrowser_version, cloakbrowser_license_key, amzkeys_host, amzkeys_app_id, amzkeys_app_key, amzkeys_private_key, amzkeys_card_type, amzkeys_card_amount, cookie_keep_enabled, cookie_keep_hour, updated_at)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	proxy = excluded.proxy,
 	headless = excluded.headless,
@@ -555,6 +560,7 @@ ON CONFLICT(id) DO UPDATE SET
 	provider_mode = excluded.provider_mode,
 	provider_value = excluded.provider_value,
 	usage_refresh_sec = excluded.usage_refresh_sec,
+	model_usage_refresh_sec = excluded.model_usage_refresh_sec,
 	usage_refresh_concurrency = excluded.usage_refresh_concurrency,
 	account_rpm = excluded.account_rpm,
 	api_proxy = excluded.api_proxy,
@@ -571,7 +577,7 @@ ON CONFLICT(id) DO UPDATE SET
 	updated_at = excluded.updated_at`,
 		strings.TrimSpace(in.Proxy), headless, strings.TrimSpace(in.InviteURL), strings.TrimSpace(in.UsageJSURL),
 		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, retries, blacklist,
-		providerMode, in.ProviderValue, refreshSec, refreshConc, rpm, apiProxy,
+		providerMode, in.ProviderValue, refreshSec, modelRefreshSec, refreshConc, rpm, apiProxy,
 		strings.TrimSpace(in.CloakVersion), strings.TrimSpace(in.CloakLicenseKey),
 		strings.TrimSpace(in.AmzKeysHost), strings.TrimSpace(in.AmzKeysAppID), strings.TrimSpace(in.AmzKeysAppKey),
 		strings.TrimSpace(in.AmzKeysPrivateKey), in.AmzKeysCardType, in.AmzKeysCardAmount, cookieKeep, keepHour, time.Now().Unix())
@@ -705,6 +711,16 @@ func clampMaxRetries(n int) int {
 func clampUsageRefreshSec(n int) int {
 	if n < 15 {
 		return 60
+	}
+	if n > 86400 {
+		return 86400
+	}
+	return n
+}
+
+func clampModelUsageRefreshSec(n int) int {
+	if n < 15 {
+		return 600
 	}
 	if n > 86400 {
 		return 86400

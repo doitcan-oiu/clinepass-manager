@@ -179,6 +179,7 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		AccountRPM              *int     `json:"account_rpm"`
 		APIProxy                *bool    `json:"api_proxy"`
 		UsageRefreshSec         *int     `json:"usage_refresh_sec"`
+		ModelUsageRefreshSec    *int     `json:"model_usage_refresh_sec"`
 		UsageRefreshConcurrency *int     `json:"usage_refresh_concurrency"`
 		ProviderMode            *string  `json:"provider_mode"`
 		ProviderValue           *string  `json:"provider_value"`
@@ -247,10 +248,17 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.UsageRefreshSec != nil {
 		if *in.UsageRefreshSec < 15 || *in.UsageRefreshSec > 86400 {
-			writeErr(w, http.StatusBadRequest, "用量刷新间隔须在 15–86400 秒")
+			writeErr(w, http.StatusBadRequest, "套餐配额刷新间隔须在 15–86400 秒")
 			return
 		}
 		cur.UsageRefreshSec = *in.UsageRefreshSec
+	}
+	if in.ModelUsageRefreshSec != nil {
+		if *in.ModelUsageRefreshSec < 15 || *in.ModelUsageRefreshSec > 86400 {
+			writeErr(w, http.StatusBadRequest, "模型用量刷新间隔须在 15–86400 秒")
+			return
+		}
+		cur.ModelUsageRefreshSec = *in.ModelUsageRefreshSec
 	}
 	if in.UsageRefreshConcurrency != nil {
 		if *in.UsageRefreshConcurrency < 1 || *in.UsageRefreshConcurrency > 64 {
@@ -401,7 +409,7 @@ func (s *Server) publicConfig() map[string]any {
 	if err == nil {
 		cfg = store.ApplySettings(cfg, st)
 	} else {
-		st = model.Settings{AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, UsageRefreshConcurrency: 10}
+		st = model.Settings{AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, ModelUsageRefreshSec: 600, UsageRefreshConcurrency: 10}
 	}
 	last4, pending, payCount, maxPays, nextLast4, nextPending, lastErr := amzKeysCardView(s)
 	return map[string]any{
@@ -416,6 +424,7 @@ func (s *Server) publicConfig() map[string]any {
 		"account_rpm":               st.AccountRPM,
 		"api_proxy":                 st.APIProxy,
 		"usage_refresh_sec":         st.UsageRefreshSec,
+		"model_usage_refresh_sec":   st.ModelUsageRefreshSec,
 		"usage_refresh_concurrency": st.UsageRefreshConcurrency,
 		"platform":                  browser.PlatformTag(),
 		"hero_sms_api_key":          maskSecret(st.HeroSMSAPIKey),

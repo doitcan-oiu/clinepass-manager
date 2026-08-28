@@ -44,6 +44,7 @@ export function SettingsPage() {
   const [accountRpm, setAccountRpm] = useState(5)
   const [apiProxy, setApiProxy] = useState(true)
   const [usageRefreshSec, setUsageRefreshSec] = useState(60)
+  const [modelUsageRefreshSec, setModelUsageRefreshSec] = useState(600)
   const [usageRefreshConcurrency, setUsageRefreshConcurrency] = useState(10)
   const [providerMode, setProviderMode] = useState<"keep" | "hide" | "replace">("keep")
   const [providerValue, setProviderValue] = useState("")
@@ -101,6 +102,7 @@ export function SettingsPage() {
         setAccountRpm(cfg.account_rpm >= 1 ? cfg.account_rpm : 5)
         setApiProxy(cfg.api_proxy !== false)
         setUsageRefreshSec(cfg.usage_refresh_sec >= 15 ? cfg.usage_refresh_sec : 60)
+        setModelUsageRefreshSec(cfg.model_usage_refresh_sec >= 15 ? cfg.model_usage_refresh_sec : 600)
         setUsageRefreshConcurrency(cfg.usage_refresh_concurrency >= 1 ? cfg.usage_refresh_concurrency : 10)
         setProviderMode(cfg.provider_mode === "hide" || cfg.provider_mode === "replace" ? cfg.provider_mode : "keep")
         setProviderValue(cfg.provider_value || "")
@@ -224,7 +226,12 @@ export function SettingsPage() {
       }
       const refreshSec = Math.floor(Number(usageRefreshSec))
       if (!Number.isFinite(refreshSec) || refreshSec < 15 || refreshSec > 86400) {
-        toast.error("用量刷新间隔须在 15–86400 秒")
+        toast.error("套餐配额刷新间隔须在 15–86400 秒")
+        return
+      }
+      const modelRefreshSec = Math.floor(Number(modelUsageRefreshSec))
+      if (!Number.isFinite(modelRefreshSec) || modelRefreshSec < 15 || modelRefreshSec > 86400) {
+        toast.error("模型用量刷新间隔须在 15–86400 秒")
         return
       }
       const refreshConc = Math.floor(Number(usageRefreshConcurrency))
@@ -237,11 +244,13 @@ export function SettingsPage() {
         account_rpm: rpm,
         api_proxy: apiProxy,
         usage_refresh_sec: refreshSec,
+        model_usage_refresh_sec: modelRefreshSec,
         usage_refresh_concurrency: refreshConc,
       })
       setMaxRetries(retries)
       setAccountRpm(rpm)
       setUsageRefreshSec(refreshSec)
+      setModelUsageRefreshSec(modelRefreshSec)
       setUsageRefreshConcurrency(refreshConc)
       toast.success("账号设置已保存")
     } catch (err) {
@@ -644,7 +653,7 @@ export function SettingsPage() {
                   </p>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="usage-refresh-sec">用量刷新间隔（秒）</Label>
+                  <Label htmlFor="usage-refresh-sec">套餐配额刷新间隔（秒）</Label>
                   <Input
                     id="usage-refresh-sec"
                     type="number"
@@ -654,7 +663,20 @@ export function SettingsPage() {
                     value={usageRefreshSec}
                     onChange={(e) => setUsageRefreshSec(Number(e.target.value))}
                   />
-                  <p className="text-xs text-muted-foreground">后台自动拉套餐用量的间隔，默认 60 秒。改完下一轮生效，账号页会跟着更新。</p>
+                  <p className="text-xs text-muted-foreground">后台拉 5 小时 / 每周 / 每月配额的间隔，默认 60 秒。改完下一轮生效。</p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="model-usage-refresh-sec">模型用量刷新间隔（秒）</Label>
+                  <Input
+                    id="model-usage-refresh-sec"
+                    type="number"
+                    min={15}
+                    max={86400}
+                    step={1}
+                    value={modelUsageRefreshSec}
+                    onChange={(e) => setModelUsageRefreshSec(Number(e.target.value))}
+                  />
+                  <p className="text-xs text-muted-foreground">各模型花费单独刷新，默认 600 秒。手动点刷新用量仍会立刻拉一次。</p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="usage-refresh-concurrency">用量刷新并发</Label>

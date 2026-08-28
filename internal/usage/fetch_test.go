@@ -26,7 +26,7 @@ func TestFetchAccountUsesPlanUsageLimits(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	a := model.Account{CookieHeader: "cline_session_id=abc", UserID: "usr-01TESTUSERID000000000000"}
-	u, subscribed, err := fetchAccount(a, "", srv.URL, srv.URL)
+	u, subscribed, err := fetchAccount(a, "", srv.URL, srv.URL, true)
 	if err != nil || !subscribed {
 		t.Fatalf("%+v %v", u, err)
 	}
@@ -55,7 +55,7 @@ func TestFetchAccountDailyQueryWithin31Days(t *testing.T) {
 		CookieHeader: "cline_session_id=abc",
 		UserID:       "usr-01TESTUSERID000000000000",
 	}
-	u, subscribed, err := fetchAccount(a, "", srv.URL, srv.URL)
+	u, subscribed, err := fetchAccount(a, "", srv.URL, srv.URL, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,5 +70,30 @@ func TestFetchAccountDailyQueryWithin31Days(t *testing.T) {
 	days := int(end.Sub(start).Hours()/24) + 1
 	if days > cline.MaxDailyInclusiveDays {
 		t.Fatalf("range %s..%s = %d days", got.Get("startDate"), got.Get("endDate"), days)
+	}
+}
+
+func TestFetchAccountSkipsDailyWhenNotRequested(t *testing.T) {
+	daily := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/users/me/plan/usage-limits", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"success":true,"data":{"limits":[{"type":"five_hour","percentUsed":2,"resetsAt":"2099-01-01T00:00:00Z"}]}}`))
+	})
+	mux.HandleFunc("/api/v1/users/{id}/usages/daily", func(w http.ResponseWriter, r *http.Request) {
+		daily++
+		_, _ = w.Write([]byte(`{"success":true,"data":{"items":[]}}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	a := model.Account{CookieHeader: "cline_session_id=abc", UserID: "usr-01TESTUSERID000000000000"}
+	u, subscribed, err := fetchAccount(a, "", srv.URL, srv.URL, false)
+	if err != nil || !subscribed {
+		t.Fatalf("%+v %v", u, err)
+	}
+	if daily != 0 {
+		t.Fatalf("daily called %d", daily)
+	}
+	if u.Days != nil || u.ModelSyncedAt != 0 {
+		t.Fatalf("models should be skipped %+v", u)
 	}
 }

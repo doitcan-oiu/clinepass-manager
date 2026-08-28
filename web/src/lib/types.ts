@@ -94,6 +94,7 @@ export type AppConfig = {
   account_rpm: number
   api_proxy: boolean
   usage_refresh_sec: number
+  model_usage_refresh_sec: number
   usage_refresh_concurrency: number
   cloak_version: string
   cloak_license_key: string

@@ -11,17 +11,18 @@ import (
 )
 
 const (
-	DefaultInterval    = time.Minute
-	DefaultConcurrency = 10
-	minInterval        = 15 * time.Second
-	maxInterval        = 24 * time.Hour
-	minConcurrency     = 1
-	maxConcurrency     = 64
+	DefaultInterval      = time.Minute
+	DefaultModelInterval = 10 * time.Minute
+	DefaultConcurrency   = 10
+	minInterval          = 15 * time.Second
+	maxInterval          = 24 * time.Hour
+	minConcurrency       = 1
+	maxConcurrency       = 64
 )
 
 type Syncer struct {
 	store   *store.Store
-	fetch   func(model.Account, string) (model.AccountUsage, bool, error)
+	fetch   func(model.Account, string, bool) (model.AccountUsage, bool, error)
 	mu      sync.Mutex
 	st      model.UsageSyncStatus
 	kicking map[string]*sync.WaitGroup
@@ -31,11 +32,11 @@ func NewSyncer(st *store.Store) *Syncer {
 	return &Syncer{store: st, kicking: map[string]*sync.WaitGroup{}}
 }
 
-func (s *Syncer) doFetch(a model.Account, proxy string) (model.AccountUsage, bool, error) {
+func (s *Syncer) doFetch(a model.Account, proxy string, includeModels bool) (model.AccountUsage, bool, error) {
 	if s.fetch != nil {
-		return s.fetch(a, proxy)
+		return s.fetch(a, proxy, includeModels)
 	}
-	return FetchAccount(a, proxy)
+	return fetchAccount(a, proxy, "", "", includeModels)
 }
 
 func (s *Syncer) Status() model.UsageSyncStatus {
@@ -53,7 +54,16 @@ func (s *Syncer) StartAll() error {
 	if err != nil {
 		return err
 	}
-	return s.start(list, "全部已付款账号")
+	return s.start(list, "全部已付款账号", false)
+}
+
+func (s *Syncer) StartAllForced() error {
+	_, _ = s.store.DeleteExpiredAccounts(time.Now().Unix())
+	list, err := s.store.ListPoolAccountsRaw()
+	if err != nil {
+		return err
+	}
+	return s.start(list, "全部已付款账号", true)
 }
 
 func (s *Syncer) StartBatch(batchID string) error {
@@ -67,7 +77,7 @@ func (s *Syncer) StartBatch(batchID string) error {
 			scan = append(scan, a)
 		}
 	}
-	return s.start(scan, "本批次")
+	return s.start(scan, "本批次", true)
 }
 
 func (s *Syncer) One(id string) (model.AccountUsage, error) {
@@ -75,7 +85,7 @@ func (s *Syncer) One(id string) (model.AccountUsage, error) {
 	if err != nil {
 		return model.AccountUsage{}, fmt.Errorf("账号不存在")
 	}
-	u, _, err := s.syncOne(a)
+	u, _, err := s.syncOne(a, true)
 	return u, err
 }
 
@@ -123,6 +133,24 @@ func (s *Syncer) intervalSec() int {
 	return st.UsageRefreshSec
 }
 
+func (s *Syncer) modelIntervalSec() int {
+	st, err := s.store.GetSettings()
+	if err != nil || st.ModelUsageRefreshSec < 15 {
+		return int(DefaultModelInterval / time.Second)
+	}
+	if st.ModelUsageRefreshSec > int(maxInterval/time.Second) {
+		return int(maxInterval / time.Second)
+	}
+	return st.ModelUsageRefreshSec
+}
+
+func modelsStale(prev model.AccountUsage, now int64, intervalSec int) bool {
+	if prev.ModelSyncedAt <= 0 {
+		return true
+	}
+	return now-prev.ModelSyncedAt >= int64(intervalSec)
+}
+
 func (s *Syncer) concurrency() int {
 	st, err := s.store.GetSettings()
 	if err != nil || st.UsageRefreshConcurrency < minConcurrency {
@@ -153,7 +181,15 @@ func (s *Syncer) Refresh(id string) {
 	s.kicking[id] = wg
 	s.mu.Unlock()
 
-	_, _ = s.One(id)
+	a, err := s.store.Get(id)
+	if err != nil {
+		s.mu.Lock()
+		delete(s.kicking, id)
+		s.mu.Unlock()
+		wg.Done()
+		return
+	}
+	_, _, _ = s.syncOne(a, false)
 
 	s.mu.Lock()
 	delete(s.kicking, id)
@@ -161,7 +197,7 @@ func (s *Syncer) Refresh(id string) {
 	wg.Done()
 }
 
-func (s *Syncer) start(list []model.Account, label string) error {
+func (s *Syncer) start(list []model.Account, label string, forceModels bool) error {
 	s.mu.Lock()
 	if s.st.Running {
 		s.mu.Unlock()
@@ -175,11 +211,11 @@ func (s *Syncer) start(list []model.Account, label string) error {
 		FinishedAt: s.st.FinishedAt,
 	}
 	s.mu.Unlock()
-	go s.run(list)
+	go s.run(list, forceModels)
 	return nil
 }
 
-func (s *Syncer) run(list []model.Account) {
+func (s *Syncer) run(list []model.Account, forceModels bool) {
 	defer func() {
 		s.mu.Lock()
 		s.st.Running = false
@@ -200,7 +236,7 @@ func (s *Syncer) run(list []model.Account) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			_, subscribed, err := s.syncOne(a)
+			_, subscribed, err := s.syncOne(a, forceModels)
 			s.mu.Lock()
 			s.st.Done++
 			if err != nil {
@@ -216,8 +252,9 @@ func (s *Syncer) run(list []model.Account) {
 	wg.Wait()
 }
 
-func (s *Syncer) syncOne(a model.Account) (model.AccountUsage, bool, error) {
-	if prev, err := s.store.GetAccountUsage(a.ID); err == nil && prev.MonthlyExpired(time.Now().Unix()) {
+func (s *Syncer) syncOne(a model.Account, forceModels bool) (model.AccountUsage, bool, error) {
+	prev, prevErr := s.store.GetAccountUsage(a.ID)
+	if prevErr == nil && prev.MonthlyExpired(time.Now().Unix()) {
 		_ = s.store.Delete(a.ID)
 		return model.AccountUsage{}, false, fmt.Errorf("月配额已到期，账号已删除")
 	}
@@ -235,13 +272,27 @@ func (s *Syncer) syncOne(a model.Account) (model.AccountUsage, bool, error) {
 			_ = s.store.SaveLoginResult(a)
 		}
 	}
-	u, subscribed, err := s.doFetch(a, proxy)
+	includeModels := forceModels || modelsStale(prev, time.Now().Unix(), s.modelIntervalSec())
+	u, subscribed, err := s.doFetch(a, proxy, includeModels)
 	if err != nil {
-		prev, _ := s.store.GetAccountUsage(a.ID)
-		prev.Error = err.Error()
-		prev.SyncedAt = time.Now().Unix()
-		_ = s.store.SaveAccountUsage(a.ID, prev)
-		return prev, false, err
+		if prevErr == nil {
+			prev.Error = err.Error()
+			prev.SyncedAt = time.Now().Unix()
+			_ = s.store.SaveAccountUsage(a.ID, prev)
+			return prev, false, err
+		}
+		return model.AccountUsage{Error: err.Error(), SyncedAt: time.Now().Unix()}, false, err
+	}
+	if u.Days == nil {
+		u.Days = prev.Days
+		u.Models = prev.Models
+		u.ModelSyncedAt = prev.ModelSyncedAt
+	}
+	if u.Days == nil {
+		u.Days = []model.ModelDay{}
+	}
+	if u.Models == nil {
+		u.Models = []model.ModelSpend{}
 	}
 	_ = s.store.SetAccountPaid(a.ID, subscribed)
 	if err := s.store.SaveAccountUsage(a.ID, u); err != nil {

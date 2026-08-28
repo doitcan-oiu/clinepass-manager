@@ -141,6 +141,7 @@ type Settings struct {
 	AccountRPM              int      `json:"account_rpm"`
 	APIProxy                bool     `json:"api_proxy"`
 	UsageRefreshSec         int      `json:"usage_refresh_sec"`
+	ModelUsageRefreshSec    int      `json:"model_usage_refresh_sec"`
 	UsageRefreshConcurrency int      `json:"usage_refresh_concurrency"`
 	EmailSuffixBlacklist    []string `json:"email_suffix_blacklist,omitempty"`
 	ProviderMode            string   `json:"provider_mode,omitempty"`

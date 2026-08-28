@@ -13,10 +13,10 @@ import (
 var cst = time.FixedZone("CST", 8*3600)
 
 func FetchAccount(a model.Account, proxy string) (model.AccountUsage, bool, error) {
-	return fetchAccount(a, proxy, "", "")
+	return fetchAccount(a, proxy, "", "", true)
 }
 
-func fetchAccount(a model.Account, proxy, apiBase, appBase string) (model.AccountUsage, bool, error) {
+func fetchAccount(a model.Account, proxy, apiBase, appBase string, includeModels bool) (model.AccountUsage, bool, error) {
 	cookie := strings.TrimSpace(a.CookieHeader)
 	if cookie == "" {
 		return model.AccountUsage{}, false, fmt.Errorf("缺少 Cookie")
@@ -32,7 +32,7 @@ func fetchAccount(a model.Account, proxy, apiBase, appBase string) (model.Accoun
 	c := cline.New(cookie, proxy)
 	c.SetBase(apiBase, appBase)
 
-	out := model.AccountUsage{Days: []model.ModelDay{}, Models: []model.ModelSpend{}}
+	out := model.AccountUsage{Models: []model.ModelSpend{}}
 	limits, err := c.PlanUsageLimits()
 	if err != nil {
 		if strings.Contains(err.Error(), "未支付") {
@@ -50,24 +50,27 @@ func fetchAccount(a model.Account, proxy, apiBase, appBase string) (model.Accoun
 		return out, false, nil
 	}
 
-	if !cline.ValidUserID(userID) {
-		if id, derr := c.DiscoverUserID(); derr == nil {
-			userID = id
-		}
-	}
-	if cline.ValidUserID(userID) {
-		start, end := cline.DailyWindow(now.In(cst))
-		if items, derr := c.DailyUsages(userID, start, end); derr == nil {
-			days := make([]model.ModelDay, 0, len(items))
-			for _, it := range items {
-				days = append(days, model.ModelDay{
-					Date:  it.Date,
-					Model: it.Model,
-					USD:   cline.UnitsToUSD(it.CostUnits),
-				})
+	if includeModels {
+		if !cline.ValidUserID(userID) {
+			if id, derr := c.DiscoverUserID(); derr == nil {
+				userID = id
 			}
-			out.Days = days
-			out.Models = AggregateMonth(days, now.In(cst).Format("2006-01"))
+		}
+		if cline.ValidUserID(userID) {
+			start, end := cline.DailyWindow(now.In(cst))
+			if items, derr := c.DailyUsages(userID, start, end); derr == nil {
+				days := make([]model.ModelDay, 0, len(items))
+				for _, it := range items {
+					days = append(days, model.ModelDay{
+						Date:  it.Date,
+						Model: it.Model,
+						USD:   cline.UnitsToUSD(it.CostUnits),
+					})
+				}
+				out.Days = days
+				out.Models = AggregateMonth(days, now.In(cst).Format("2006-01"))
+				out.ModelSyncedAt = now.Unix()
+			}
 		}
 	}
 	out.SyncedAt = now.Unix()
