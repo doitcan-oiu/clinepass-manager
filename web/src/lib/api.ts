@@ -130,6 +130,8 @@ export const api = {
     fetch(`/api/accounts/${id}/usage`, { method: "POST" }).then((r) => json<PoolAccount>(r)),
   usageSync: () => fetch("/api/usage/sync").then((r) => json<UsageSyncStatus>(r)),
   startUsageSync: () => fetch("/api/usage/sync", { method: "POST" }).then((r) => json<UsageSyncStatus>(r)),
+  keepPoolCookies: () =>
+    fetch("/api/pool/cookies", { method: "POST" }).then((r) => json<{ ok: boolean; count: number; jobs: Job[] }>(r)),
   logs: (page = 1, pageSize = 50, q: { model?: string; email?: string; status?: string; stream?: string } = {}) => {
     const p = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
     if (q.model) p.set("model", q.model)

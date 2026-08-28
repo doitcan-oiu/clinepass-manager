@@ -203,6 +203,25 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if err != nil || gotRefresh.UsageRefreshSec != 120 || gotRefresh.UsageRefreshConcurrency != 16 {
 		t.Fatalf("usage refresh %+v %v", gotRefresh, err)
 	}
+	if !gotRefresh.CookieKeepEnabled || gotRefresh.CookieKeepHour != 4 {
+		t.Fatalf("cookie keep default %+v", gotRefresh)
+	}
+	gotRefresh.CookieKeepEnabled = false
+	gotRefresh.CookieKeepHour = 22
+	if err := s.SaveSettings(gotRefresh); err != nil {
+		t.Fatal(err)
+	}
+	gotKeep, err := s.GetSettings()
+	if err != nil || gotKeep.CookieKeepEnabled || gotKeep.CookieKeepHour != 22 {
+		t.Fatalf("cookie keep %+v %v", gotKeep, err)
+	}
+	if err := s.SetCookieKeepLastDate("2026-08-27"); err != nil {
+		t.Fatal(err)
+	}
+	gotKeep, err = s.GetSettings()
+	if err != nil || gotKeep.CookieKeepLastDate != "2026-08-27" {
+		t.Fatalf("cookie keep date %+v %v", gotKeep, err)
+	}
 	again = gotRefresh
 	again.CloakVersion = "151.0.7922.108.2"
 	again.CloakLicenseKey = "ck_test_license"

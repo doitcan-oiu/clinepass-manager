@@ -26,6 +26,7 @@ type Manager struct {
 	queue    []string
 	running  map[string]string
 	warmCard func()
+	holdPump bool
 }
 
 func New(cfg config.Config, st *store.Store) *Manager {
@@ -92,7 +93,7 @@ func (m *Manager) Subscribe(jobID string) (chan model.JobEvent, func()) {
 }
 
 func (m *Manager) Enqueue(accountID string, autoPay bool) (*model.Job, error) {
-	return m.enqueue(accountID, "login", autoPay)
+	return m.enqueue(accountID, KindLogin, autoPay)
 }
 
 func (m *Manager) EnqueueRefresh(accountID string, autoPay bool) (*model.Job, error) {
@@ -103,7 +104,42 @@ func (m *Manager) EnqueueRefresh(accountID string, autoPay bool) (*model.Job, er
 	if strings.TrimSpace(acc.CookiesJSON) == "" || strings.TrimSpace(acc.WorkspaceID) == "" {
 		return nil, fmt.Errorf("没有可用 Cookie")
 	}
-	return m.enqueue(accountID, "refresh", autoPay)
+	return m.enqueue(accountID, KindRefresh, autoPay)
+}
+
+func (m *Manager) EnqueueCookie(accountID string) (*model.Job, error) {
+	return m.enqueue(accountID, KindCookie, false)
+}
+
+func (m *Manager) EnqueueCookieKeep() ([]*model.Job, error) {
+	list, err := m.store.ListPoolAccountsRaw()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*model.Job, 0, len(list))
+	for _, acc := range list {
+		if strings.TrimSpace(acc.CookiesJSON) == "" && strings.TrimSpace(acc.CookieHeader) == "" {
+			continue
+		}
+		j, err := m.EnqueueCookie(acc.ID)
+		if err != nil {
+			continue
+		}
+		out = append(out, j)
+	}
+	return out, nil
+}
+
+func (m *Manager) accountBusy(accountID string) bool {
+	if _, ok := m.running[accountID]; ok {
+		return true
+	}
+	for _, id := range m.queue {
+		if j := m.jobs[id]; j != nil && j.AccountID == accountID && (j.Status == "queued" || j.Status == "running") {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) enqueue(accountID, kind string, autoPay bool) (*model.Job, error) {
@@ -111,11 +147,15 @@ func (m *Manager) enqueue(accountID, kind string, autoPay bool) (*model.Job, err
 	if err != nil {
 		return nil, err
 	}
-	if acc.PaidAt > 0 {
-		return nil, fmt.Errorf("已经支付，跳过提取")
-	}
 	if kind == "" {
-		kind = "login"
+		kind = KindLogin
+	}
+	if kind == KindCookie {
+		if strings.TrimSpace(acc.CookiesJSON) == "" && strings.TrimSpace(acc.CookieHeader) == "" {
+			return nil, fmt.Errorf("没有可用 Cookie，无法续期")
+		}
+	} else if acc.PaidAt > 0 {
+		return nil, fmt.Errorf("已经支付，跳过提取")
 	}
 	job := &model.Job{
 		ID:        newID(),
@@ -127,10 +167,16 @@ func (m *Manager) enqueue(accountID, kind string, autoPay bool) (*model.Job, err
 		StartedAt: time.Now().Unix(),
 	}
 	m.mu.Lock()
+	if m.accountBusy(accountID) {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("该账号已有浏览器任务在排队或进行中")
+	}
 	m.jobs[job.ID] = job
 	m.queue = append(m.queue, job.ID)
 	m.mu.Unlock()
-	_ = m.store.UpdateStatus(acc.ID, "queued", "")
+	if kind != KindCookie {
+		_ = m.store.UpdateStatus(acc.ID, "queued", "")
+	}
 	if autoPay {
 		m.mu.Lock()
 		warm := m.warmCard
@@ -145,6 +191,12 @@ func (m *Manager) enqueue(accountID, kind string, autoPay bool) (*model.Job, err
 
 func (m *Manager) Pump() {
 	m.pump()
+}
+
+func (m *Manager) HoldPump() {
+	m.mu.Lock()
+	m.holdPump = true
+	m.mu.Unlock()
 }
 
 func (m *Manager) snapshotConfig() config.Config {
@@ -178,6 +230,9 @@ func (m *Manager) maxConcurrentLocked() int {
 func (m *Manager) pump() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.holdPump {
+		return
+	}
 	for m.active < m.maxConcurrentLocked() && len(m.queue) > 0 {
 		id := m.queue[0]
 		m.queue = m.queue[1:]
@@ -201,15 +256,20 @@ func (m *Manager) run(job *model.Job) {
 	}()
 
 	m.setStatus(job, "running", "")
-	_ = m.store.UpdateStatus(job.AccountID, "running", "")
+	if job.Kind != KindCookie {
+		_ = m.store.UpdateStatus(job.AccountID, "running", "")
+	}
 	acc, err := m.store.Get(job.AccountID)
 	if err != nil {
 		m.fail(job, err.Error())
 		return
 	}
 	startMsg := "开始登录 %s"
-	if job.Kind == "refresh" {
+	switch job.Kind {
+	case KindRefresh:
 		startMsg = "开始刷新支付链接 %s"
+	case KindCookie:
+		startMsg = "开始用浏览器续 Cookie %s"
 	}
 	m.logf(job, "info", startMsg, acc.Email)
 
@@ -223,11 +283,16 @@ func (m *Manager) run(job *model.Job) {
 	}
 
 	var res login.Result
-	if job.Kind == "refresh" {
+	switch job.Kind {
+	case KindCookie:
+		res, err = login.RefreshCookies(cfg, acc, func(format string, args ...any) {
+			m.logf(job, "info", format, args...)
+		})
+	case KindRefresh:
 		res, err = login.RefreshPayment(cfg, acc, func(format string, args ...any) {
 			m.logf(job, "info", format, args...)
 		})
-	} else {
+	default:
 		res, err = m.runLoginWithAuthkitRetry(cfg, acc, job)
 	}
 	if err != nil {
@@ -242,9 +307,22 @@ func (m *Manager) run(job *model.Job) {
 		}
 		msg := login.CompactMessage(err.Error())
 		m.fail(job, msg)
-		acc.Status = "failed"
-		acc.LastError = msg
-		_ = m.store.SaveLoginResult(acc)
+		if job.Kind != KindCookie {
+			acc.Status = "failed"
+			acc.LastError = msg
+			_ = m.store.SaveLoginResult(acc)
+		} else {
+			_ = m.store.SetAccountLastError(acc.ID, msg)
+		}
+		return
+	}
+	if job.Kind == KindCookie {
+		if err := m.store.SaveCookies(acc.ID, res.CookiesJSON, res.CookieHeader); err != nil {
+			m.fail(job, err.Error())
+			return
+		}
+		m.logf(job, "info", "Cookie 已更新")
+		m.setStatus(job, "success", "")
 		return
 	}
 	acc.Status = "ready"
@@ -279,7 +357,7 @@ func (m *Manager) run(job *model.Job) {
 		m.setStatus(job, "failed", msg)
 		return
 	}
-	if job.Kind == "refresh" {
+	if job.Kind == KindRefresh {
 		m.logf(job, "info", "刷新完成")
 	} else {
 		m.logf(job, "info", "登录完成")
@@ -312,7 +390,9 @@ func (m *Manager) runLoginWithAuthkitRetry(cfg config.Config, acc model.Account,
 func (m *Manager) fail(job *model.Job, msg string) {
 	m.logf(job, "error", "%s", msg)
 	m.setStatus(job, "failed", msg)
-	_ = m.store.UpdateStatus(job.AccountID, "failed", msg)
+	if job.Kind != KindCookie {
+		_ = m.store.UpdateStatus(job.AccountID, "failed", msg)
+	}
 }
 
 func (m *Manager) setStatus(job *model.Job, status, errMsg string) {

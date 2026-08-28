@@ -184,7 +184,7 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 		Paid:         last.Paid,
 		PayError:     last.PayError,
 	}
-	if action != "refresh" {
+	if action != "refresh" && action != "cookie" {
 		key, userID, err := createClineKey(cfg, res.CookieHeader, "", "", log)
 		if err != nil {
 			return Result{}, err

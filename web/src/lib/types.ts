@@ -119,6 +119,9 @@ export type AppConfig = {
   amzkeys_card_next_last4: string
   amzkeys_card_next_pending: boolean
   amzkeys_card_error: string
+  cookie_keep_enabled: boolean
+  cookie_keep_hour: number
+  cookie_keep_last_date: string
 }
 
 export type CloakUpdate = {

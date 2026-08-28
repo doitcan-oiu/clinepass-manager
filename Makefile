@@ -55,7 +55,7 @@ ensure-env worker-venv:
 	@bash scripts/ensure-worker-env.sh
 
 worker-test:
-	cd worker && python3 -m unittest test_urls test_herosms test_cloak test_radar test_stripe_pay -v
+	cd worker && python3 -m unittest test_urls test_herosms test_cloak test_radar test_stripe_pay test_pageutil -v
 
 build: ensure-env build-web
 	go build -o bin/server ./cmd/server

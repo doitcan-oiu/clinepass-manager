@@ -12,7 +12,7 @@ if HERE not in sys.path:
 
 from cloak import launch_ctx  # noqa: E402
 from errors import WorkerError  # noqa: E402
-from flow import run_login, run_refresh  # noqa: E402
+from flow import run_keepalive, run_login, run_refresh  # noqa: E402
 from pageutil import screenshot  # noqa: E402
 from protocol import log, result  # noqa: E402
 
@@ -58,7 +58,9 @@ def main() -> int:
         ctx = launch_ctx(settings, seed)
         pages = ctx.pages
         page = pages[0] if pages else ctx.new_page()
-        if action == "refresh":
+        if action == "cookie":
+            out = run_keepalive(page, ctx, acc, settings)
+        elif action == "refresh":
             out = run_refresh(page, ctx, acc, settings)
         else:
             out = run_login(page, ctx, acc, settings)

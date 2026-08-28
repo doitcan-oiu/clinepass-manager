@@ -36,6 +36,10 @@ export function SettingsPage() {
   const [proxy, setProxy] = useState("")
   const [headless, setHeadless] = useState(true)
   const [maxConcurrent, setMaxConcurrent] = useState(1)
+  const [cookieKeepEnabled, setCookieKeepEnabled] = useState(true)
+  const [cookieKeepHour, setCookieKeepHour] = useState(4)
+  const [cookieKeepLastDate, setCookieKeepLastDate] = useState("")
+  const [keepingCookies, setKeepingCookies] = useState(false)
   const [maxRetries, setMaxRetries] = useState(3)
   const [accountRpm, setAccountRpm] = useState(5)
   const [apiProxy, setApiProxy] = useState(true)
@@ -90,6 +94,9 @@ export function SettingsPage() {
         setProxy(cfg.proxy || "")
         setHeadless(cfg.headless !== false)
         setMaxConcurrent(cfg.max_concurrent >= 1 ? cfg.max_concurrent : 1)
+        setCookieKeepEnabled(cfg.cookie_keep_enabled !== false)
+        setCookieKeepHour(Number.isFinite(cfg.cookie_keep_hour) && cfg.cookie_keep_hour >= 0 && cfg.cookie_keep_hour <= 23 ? cfg.cookie_keep_hour : 4)
+        setCookieKeepLastDate(cfg.cookie_keep_last_date || "")
         setMaxRetries(Number.isFinite(cfg.max_retries) && cfg.max_retries >= 0 ? cfg.max_retries : 3)
         setAccountRpm(cfg.account_rpm >= 1 ? cfg.account_rpm : 5)
         setApiProxy(cfg.api_proxy !== false)
@@ -177,14 +184,22 @@ export function SettingsPage() {
         toast.error("并发数至少为 1")
         return
       }
+      const hour = Math.floor(Number(cookieKeepHour))
+      if (!Number.isFinite(hour) || hour < 0 || hour > 23) {
+        toast.error("续 Cookie 小时须在 0–23")
+        return
+      }
       await api.saveConfig({
         proxy,
         headless,
         max_concurrent: n,
         provider_mode: providerMode,
         provider_value: providerValue,
+        cookie_keep_enabled: cookieKeepEnabled,
+        cookie_keep_hour: hour,
       })
       setMaxConcurrent(n)
+      setCookieKeepHour(hour)
       toast.success("运行环境已保存")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存失败")
@@ -459,8 +474,53 @@ export function SettingsPage() {
                     value={maxConcurrent}
                     onChange={(e) => setMaxConcurrent(Number(e.target.value))}
                   />
-                  <p className="text-xs text-muted-foreground">同时打开多少个浏览器去提取链接，最少 1，没有上限。改完立即生效。</p>
+                  <p className="text-xs text-muted-foreground">同时打开多少个浏览器去提取链接，最少 1，没有上限。改完立即生效。每日续 Cookie 也走这条队列，提号时会排队。</p>
                 </div>
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor="cookie-keep">每天续 Cookie</Label>
+                    <p className="text-xs text-muted-foreground">对有效（已付款）账号用浏览器打开 dashboard，换新 Cookie。和提号共用并发。</p>
+                  </div>
+                  <Switch id="cookie-keep" checked={cookieKeepEnabled} onCheckedChange={setCookieKeepEnabled} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="cookie-keep-hour">每天几点开始（0–23）</Label>
+                  <Input
+                    id="cookie-keep-hour"
+                    type="number"
+                    min={0}
+                    max={23}
+                    step={1}
+                    value={cookieKeepHour}
+                    onChange={(e) => setCookieKeepHour(Number(e.target.value))}
+                    disabled={!cookieKeepEnabled}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {cookieKeepLastDate ? `上次入队日期 ${cookieKeepLastDate}。` : "今天还没跑过。"}
+                    到点后入队，不会另开一套浏览器并发。
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={pending || keepingCookies}
+                  className="w-fit"
+                  onClick={async () => {
+                    setKeepingCookies(true)
+                    try {
+                      const got = await api.keepPoolCookies()
+                      toast.success(got.count ? `已入队 ${got.count} 个账号续 Cookie` : "没有可续的有效账号")
+                      const cfg = await api.config()
+                      setCookieKeepLastDate(cfg.cookie_keep_last_date || "")
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "入队失败")
+                    } finally {
+                      setKeepingCookies(false)
+                    }
+                  }}
+                >
+                  {keepingCookies ? "正在入队…" : "立即续一次 Cookie"}
+                </Button>
                 <div className="grid gap-2">
                   <Label htmlFor="provider-mode">响应里的 provider</Label>
                   <select

@@ -164,6 +164,16 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 	return result, nil
 }
 
+func RefreshCookies(cfg config.Config, acc model.Account, log Logger) (Result, error) {
+	if log == nil {
+		log = func(string, ...any) {}
+	}
+	if strings.TrimSpace(acc.CookiesJSON) == "" && strings.TrimSpace(acc.CookieHeader) == "" {
+		return Result{}, fmt.Errorf("没有可用 Cookie，无法续期")
+	}
+	return runPythonOnce(cfg, acc, "cookie", log)
+}
+
 func RefreshPayment(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 	if log == nil {
 		log = func(string, ...any) {}

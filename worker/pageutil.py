@@ -275,6 +275,32 @@ def cookies_for_context(raw: str) -> list:
     return out
 
 
+def cookies_from_header(raw: str) -> list:
+    out = []
+    for part in (raw or "").split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        name = name.strip()
+        if not name:
+            continue
+        out.append({"name": name, "value": value.strip(), "domain": ".cline.bot", "path": "/"})
+    if not out:
+        raise RuntimeError("Cookie 为空")
+    return out
+
+
+def cookies_for_account(acc: dict) -> list:
+    raw = (acc.get("cookies_json") or "").strip()
+    if raw:
+        try:
+            return cookies_for_context(raw)
+        except Exception:
+            pass
+    return cookies_from_header(acc.get("cookie_header") or "")
+
+
 def field_ready(page, selector: str) -> bool:
     loc = page.locator(selector).first
     try:

@@ -145,6 +145,9 @@ type Settings struct {
 	EmailSuffixBlacklist    []string `json:"email_suffix_blacklist,omitempty"`
 	ProviderMode            string   `json:"provider_mode,omitempty"`
 	ProviderValue           string   `json:"provider_value,omitempty"`
+	CookieKeepEnabled       bool     `json:"cookie_keep_enabled"`
+	CookieKeepHour          int      `json:"cookie_keep_hour"`
+	CookieKeepLastDate      string   `json:"cookie_keep_last_date,omitempty"`
 }
 
 type AmzKeysCard struct {

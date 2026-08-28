@@ -118,6 +118,28 @@ def run_login(page, context, acc: dict, settings: dict) -> dict:
     return finish_payment(page, cookies_json, cookie_header, payment, settings)
 
 
+def run_keepalive(page, context, acc: dict, settings: dict | None = None) -> dict:
+    from pageutil import cookies_for_account
+
+    cookies = cookies_for_account(acc)
+    context.add_cookies(cookies)
+    log("已注入 %d 条 Cookie，打开 dashboard", len(cookies))
+    log("打开 %s", APP_DASHBOARD)
+    page.goto(APP_DASHBOARD, wait_until="domcontentloaded", timeout=60000)
+    sleep_ms(1200)
+    if cookie_expired(page.url):
+        wrap_authkit(RuntimeError(f"Cookie 已失效，当前 URL={page.url}"), page.url)
+    if not on_cline_app(page.url):
+        raise RuntimeError(f"没有进入 Cline dashboard，当前 URL={page.url}")
+    sleep_ms(800)
+    fresh = context.cookies()
+    if not fresh:
+        raise RuntimeError("打开 dashboard 后没有拿到 Cookie")
+    cookies_json, cookie_header = serialize_cookies(fresh)
+    log("已更新 %d 条 Cookie", len(fresh))
+    return {"cookies_json": cookies_json, "cookie_header": cookie_header}
+
+
 def run_refresh(page, context, acc: dict, settings: dict | None = None) -> dict:
     from pageutil import cookies_for_context
 

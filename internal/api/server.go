@@ -84,6 +84,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/pool/import", s.importAccounts)
 	mux.HandleFunc("GET /api/usage/sync", s.getUsageSync)
 	mux.HandleFunc("POST /api/usage/sync", s.startUsageSync)
+	mux.HandleFunc("POST /api/pool/cookies", s.keepPoolCookies)
 	mux.HandleFunc("GET /api/jobs", s.listJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", s.getJob)
 	mux.HandleFunc("GET /api/jobs/{id}/events", s.jobEvents)
@@ -99,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) expireLoop() {
 	_, _ = s.store.DeleteExpiredAccounts(time.Now().Unix())
 	_ = s.store.PruneRequestLogs(0)
+	s.maybeCookieKeep(time.Now())
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for range t.C {
@@ -106,7 +108,45 @@ func (s *Server) expireLoop() {
 		_, _ = s.store.DeleteExpiredAccounts(now.Unix())
 		_ = s.store.PruneRequestLogs(now.UnixMilli())
 		s.WarmAmzKeysCard()
+		s.maybeCookieKeep(now)
 	}
+}
+
+func (s *Server) maybeCookieKeep(now time.Time) {
+	st, err := s.store.GetSettings()
+	if err != nil {
+		return
+	}
+	if !job.ShouldRunCookieKeep(now, st.CookieKeepEnabled, st.CookieKeepHour, st.CookieKeepLastDate) {
+		return
+	}
+	jobs, err := s.jobs.EnqueueCookieKeep()
+	if err != nil {
+		log.Printf("每日续 Cookie 入队失败: %v", err)
+		return
+	}
+	if err := s.store.SetCookieKeepLastDate(job.CookieKeepDate(now)); err != nil {
+		log.Printf("记下续 Cookie 日期失败: %v", err)
+	}
+	log.Printf("每日续 Cookie 已入队 %d 个有效账号，与提号共用并发 %d", len(jobs), st.MaxConcurrent)
+}
+
+func (s *Server) keepPoolCookies(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "方法不允许")
+		return
+	}
+	jobs, err := s.jobs.EnqueueCookieKeep()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.store.SetCookieKeepLastDate(job.CookieKeepDate(time.Now()))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":    true,
+		"count": len(jobs),
+		"jobs":  jobs,
+	})
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +190,8 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		AmzKeysPrivateKey       *string  `json:"amzkeys_private_key"`
 		AmzKeysCardType         *int     `json:"amzkeys_card_type"`
 		AmzKeysCardAmount       *float64 `json:"amzkeys_card_amount"`
+		CookieKeepEnabled       *bool    `json:"cookie_keep_enabled"`
+		CookieKeepHour          *int     `json:"cookie_keep_hour"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 无效")
@@ -259,6 +301,16 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cur.AmzKeysCardAmount = *in.AmzKeysCardAmount
+	}
+	if in.CookieKeepEnabled != nil {
+		cur.CookieKeepEnabled = *in.CookieKeepEnabled
+	}
+	if in.CookieKeepHour != nil {
+		if *in.CookieKeepHour < 0 || *in.CookieKeepHour > 23 {
+			writeErr(w, http.StatusBadRequest, "续 Cookie 小时须在 0–23")
+			return
+		}
+		cur.CookieKeepHour = *in.CookieKeepHour
 	}
 	cloakChanged := in.CloakVersion != nil || in.CloakLicenseKey != nil
 	if err := s.store.SaveSettings(cur); err != nil {
@@ -387,6 +439,9 @@ func (s *Server) publicConfig() map[string]any {
 		"amzkeys_card_next_last4":   nextLast4,
 		"amzkeys_card_next_pending": nextPending,
 		"amzkeys_card_error":        lastErr,
+		"cookie_keep_enabled":       st.CookieKeepEnabled,
+		"cookie_keep_hour":          job.ClampCookieKeepHour(st.CookieKeepHour),
+		"cookie_keep_last_date":     st.CookieKeepLastDate,
 	}
 }
 
