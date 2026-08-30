@@ -224,6 +224,55 @@ func TestBackgroundSkipFreshModels(t *testing.T) {
 	}
 }
 
+func TestStartAllSkipsCookieExpired(t *testing.T) {
+	st := openStore(t)
+	fresh := mustPaid(t, st, "fresh@x.com")
+	stale := mustPaid(t, st, "stale@x.com")
+	if err := st.SaveAccountUsage(stale.ID, model.AccountUsage{
+		CookieExpired: true,
+		SyncedAt:      time.Now().Unix(),
+		Error:         "Cookie 已过期（手动标记）",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSyncer(st)
+	var n atomic.Int32
+	s.fetch = func(a model.Account, _ string, _ bool) (model.AccountUsage, bool, error) {
+		n.Add(1)
+		if a.Email == "stale@x.com" {
+			t.Error("cookie expired account was fetched")
+		}
+		return okUsage(15), true, nil
+	}
+	if err := s.StartAllForced(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for s.Status().Running {
+		if time.Now().After(deadline) {
+			t.Fatal("sync did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n.Load() != 1 {
+		t.Fatalf("fetches=%d want 1", n.Load())
+	}
+	u, err := st.GetAccountUsage(stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.CookieStale() {
+		t.Fatal("stale flag cleared")
+	}
+	got, err := st.GetAccountUsage(fresh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Rolling.UsagePercent != 15 {
+		t.Fatalf("fresh %+v", got.Rolling)
+	}
+}
+
 func okUsage(rolling float64) model.AccountUsage {
 	return model.AccountUsage{
 		SyncedAt: time.Now().Unix(),

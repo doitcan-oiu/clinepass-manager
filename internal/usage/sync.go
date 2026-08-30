@@ -197,7 +197,19 @@ func (s *Syncer) Refresh(id string) {
 	wg.Done()
 }
 
+func (s *Syncer) skipUsageRefresh(a model.Account) bool {
+	prev, err := s.store.GetAccountUsage(a.ID)
+	return err == nil && prev.CookieStale()
+}
+
 func (s *Syncer) start(list []model.Account, label string, forceModels bool) error {
+	scan := make([]model.Account, 0, len(list))
+	for _, a := range list {
+		if s.skipUsageRefresh(a) {
+			continue
+		}
+		scan = append(scan, a)
+	}
 	s.mu.Lock()
 	if s.st.Running {
 		s.mu.Unlock()
@@ -205,13 +217,13 @@ func (s *Syncer) start(list []model.Account, label string, forceModels bool) err
 	}
 	s.st = model.UsageSyncStatus{
 		Running:    true,
-		Total:      len(list),
+		Total:      len(scan),
 		Message:    "正在扫描 " + label,
 		StartedAt:  time.Now().Unix(),
 		FinishedAt: s.st.FinishedAt,
 	}
 	s.mu.Unlock()
-	go s.run(list, forceModels)
+	go s.run(scan, forceModels)
 	return nil
 }
 
@@ -258,7 +270,7 @@ func (s *Syncer) syncOne(a model.Account, forceModels bool) (model.AccountUsage,
 		_ = s.store.Delete(a.ID)
 		return model.AccountUsage{}, false, fmt.Errorf("月额度已用完，账号已删除")
 	}
-	if prevErr == nil && prev.CookieStale() && !forceModels {
+	if prevErr == nil && prev.CookieStale() {
 		return prev, true, nil
 	}
 	st, _ := s.store.GetSettings()

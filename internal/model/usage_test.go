@@ -31,17 +31,25 @@ func TestSplitShelved(t *testing.T) {
 			Error:         "Cookie 失效，被重定向到登录",
 		},
 	}
-	active, weekly, rolling, expired := SplitShelved([]PoolAccount{ok, weeklyHold, rollingHold, stale})
-	if len(active) != 1 || active[0].Email != "ok@x.com" {
+	staleHeld := PoolAccount{
+		AccountPublic: AccountPublic{Email: "stale-week@x.com"},
+		Usage: AccountUsage{
+			CookieExpired: true,
+			HoldKind:      HoldWeekly,
+			HoldUntil:     1 << 40,
+		},
+	}
+	active, weekly, rolling, expired := SplitShelved([]PoolAccount{ok, weeklyHold, rollingHold, stale, staleHeld})
+	if len(active) != 2 || active[0].Email != "ok@x.com" || active[1].Email != "stale@x.com" {
 		t.Fatalf("active %+v", emails(active))
 	}
-	if len(weekly) != 1 || weekly[0].Email != "week@x.com" {
+	if len(weekly) != 2 || weekly[0].Email != "week@x.com" || weekly[1].Email != "stale-week@x.com" {
 		t.Fatalf("weekly %+v", emails(weekly))
 	}
 	if len(rolling) != 1 || rolling[0].Email != "roll@x.com" {
 		t.Fatalf("rolling %+v", emails(rolling))
 	}
-	if len(expired) != 1 || expired[0].Email != "stale@x.com" {
+	if len(expired) != 0 {
 		t.Fatalf("expired %+v", emails(expired))
 	}
 }

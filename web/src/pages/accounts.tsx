@@ -3,8 +3,8 @@ import { ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Cookie, Download, 
 import { toast } from "sonner"
 import { api, type AccountTestResult } from "@/lib/api"
 import { downloadJSON } from "@/lib/download"
-import type { Batch, ModelSpend, PoolAccount, PoolStats, UsageSyncStatus, UsageWindow } from "@/lib/types"
-import { barClass, formatRefreshAt, formatResetAt, health, isCookieExpired, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, shelfOf, usageRows, windowPct } from "@/lib/quota"
+import type { Batch, ModelSpend, PoolAccount, PoolStats, UsageSyncStatus } from "@/lib/types"
+import { barClass, formatHoldUntil, formatRefreshAt, health, isCookieExpired, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, shelfOf, usageRows } from "@/lib/quota"
 import { AddPaidDialog } from "@/components/accounts/add-paid-dialog"
 import { loginProviderLabel, normalizeLoginProvider } from "@/lib/login-provider"
 import { Button } from "@/components/ui/button"
@@ -30,10 +30,8 @@ export function AccountsPage() {
   const [items, setItems] = useState<PoolAccount[]>([])
   const [weeklyLimited, setWeeklyLimited] = useState<PoolAccount[]>([])
   const [rollingLimited, setRollingLimited] = useState<PoolAccount[]>([])
-  const [cookieExpired, setCookieExpired] = useState<PoolAccount[]>([])
   const [weeklyOpen, setWeeklyOpen] = useState(false)
   const [rollingOpen, setRollingOpen] = useState(false)
-  const [cookieOpen, setCookieOpen] = useState(false)
   const [testOf, setTestOf] = useState<PoolAccount | null>(null)
   const [testModels, setTestModels] = useState<{ id: string; name: string }[]>([])
   const [testModel, setTestModel] = useState("")
@@ -66,14 +64,12 @@ export function AccountsPage() {
       setItems(again.items)
       setWeeklyLimited(again.weekly_limited || [])
       setRollingLimited(again.rolling_limited || [])
-      setCookieExpired(again.cookie_expired || [])
       setTotal(again.total)
       setStats(again.stats || emptyStats)
     } else {
       setItems(pool.items)
       setWeeklyLimited(pool.weekly_limited || [])
       setRollingLimited(pool.rolling_limited || [])
-      setCookieExpired(pool.cookie_expired || [])
       setTotal(pool.total)
       setStats(pool.stats || emptyStats)
     }
@@ -158,7 +154,6 @@ export function AccountsPage() {
       setItems((cur) => cur.map((x) => (x.id === a.id ? next : x)))
       setWeeklyLimited((cur) => cur.map((x) => (x.id === a.id ? next : x)))
       setRollingLimited((cur) => cur.map((x) => (x.id === a.id ? next : x)))
-      setCookieExpired((cur) => cur.map((x) => (x.id === a.id ? next : x)))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "刷新失败")
     } finally {
@@ -170,7 +165,7 @@ export function AccountsPage() {
     setBusyId(a.id)
     try {
       await api.setCookieExpired(a.id, expired)
-      toast.success(expired ? "已标记 Cookie 过期：仍按 Key 调度，滚动/周限以 429 为准" : "已清除 Cookie 过期标记")
+      toast.success(expired ? "已标记 Cookie 过期：不再刷新用量，仍按 Key 调度" : "已清除 Cookie 过期标记")
       await reload(page, batchId)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "标记失败")
@@ -279,13 +274,13 @@ export function AccountsPage() {
         </div>
       </div>
 
-      {items.length === 0 && weeklyLimited.length === 0 && rollingLimited.length === 0 && cookieExpired.length === 0 ? (
+      {items.length === 0 && weeklyLimited.length === 0 && rollingLimited.length === 0 ? (
         <div className="rounded-xl border border-dashed bg-card p-12 text-center text-muted-foreground">
           还没有已付款账号。在「提取支付链接」点确认付款后，有配额的号会出现在这里。
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-xl border border-dashed bg-card p-8 text-center text-muted-foreground">
-          当前没有用量正常的账号。Cookie 过期的号仍可调度，额度已满的号收在下面。
+          当前没有可调度的账号，429 冷却中的号收在下面。
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
@@ -306,38 +301,18 @@ export function AccountsPage() {
         </div>
       )}
 
-      {cookieExpired.length > 0 ? (
-        <QuotaFold
-          title="Cookie 已过期"
-          hint="邮箱可能登不上了，仍按 API Key 调度；只有 429 带重置时间才冷却"
-          pctLabel="滚动"
-          accounts={cookieExpired}
-          windowOf={(a) => a.usage?.rolling}
-          open={cookieOpen}
-          onOpenChange={setCookieOpen}
-          busyId={busyId}
-          onModels={setModelsOf}
-          onTest={openTest}
-          onClearExpired={(a) => markExpired(a, false)}
-          onRefresh={refreshOne}
-          onRemove={setRemove}
-        />
-      ) : null}
-
       {rollingLimited.length > 0 ? (
         <QuotaFold
           title="滚动冷却"
-          hint="429 正文里的重置时间未到，不调度"
-          pctLabel="滚动"
+          hint="429 重置时间未到，不调度"
           accounts={rollingLimited}
-          windowOf={(a) => a.usage?.rolling}
           open={rollingOpen}
           onOpenChange={setRollingOpen}
           busyId={busyId}
           onModels={setModelsOf}
           onTest={openTest}
           onMarkExpired={(a) => markExpired(a, true)}
-          onRefresh={refreshOne}
+          onClearExpired={(a) => markExpired(a, false)}
           onRemove={setRemove}
         />
       ) : null}
@@ -345,17 +320,15 @@ export function AccountsPage() {
       {weeklyLimited.length > 0 ? (
         <QuotaFold
           title="周限冷却"
-          hint="按 429「resets in 3d 7h」这类剩余时间停车，不按用量百分比收起"
-          pctLabel="周限"
+          hint="按 429 正文里的剩余时间停车"
           accounts={weeklyLimited}
-          windowOf={(a) => a.usage?.weekly}
           open={weeklyOpen}
           onOpenChange={setWeeklyOpen}
           busyId={busyId}
           onModels={setModelsOf}
           onTest={openTest}
           onMarkExpired={(a) => markExpired(a, true)}
-          onRefresh={refreshOne}
+          onClearExpired={(a) => markExpired(a, false)}
           onRemove={setRemove}
         />
       ) : null}
@@ -363,9 +336,8 @@ export function AccountsPage() {
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
           共 {stats.total} 个账号
-          {cookieExpired.length ? ` · Cookie 过期 ${cookieExpired.length} 个` : ""}
-          {rollingLimited.length ? ` · 滚动 ${rollingLimited.length} 个已收起` : ""}
-          {weeklyLimited.length ? ` · 周限 ${weeklyLimited.length} 个已收起` : ""}
+          {rollingLimited.length ? ` · 滚动冷却 ${rollingLimited.length} 个` : ""}
+          {weeklyLimited.length ? ` · 周限冷却 ${weeklyLimited.length} 个` : ""}
           {sync.running && sync.message ? ` · ${sync.message}` : ""}
         </span>
         <div className="flex items-center gap-2">
@@ -547,9 +519,11 @@ function AccountCard({
         >
           <Cookie />
         </Button>
-        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="刷新用量" disabled={busy} onClick={onRefresh}>
-          <RefreshCw className={busy ? "animate-spin" : undefined} />
-        </Button>
+        {!stale ? (
+          <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="刷新用量" disabled={busy} onClick={onRefresh}>
+            <RefreshCw className={busy ? "animate-spin" : undefined} />
+          </Button>
+        ) : null}
         <Button size="icon-sm" variant="ghost" className="text-muted-foreground hover:text-destructive" title="删除账号" onClick={onRemove}>
           <Trash2 />
         </Button>
@@ -563,33 +537,35 @@ function AccountCard({
           在途 {a.inflight || 0}
         </span>
         {a.batch_name ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{a.batch_name}</span> : null}
-        {expire ? (
+        {!stale && expire ? (
           <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
             到期 {expire}
           </span>
         ) : null}
       </div>
-      <div className="space-y-2">
-        {usageRows(a.usage, synced).map((row) => (
-          <div key={row.key}>
-            <div className="mb-0.5 flex items-center justify-between text-[11px]">
-              <span className="text-muted-foreground">
-                {row.label}
-                {row.reset ? ` (${row.reset})` : ""}
-              </span>
-              <span className={`font-mono ${pctText(row.pct)}`}>{row.pct == null ? "—" : `${Math.round(row.pct)}%`}</span>
-            </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className={`h-full rounded-full transition-[width] duration-700 ${barClass(row.pct)}`}
-                style={{ width: `${barsOn && row.pct != null ? Math.min(row.pct, 100) : 0}%` }}
-              />
-            </div>
+      {stale ? (
+        <p className="text-[11px] text-muted-foreground">Cookie 过期，不再显示或刷新用量</p>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {usageRows(a.usage, synced).map((row) => (
+              <div key={row.key}>
+                <div className="mb-0.5 flex items-center justify-between text-[11px]">
+                  <span className="text-muted-foreground">{row.label}</span>
+                  <span className={`font-mono ${pctText(row.pct)}`}>{row.pct == null ? "—" : `${Math.round(row.pct)}%`}</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-700 ${barClass(row.pct)}`}
+                    style={{ width: `${barsOn && row.pct != null ? Math.min(row.pct, 100) : 0}%` }}
+                  />
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      {a.usage?.error ? <p className="mt-2 truncate text-[11px] text-red-600" title={a.usage.error}>{a.usage.error}</p> : null}
-      <p className="mt-2 text-[11px] text-muted-foreground">{formatRefreshAt(a.usage?.synced_at || 0)}</p>
+          {a.usage?.error ? <p className="mt-2 truncate text-[11px] text-red-600" title={a.usage.error}>{a.usage.error}</p> : null}
+        </>
+      )}
     </article>
   )
 }
@@ -597,9 +573,7 @@ function AccountCard({
 function QuotaFold({
   title,
   hint,
-  pctLabel,
   accounts,
-  windowOf,
   open,
   onOpenChange,
   busyId,
@@ -607,14 +581,11 @@ function QuotaFold({
   onTest,
   onMarkExpired,
   onClearExpired,
-  onRefresh,
   onRemove,
 }: {
   title: string
   hint?: string
-  pctLabel: string
   accounts: PoolAccount[]
-  windowOf: (a: PoolAccount) => UsageWindow | undefined
   open: boolean
   onOpenChange: (open: boolean) => void
   busyId: string
@@ -622,7 +593,6 @@ function QuotaFold({
   onTest?: (a: PoolAccount) => void
   onMarkExpired?: (a: PoolAccount) => void
   onClearExpired?: (a: PoolAccount) => void
-  onRefresh: (a: PoolAccount) => void
   onRemove: (a: PoolAccount) => void
 }) {
   return (
@@ -642,9 +612,7 @@ function QuotaFold({
       {open ? (
         <ul className="divide-y border-t">
           {accounts.map((a) => {
-            const w = windowOf(a)
-            const pct = windowPct(w, !!a.usage?.synced_at)
-            const reset = formatResetAt(w?.reset_in_sec, a.usage?.synced_at || 0)
+            const resume = formatHoldUntil(a.usage?.hold_until)
             return (
               <li key={a.id} className="flex items-center gap-3 px-4 py-2.5">
                 <button
@@ -657,9 +625,8 @@ function QuotaFold({
                 </button>
                 <span className="hidden text-[11px] text-muted-foreground sm:inline">{a.batch_name || ""}</span>
                 <span className={`shrink-0 font-mono text-[11px] ${(a.inflight || 0) > 0 ? "text-sky-600" : "text-muted-foreground"}`}>在途 {a.inflight || 0}</span>
-                <span className={`font-mono text-[11px] ${pctText(pct)}`}>{pct == null ? "—" : `${pctLabel} ${Math.round(pct)}%`}</span>
-                <span className="hidden w-36 text-right text-[11px] text-muted-foreground lg:inline">{formatRefreshAt(a.usage?.synced_at || 0)}</span>
-                <span className="hidden w-28 text-right text-[11px] text-muted-foreground md:inline">{reset ? `重置 ${reset}` : ""}</span>
+                {isCookieExpired(a) ? <span className="hidden shrink-0 text-[11px] text-orange-700 sm:inline">Cookie 过期</span> : null}
+                <span className="shrink-0 text-right text-[11px] text-muted-foreground">{resume || "冷却中"}</span>
                 {onTest ? (
                   <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="测试对话" disabled={busyId === a.id || !a.api_key} onClick={() => onTest(a)}>
                     <Play />
@@ -675,9 +642,6 @@ function QuotaFold({
                     <Cookie />
                   </Button>
                 ) : null}
-                <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="刷新用量" disabled={busyId === a.id} onClick={() => onRefresh(a)}>
-                  <RefreshCw className={busyId === a.id ? "animate-spin" : undefined} />
-                </Button>
                 <Button size="icon-sm" variant="ghost" className="text-muted-foreground hover:text-destructive" title="删除账号" onClick={() => onRemove(a)}>
                   <Trash2 />
                 </Button>

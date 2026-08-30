@@ -71,11 +71,15 @@ export function isCookieExpired(a: PoolAccount): boolean {
   return err.includes("cookie 失效") || err.includes("cookie 已过期") || err.includes("cookie已过期") || err.includes("被重定向到登录") || err.includes("缺少 cookie")
 }
 
-export function shelfOf(a: PoolAccount): "cookie" | "weekly" | "rolling" | "active" {
+export function shelfOf(a: PoolAccount): "weekly" | "rolling" | "active" {
   if (isWeeklyLimited(a)) return "weekly"
   if (isRollingLimited(a)) return "rolling"
-  if (isCookieExpired(a)) return "cookie"
   return "active"
+}
+
+export function formatHoldUntil(ts: number | undefined) {
+  if (!ts || ts * 1000 <= Date.now()) return ""
+  return `预计刷新 ${formatTime(ts)}`
 }
 
 export function windowPct(w: UsageWindow | undefined, synced: boolean): number | null {
@@ -111,11 +115,10 @@ export function formatResetAt(resetInSec: number | undefined, syncedAt: number) 
 }
 
 export function usageRows(u: AccountUsage | undefined, synced: boolean) {
-  const syncedAt = u?.synced_at || 0
   return [
-    { key: "r", label: "滚动用量", pct: windowPct(u?.rolling, synced), reset: formatResetAt(u?.rolling?.reset_in_sec, syncedAt) },
-    { key: "w", label: "每周用量", pct: windowPct(u?.weekly, synced), reset: formatResetAt(u?.weekly?.reset_in_sec, syncedAt) },
-    { key: "m", label: "每月用量", pct: windowPct(u?.monthly, synced), reset: formatResetAt(u?.monthly?.reset_in_sec, syncedAt) },
+    { key: "r", label: "滚动用量", pct: windowPct(u?.rolling, synced) },
+    { key: "w", label: "每周用量", pct: windowPct(u?.weekly, synced) },
+    { key: "m", label: "每月用量", pct: windowPct(u?.monthly, synced) },
   ]
 }
 

@@ -119,8 +119,6 @@ func SplitShelved(list []PoolAccount) (active, weekly, rolling, cookieExpired []
 			weekly = append(weekly, a)
 		case a.Usage.HoldKind == HoldRolling && hold > now:
 			rolling = append(rolling, a)
-		case a.Usage.CookieStale():
-			cookieExpired = append(cookieExpired, a)
 		default:
 			active = append(active, a)
 		}
