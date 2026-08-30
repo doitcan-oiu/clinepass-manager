@@ -178,6 +178,9 @@ CREATE TABLE IF NOT EXISTS batches (
 	if err := s.ensureColumn("settings", "cookie_keep_last_date", `ALTER TABLE settings ADD COLUMN cookie_keep_last_date TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("settings", "cookie_keep_concurrency", `ALTER TABLE settings ADD COLUMN cookie_keep_concurrency INTEGER NOT NULL DEFAULT 4`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("accounts", "login_provider", `ALTER TABLE accounts ADD COLUMN login_provider TEXT NOT NULL DEFAULT 'google'`); err != nil {
 		return err
 	}
@@ -344,7 +347,63 @@ func (s *Store) SaveCookies(id, cookiesJSON, cookieHeader string) error {
 	_, err := s.db.Exec(`
 UPDATE accounts SET cookies_json = ?, cookie_header = ?, last_error = '', last_login_at = ?, updated_at = ?
 WHERE id = ?`, cookiesJSON, cookieHeader, now, now, id)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.SetCookieExpired(id, false)
+}
+
+func (s *Store) SetCookieExpired(id string, expired bool) error {
+	u, err := s.GetAccountUsage(id)
+	if err != nil {
+		if !expired {
+			return nil
+		}
+		u = model.AccountUsage{Days: []model.ModelDay{}, Models: []model.ModelSpend{}}
+	}
+	u.CookieExpired = expired
+	if expired {
+		if strings.TrimSpace(u.Error) == "" {
+			u.Error = "Cookie 已过期（手动标记）"
+		}
+		if u.SyncedAt == 0 {
+			u.SyncedAt = time.Now().Unix()
+		}
+	} else if model.CookieExpiredMessage(u.Error) || strings.Contains(u.Error, "手动标记") {
+		u.Error = ""
+	}
+	return s.SaveAccountUsage(id, u)
+}
+
+func (s *Store) SetUsageHold(id, kind string, until int64) error {
+	u, err := s.GetAccountUsage(id)
+	if err != nil {
+		u = model.AccountUsage{Days: []model.ModelDay{}, Models: []model.ModelSpend{}}
+	}
+	u.HoldKind = kind
+	u.HoldUntil = until
+	now := time.Now().Unix()
+	if u.SyncedAt == 0 {
+		u.SyncedAt = now
+	}
+	switch kind {
+	case model.HoldRolling:
+		u.Rolling.Status = "rate-limited"
+		u.Rolling.UsagePercent = 100
+		if until > now {
+			u.Rolling.ResetInSec = int(until - now)
+		}
+	case model.HoldWeekly:
+		u.Weekly.Status = "rate-limited"
+		u.Weekly.UsagePercent = 100
+		if until > now {
+			u.Weekly.ResetInSec = int(until - now)
+		}
+	case model.HoldMonthly:
+		u.Monthly.Status = "rate-limited"
+		u.Monthly.UsagePercent = 100
+	}
+	return s.SaveAccountUsage(id, u)
 }
 
 func (s *Store) SetAccountLastError(id, lastError string) error {
@@ -483,7 +542,7 @@ func (s *Store) GetSettings() (model.Settings, error) {
 		IFNULL(cloakbrowser_version, ''), IFNULL(cloakbrowser_license_key, ''),
 		IFNULL(amzkeys_host, ''), IFNULL(amzkeys_app_id, ''), IFNULL(amzkeys_app_key, ''), IFNULL(amzkeys_private_key, ''),
 		IFNULL(amzkeys_card_type, 0), IFNULL(amzkeys_card_amount, 0),
-		IFNULL(cookie_keep_enabled, 1), IFNULL(cookie_keep_hour, 4), IFNULL(cookie_keep_last_date, '')
+		IFNULL(cookie_keep_enabled, 1), IFNULL(cookie_keep_hour, 4), IFNULL(cookie_keep_last_date, ''), IFNULL(cookie_keep_concurrency, 4)
 		FROM settings WHERE id = 1`)
 	var out model.Settings
 	var headless, apiProxy, cookieKeep int
@@ -493,8 +552,8 @@ func (s *Store) GetSettings() (model.Settings, error) {
 		&out.ProviderMode, &out.ProviderValue, &out.UsageRefreshSec, &out.ModelUsageRefreshSec, &out.UsageRefreshConcurrency, &out.AccountRPM, &apiProxy,
 		&out.CloakVersion, &out.CloakLicenseKey,
 		&out.AmzKeysHost, &out.AmzKeysAppID, &out.AmzKeysAppKey, &out.AmzKeysPrivateKey, &out.AmzKeysCardType, &out.AmzKeysCardAmount,
-		&cookieKeep, &out.CookieKeepHour, &out.CookieKeepLastDate); err != nil {
-		return model.Settings{Headless: true, MaxRetries: 3, AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, ModelUsageRefreshSec: 600, UsageRefreshConcurrency: 10, CookieKeepEnabled: true, CookieKeepHour: 4}, err
+		&cookieKeep, &out.CookieKeepHour, &out.CookieKeepLastDate, &out.CookieKeepConcurrency); err != nil {
+		return model.Settings{Headless: true, MaxRetries: 3, AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, ModelUsageRefreshSec: 600, UsageRefreshConcurrency: 10, CookieKeepEnabled: true, CookieKeepHour: 4, CookieKeepConcurrency: 4}, err
 	}
 	out.Headless = headless != 0
 	out.APIProxy = apiProxy != 0
@@ -510,6 +569,7 @@ func (s *Store) GetSettings() (model.Settings, error) {
 	out.EmailSuffixBlacklist = DecodeSuffixList(blacklist)
 	out.ProviderMode = normalizeProviderMode(out.ProviderMode)
 	out.CookieKeepHour = clampCookieKeepHour(out.CookieKeepHour)
+	out.CookieKeepConcurrency = clampCookieKeepConcurrency(out.CookieKeepConcurrency)
 	return out, nil
 }
 
@@ -542,9 +602,10 @@ func (s *Store) SaveSettings(in model.Settings) error {
 		cookieKeep = 1
 	}
 	keepHour := clampCookieKeepHour(in.CookieKeepHour)
+	keepConc := clampCookieKeepConcurrency(in.CookieKeepConcurrency)
 	_, err := s.db.Exec(`
-INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, model_usage_refresh_sec, usage_refresh_concurrency, account_rpm, api_proxy, cloakbrowser_version, cloakbrowser_license_key, amzkeys_host, amzkeys_app_id, amzkeys_app_key, amzkeys_private_key, amzkeys_card_type, amzkeys_card_amount, cookie_keep_enabled, cookie_keep_hour, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO settings (id, proxy, headless, invite_url, usage_js_url, hero_sms_api_key, hero_sms_service, hero_sms_country, hero_sms_max_price, max_concurrent, max_retries, email_suffix_blacklist, provider_mode, provider_value, usage_refresh_sec, model_usage_refresh_sec, usage_refresh_concurrency, account_rpm, api_proxy, cloakbrowser_version, cloakbrowser_license_key, amzkeys_host, amzkeys_app_id, amzkeys_app_key, amzkeys_private_key, amzkeys_card_type, amzkeys_card_amount, cookie_keep_enabled, cookie_keep_hour, cookie_keep_concurrency, updated_at)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	proxy = excluded.proxy,
 	headless = excluded.headless,
@@ -574,13 +635,14 @@ ON CONFLICT(id) DO UPDATE SET
 	amzkeys_card_amount = excluded.amzkeys_card_amount,
 	cookie_keep_enabled = excluded.cookie_keep_enabled,
 	cookie_keep_hour = excluded.cookie_keep_hour,
+	cookie_keep_concurrency = excluded.cookie_keep_concurrency,
 	updated_at = excluded.updated_at`,
 		strings.TrimSpace(in.Proxy), headless, strings.TrimSpace(in.InviteURL), strings.TrimSpace(in.UsageJSURL),
 		strings.TrimSpace(in.HeroSMSAPIKey), svc, in.HeroSMSCountry, in.HeroSMSMaxPrice, conc, retries, blacklist,
 		providerMode, in.ProviderValue, refreshSec, modelRefreshSec, refreshConc, rpm, apiProxy,
 		strings.TrimSpace(in.CloakVersion), strings.TrimSpace(in.CloakLicenseKey),
 		strings.TrimSpace(in.AmzKeysHost), strings.TrimSpace(in.AmzKeysAppID), strings.TrimSpace(in.AmzKeysAppKey),
-		strings.TrimSpace(in.AmzKeysPrivateKey), in.AmzKeysCardType, in.AmzKeysCardAmount, cookieKeep, keepHour, time.Now().Unix())
+		strings.TrimSpace(in.AmzKeysPrivateKey), in.AmzKeysCardType, in.AmzKeysCardAmount, cookieKeep, keepHour, keepConc, time.Now().Unix())
 	return err
 }
 
@@ -698,6 +760,16 @@ func clampCookieKeepHour(n int) int {
 	return n
 }
 
+func clampCookieKeepConcurrency(n int) int {
+	if n < 1 {
+		return 4
+	}
+	if n > 32 {
+		return 32
+	}
+	return n
+}
+
 func clampMaxRetries(n int) int {
 	if n < 0 {
 		return 3
@@ -752,7 +824,8 @@ func (s *Store) SeedDefaults(cfg config.Config) error {
 		APIProxy:          true,
 		CloakVersion:      cfg.CloakVersion,
 		CloakLicenseKey:   cfg.LicenseKey,
-		CookieKeepEnabled: true,
-		CookieKeepHour:    4,
+		CookieKeepEnabled:     true,
+		CookieKeepHour:        4,
+		CookieKeepConcurrency: 4,
 	})
 }

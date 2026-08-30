@@ -3,6 +3,17 @@ package model
 import (
 	"math"
 	"strings"
+	"time"
+)
+
+const (
+	HoldRolling = "rolling"
+	HoldWeekly  = "weekly"
+	HoldMonthly = "monthly"
+	HoldAuth    = "auth"
+
+	RollingHoldSec = 5 * 60 * 60
+	WeeklyHoldSec  = 7 * 24 * 60 * 60
 )
 
 type UsageWindow struct {
@@ -39,7 +50,26 @@ type AccountUsage struct {
 	Models        []ModelSpend `json:"models"`
 	SyncedAt      int64        `json:"synced_at"`
 	ModelSyncedAt int64        `json:"model_synced_at,omitempty"`
+	CookieExpired bool         `json:"cookie_expired,omitempty"`
+	HoldUntil     int64        `json:"hold_until,omitempty"`
+	HoldKind      string       `json:"hold_kind,omitempty"`
 	Error         string       `json:"error"`
+}
+
+func CookieExpiredMessage(msg string) bool {
+	s := strings.ToLower(strings.TrimSpace(msg))
+	if s == "" {
+		return false
+	}
+	return strings.Contains(s, "cookie 失效") ||
+		strings.Contains(s, "cookie已过期") ||
+		strings.Contains(s, "cookie 已过期") ||
+		strings.Contains(s, "被重定向到登录") ||
+		strings.Contains(s, "缺少 cookie")
+}
+
+func (u AccountUsage) CookieStale() bool {
+	return u.CookieExpired || CookieExpiredMessage(u.Error)
 }
 
 func (u AccountUsage) MonthlyExpiresAt() int64 {
@@ -54,25 +84,67 @@ func (u AccountUsage) MonthlyExpired(now int64) bool {
 	return at > 0 && now >= at
 }
 
+func (u AccountUsage) MonthlyDone(now int64) bool {
+	return u.Monthly.Exhausted() || u.MonthlyExpired(now)
+}
+
 func (u AccountUsage) QuotaExhausted() bool {
 	return u.Rolling.Exhausted() || u.Weekly.Exhausted() || u.Monthly.Exhausted()
 }
 
-func SplitShelved(list []PoolAccount) (active, weekly, rolling []PoolAccount) {
+func WindowResetAt(w UsageWindow, syncedAt int64) int64 {
+	if syncedAt <= 0 || w.ResetInSec <= 0 {
+		return 0
+	}
+	return syncedAt + int64(w.ResetInSec)
+}
+
+func exhaustedUntil(w UsageWindow, syncedAt, fallbackSec, now int64) int64 {
+	if !w.Exhausted() {
+		return 0
+	}
+	if at := WindowResetAt(w, syncedAt); at > 0 {
+		return at
+	}
+	if syncedAt > 0 {
+		return syncedAt + fallbackSec
+	}
+	return now + fallbackSec
+}
+
+func (u AccountUsage) ServingHoldUntil(now int64) int64 {
+	if u.HoldUntil > now {
+		return u.HoldUntil
+	}
+	if at := exhaustedUntil(u.Weekly, u.SyncedAt, WeeklyHoldSec, now); at > now {
+		return at
+	}
+	if at := exhaustedUntil(u.Rolling, u.SyncedAt, RollingHoldSec, now); at > now {
+		return at
+	}
+	return 0
+}
+
+func SplitShelved(list []PoolAccount) (active, weekly, rolling, cookieExpired []PoolAccount) {
+	now := time.Now().Unix()
 	active = make([]PoolAccount, 0, len(list))
 	weekly = make([]PoolAccount, 0)
 	rolling = make([]PoolAccount, 0)
+	cookieExpired = make([]PoolAccount, 0)
 	for _, a := range list {
+		hold := a.Usage.ServingHoldUntil(now)
 		switch {
-		case a.Usage.Weekly.Exhausted():
+		case a.Usage.Weekly.Exhausted() && hold > now || a.Usage.HoldKind == HoldWeekly && hold > now:
 			weekly = append(weekly, a)
-		case a.Usage.Rolling.Exhausted():
+		case a.Usage.Rolling.Exhausted() && hold > now || a.Usage.HoldKind == HoldRolling && hold > now:
 			rolling = append(rolling, a)
+		case a.Usage.CookieStale():
+			cookieExpired = append(cookieExpired, a)
 		default:
 			active = append(active, a)
 		}
 	}
-	return active, weekly, rolling
+	return active, weekly, rolling, cookieExpired
 }
 
 type PoolAccount struct {
@@ -85,6 +157,7 @@ type PoolPage struct {
 	Items          []PoolAccount `json:"items"`
 	WeeklyLimited  []PoolAccount `json:"weekly_limited"`
 	RollingLimited []PoolAccount `json:"rolling_limited"`
+	CookieExpired  []PoolAccount `json:"cookie_expired"`
 	Total          int           `json:"total"`
 	Page           int           `json:"page"`
 	PageSize       int           `json:"page_size"`

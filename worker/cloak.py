@@ -11,14 +11,19 @@ def apply_cloak_env(settings: dict) -> None:
     mapping = {
         "cloak_cache_dir": "CLOAKBROWSER_CACHE_DIR",
         "cloak_binary_path": "CLOAKBROWSER_BINARY_PATH",
-        "license_key": "CLOAKBROWSER_LICENSE_KEY",
     }
     for key, env in mapping.items():
         val = (settings.get(key) or "").strip()
         if val:
             os.environ[env] = val
+    license_key = (settings.get("license_key") or "").strip()
+    if license_key:
+        os.environ["CLOAKBROWSER_LICENSE_KEY"] = license_key
+    else:
+        os.environ.pop("CLOAKBROWSER_LICENSE_KEY", None)
+        os.environ.pop("CLOAKBROWSER_VERSION", None)
     version = (settings.get("cloak_version") or "").strip()
-    if version and (settings.get("license_key") or os.environ.get("CLOAKBROWSER_LICENSE_KEY")):
+    if version and license_key:
         os.environ["CLOAKBROWSER_VERSION"] = version
 
 

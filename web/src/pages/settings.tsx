@@ -38,6 +38,7 @@ export function SettingsPage() {
   const [maxConcurrent, setMaxConcurrent] = useState(1)
   const [cookieKeepEnabled, setCookieKeepEnabled] = useState(true)
   const [cookieKeepHour, setCookieKeepHour] = useState(4)
+  const [cookieKeepConcurrency, setCookieKeepConcurrency] = useState(4)
   const [cookieKeepLastDate, setCookieKeepLastDate] = useState("")
   const [keepingCookies, setKeepingCookies] = useState(false)
   const [maxRetries, setMaxRetries] = useState(3)
@@ -97,6 +98,7 @@ export function SettingsPage() {
         setMaxConcurrent(cfg.max_concurrent >= 1 ? cfg.max_concurrent : 1)
         setCookieKeepEnabled(cfg.cookie_keep_enabled !== false)
         setCookieKeepHour(Number.isFinite(cfg.cookie_keep_hour) && cfg.cookie_keep_hour >= 0 && cfg.cookie_keep_hour <= 23 ? cfg.cookie_keep_hour : 4)
+        setCookieKeepConcurrency(Number.isFinite(cfg.cookie_keep_concurrency) && cfg.cookie_keep_concurrency >= 1 ? cfg.cookie_keep_concurrency : 4)
         setCookieKeepLastDate(cfg.cookie_keep_last_date || "")
         setMaxRetries(Number.isFinite(cfg.max_retries) && cfg.max_retries >= 0 ? cfg.max_retries : 3)
         setAccountRpm(cfg.account_rpm >= 1 ? cfg.account_rpm : 5)
@@ -191,6 +193,11 @@ export function SettingsPage() {
         toast.error("续 Cookie 小时须在 0–23")
         return
       }
+      const keepConc = Math.floor(Number(cookieKeepConcurrency))
+      if (!Number.isFinite(keepConc) || keepConc < 1 || keepConc > 32) {
+        toast.error("续 Cookie 并发须在 1–32")
+        return
+      }
       await api.saveConfig({
         proxy,
         headless,
@@ -199,9 +206,11 @@ export function SettingsPage() {
         provider_value: providerValue,
         cookie_keep_enabled: cookieKeepEnabled,
         cookie_keep_hour: hour,
+        cookie_keep_concurrency: keepConc,
       })
       setMaxConcurrent(n)
       setCookieKeepHour(hour)
+      setCookieKeepConcurrency(keepConc)
       toast.success("运行环境已保存")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存失败")
@@ -483,12 +492,12 @@ export function SettingsPage() {
                     value={maxConcurrent}
                     onChange={(e) => setMaxConcurrent(Number(e.target.value))}
                   />
-                  <p className="text-xs text-muted-foreground">同时打开多少个浏览器去提取链接，最少 1，没有上限。改完立即生效。每日续 Cookie 也走这条队列，提号时会排队。</p>
+                  <p className="text-xs text-muted-foreground">同时打开多少个付费 Cloak 浏览器去提取链接，最少 1。改完立即生效。续 Cookie 不占这个席位。</p>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border p-3">
                   <div>
                     <Label htmlFor="cookie-keep">每天续 Cookie</Label>
-                    <p className="text-xs text-muted-foreground">对有效（已付款）账号用浏览器打开 dashboard，换新 Cookie。和提号共用并发。</p>
+                    <p className="text-xs text-muted-foreground">尽量用免费 Cloak 续 Cookie，方便看滚动/周限重置时间。这些是一次性 $50 号，不保证邮箱还能登满 8 天；Cookie 没了仍按 API Key 调度。</p>
                   </div>
                   <Switch id="cookie-keep" checked={cookieKeepEnabled} onCheckedChange={setCookieKeepEnabled} />
                 </div>
@@ -506,8 +515,22 @@ export function SettingsPage() {
                   />
                   <p className="text-xs text-muted-foreground">
                     {cookieKeepLastDate ? `上次入队日期 ${cookieKeepLastDate}。` : "今天还没跑过。"}
-                    到点后入队，不会另开一套浏览器并发。
+                    到点后单独入队，和提号互不抢付费席位。
                   </p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="cookie-keep-concurrency">续 Cookie 并发（1–32）</Label>
+                  <Input
+                    id="cookie-keep-concurrency"
+                    type="number"
+                    min={1}
+                    max={32}
+                    step={1}
+                    value={cookieKeepConcurrency}
+                    onChange={(e) => setCookieKeepConcurrency(Number(e.target.value))}
+                    disabled={!cookieKeepEnabled}
+                  />
+                  <p className="text-xs text-muted-foreground">同时开多少个免费 Cloak 去续 Cookie。同一账号仍不会和提号并行。</p>
                 </div>
                 <Button
                   type="button"

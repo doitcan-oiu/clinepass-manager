@@ -87,6 +87,14 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 	if action == "refresh" {
 		shot = filepath.Join(cfg.ScreenshotsDir(), acc.ID+"-pay.png")
 	}
+	freeCloak := action == "cookie"
+	license := browser.ResolveLicense(cfg.LicenseKey)
+	version := cfg.CloakVersion
+	if freeCloak {
+		license = ""
+		version = ""
+		log("续 Cookie 使用免费 Cloak，不占用付费并发")
+	}
 	job := workerJob{
 		Action: action,
 		Account: workerAccount{
@@ -109,10 +117,10 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 			HeroSMSMaxPrice: cfg.HeroSMSMaxPrice,
 			ProfileDir:      filepath.Join(cfg.ProfilesDir(), acc.ID),
 			ScreenshotPath:  shot,
-			CloakVersion:    cfg.CloakVersion,
+			CloakVersion:    version,
 			CloakCacheDir:   cfg.CloakCacheDir,
 			CloakBinaryPath: cfg.CloakBinaryPath,
-			LicenseKey:      browser.ResolveLicense(cfg.LicenseKey),
+			LicenseKey:      license,
 			VirtualDisplay:  browser.VirtualDisplay() != "",
 			AutoPay:         cfg.AutoPay,
 			ManagerAPI:      cfg.ManagerAPI(),
@@ -127,7 +135,7 @@ func runPythonOnce(cfg config.Config, acc model.Account, action string, log Logg
 	browser.IsolateProcess(cmd)
 	cmd.Dir = filepath.Dir(filepath.Dir(script))
 	cmd.Stdin = strings.NewReader(string(payload))
-	cmd.Env = workerEnv(cfg)
+	cmd.Env = workerEnv(cfg, freeCloak)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return Result{}, err
@@ -272,7 +280,7 @@ func looksLikeRoot(dir string) bool {
 	return err == nil
 }
 
-func workerEnv(cfg config.Config) []string {
+func workerEnv(cfg config.Config, freeCloak bool) []string {
 	env := make([]string, 0, 32)
 	for _, kv := range os.Environ() {
 		k, _, ok := strings.Cut(kv, "=")
@@ -282,13 +290,18 @@ func workerEnv(cfg config.Config) []string {
 		if strings.EqualFold(k, "CLOAKBROWSER_CACHE_DIR") {
 			continue
 		}
+		if freeCloak && (strings.EqualFold(k, "CLOAKBROWSER_LICENSE_KEY") || strings.EqualFold(k, "CLOAKBROWSER_VERSION")) {
+			continue
+		}
 		env = append(env, kv)
 	}
 	env = append(env, "PYTHONUNBUFFERED=1")
-	if key := browser.ResolveLicense(cfg.LicenseKey); key != "" {
-		env = append(env, "CLOAKBROWSER_LICENSE_KEY="+key)
-		if cfg.CloakVersion != "" {
-			env = append(env, "CLOAKBROWSER_VERSION="+cfg.CloakVersion)
+	if !freeCloak {
+		if key := browser.ResolveLicense(cfg.LicenseKey); key != "" {
+			env = append(env, "CLOAKBROWSER_LICENSE_KEY="+key)
+			if cfg.CloakVersion != "" {
+				env = append(env, "CLOAKBROWSER_VERSION="+cfg.CloakVersion)
+			}
 		}
 	}
 	cacheDir := strings.TrimSpace(cfg.CloakCacheDir)

@@ -204,16 +204,17 @@ func TestMaxConcurrentSettings(t *testing.T) {
 	if err != nil || gotRefresh.UsageRefreshSec != 120 || gotRefresh.ModelUsageRefreshSec != 900 || gotRefresh.UsageRefreshConcurrency != 16 {
 		t.Fatalf("usage refresh %+v %v", gotRefresh, err)
 	}
-	if !gotRefresh.CookieKeepEnabled || gotRefresh.CookieKeepHour != 4 {
+	if !gotRefresh.CookieKeepEnabled || gotRefresh.CookieKeepHour != 4 || gotRefresh.CookieKeepConcurrency != 4 {
 		t.Fatalf("cookie keep default %+v", gotRefresh)
 	}
 	gotRefresh.CookieKeepEnabled = false
 	gotRefresh.CookieKeepHour = 22
+	gotRefresh.CookieKeepConcurrency = 8
 	if err := s.SaveSettings(gotRefresh); err != nil {
 		t.Fatal(err)
 	}
 	gotKeep, err := s.GetSettings()
-	if err != nil || gotKeep.CookieKeepEnabled || gotKeep.CookieKeepHour != 22 {
+	if err != nil || gotKeep.CookieKeepEnabled || gotKeep.CookieKeepHour != 22 || gotKeep.CookieKeepConcurrency != 8 {
 		t.Fatalf("cookie keep %+v %v", gotKeep, err)
 	}
 	if err := s.SetCookieKeepLastDate("2026-08-27"); err != nil {

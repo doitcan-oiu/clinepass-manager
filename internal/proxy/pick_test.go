@@ -91,6 +91,73 @@ func TestRankKeepsKeyWhenPoolAndModelHaveRoom(t *testing.T) {
 	}
 }
 
+func TestRankKeepsCookieExpiredWhenWindowsHaveRoom(t *testing.T) {
+	resetBalancer()
+	stale := acc("stale@x.com", "k", win("ok", 40), win("ok", 40), win("ok", 10), "glm-5.3", 1)
+	stale.Usage.CookieExpired = true
+	stale.Usage.Error = "Cookie 失效，被重定向到登录"
+	got := Rank([]model.PoolAccount{stale}, "glm-5.3")
+	if len(got) != 1 || got[0].Email != "stale@x.com" {
+		t.Fatalf("cookie-expired with room should still schedule, got %v", emails(got))
+	}
+}
+
+func TestRankSkipsCookieExpiredWeeklyHold(t *testing.T) {
+	resetBalancer()
+	stale := acc("stale@x.com", "k", win("ok", 10), win("ok", 100), win("ok", 40), "glm-5.3", 1)
+	stale.Usage.CookieExpired = true
+	stale.Usage.Weekly.ResetInSec = int((6 * 24 * time.Hour).Seconds())
+	got := Rank([]model.PoolAccount{stale}, "glm-5.3")
+	if len(got) != 0 {
+		t.Fatalf("weekly hold must wait even without cookie, got %v", emails(got))
+	}
+}
+
+func TestRankSkipsMonthlyDone(t *testing.T) {
+	resetBalancer()
+	done := acc("done@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 100), "glm-5.3", 1)
+	got := Rank([]model.PoolAccount{done}, "glm-5.3")
+	if len(got) != 0 {
+		t.Fatalf("monthly $50 done must drop, got %v", emails(got))
+	}
+}
+
+func TestClassifyQuotaLimit(t *testing.T) {
+	if ClassifyQuotaLimit("You have reached your 5-hour Clinepass limit") != model.HoldRolling {
+		t.Fatal("rolling")
+	}
+	if ClassifyQuotaLimit("weekly limit reached") != model.HoldWeekly {
+		t.Fatal("weekly")
+	}
+	if ClassifyQuotaLimit("monthly plan limit") != model.HoldMonthly {
+		t.Fatal("monthly")
+	}
+	if ClassifyQuotaLimit("rate") != "" {
+		t.Fatal("unknown")
+	}
+}
+
+func TestCooldownForCookieExpired429(t *testing.T) {
+	a := acc("stale@x.com", "k", win("ok", 40), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	a.Usage.CookieExpired = true
+	if kind, d := cooldownFor(a, http.StatusTooManyRequests, nil, []byte(`{"error":"rate"}`)); kind != "" || d != 10*time.Minute {
+		t.Fatalf("unknown stale 429 kind=%s d=%s", kind, d)
+	}
+	if kind, d := cooldownFor(a, http.StatusTooManyRequests, http.Header{"Retry-After": {"30"}}, []byte(`{"error":"rate"}`)); d != 30*time.Second || kind != "" {
+		t.Fatalf("retry-after kind=%s d=%s", kind, d)
+	}
+	if kind, d := cooldownFor(a, http.StatusTooManyRequests, nil, []byte(`{"error":"You have reached your 5-hour Clinepass limit"}`)); kind != model.HoldRolling || d != 5*time.Hour {
+		t.Fatalf("rolling kind=%s d=%s", kind, d)
+	}
+	if kind, d := cooldownFor(a, http.StatusTooManyRequests, nil, []byte(`{"error":"weekly limit reached"}`)); kind != model.HoldWeekly || d != 7*24*time.Hour {
+		t.Fatalf("weekly kind=%s d=%s", kind, d)
+	}
+	fresh := acc("ok@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	if kind, d := cooldownFor(fresh, http.StatusTooManyRequests, nil, []byte(`{"error":"rate"}`)); kind != "" || d != 0 {
+		t.Fatalf("fresh unknown 429 kind=%s d=%s", kind, d)
+	}
+}
+
 func TestParseRetryAfter(t *testing.T) {
 	if d := parseRetryAfter(http.Header{"Retry-After": {"45"}}); d != 45*time.Second {
 		t.Fatalf("got %s", d)

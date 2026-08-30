@@ -67,6 +67,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.deleteAccount)
 	mux.HandleFunc("POST /api/accounts/{id}/login", s.loginAccount)
 	mux.HandleFunc("POST /api/accounts/{id}/usage", s.refreshAccountUsage)
+	mux.HandleFunc("POST /api/accounts/{id}/cookie-expired", s.markCookieExpired)
+	mux.HandleFunc("POST /api/accounts/{id}/test", s.testAccount)
+	mux.HandleFunc("GET /api/models", s.listModels)
 	mux.HandleFunc("GET /api/batches", s.listBatches)
 	mux.HandleFunc("POST /api/batches", s.createBatch)
 	mux.HandleFunc("GET /api/batches/{id}", s.getBatch)
@@ -128,7 +131,7 @@ func (s *Server) maybeCookieKeep(now time.Time) {
 	if err := s.store.SetCookieKeepLastDate(job.CookieKeepDate(now)); err != nil {
 		log.Printf("记下续 Cookie 日期失败: %v", err)
 	}
-	log.Printf("每日续 Cookie 已入队 %d 个有效账号，与提号共用并发 %d", len(jobs), st.MaxConcurrent)
+	log.Printf("每日续 Cookie 已入队 %d 个有效账号，免费 Cloak 并发 %d", len(jobs), st.CookieKeepConcurrency)
 }
 
 func (s *Server) keepPoolCookies(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +196,7 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		AmzKeysCardAmount       *float64 `json:"amzkeys_card_amount"`
 		CookieKeepEnabled       *bool    `json:"cookie_keep_enabled"`
 		CookieKeepHour          *int     `json:"cookie_keep_hour"`
+		CookieKeepConcurrency   *int     `json:"cookie_keep_concurrency"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 无效")
@@ -320,6 +324,13 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		cur.CookieKeepHour = *in.CookieKeepHour
 	}
+	if in.CookieKeepConcurrency != nil {
+		if *in.CookieKeepConcurrency < 1 || *in.CookieKeepConcurrency > 32 {
+			writeErr(w, http.StatusBadRequest, "续 Cookie 并发须在 1–32")
+			return
+		}
+		cur.CookieKeepConcurrency = *in.CookieKeepConcurrency
+	}
 	cloakChanged := in.CloakVersion != nil || in.CloakLicenseKey != nil
 	if err := s.store.SaveSettings(cur); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -409,7 +420,7 @@ func (s *Server) publicConfig() map[string]any {
 	if err == nil {
 		cfg = store.ApplySettings(cfg, st)
 	} else {
-		st = model.Settings{AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, ModelUsageRefreshSec: 600, UsageRefreshConcurrency: 10}
+		st = model.Settings{AccountRPM: 5, APIProxy: true, UsageRefreshSec: 60, ModelUsageRefreshSec: 600, UsageRefreshConcurrency: 10, CookieKeepConcurrency: 4}
 	}
 	last4, pending, payCount, maxPays, nextLast4, nextPending, lastErr := amzKeysCardView(s)
 	return map[string]any{
@@ -450,6 +461,7 @@ func (s *Server) publicConfig() map[string]any {
 		"amzkeys_card_error":        lastErr,
 		"cookie_keep_enabled":       st.CookieKeepEnabled,
 		"cookie_keep_hour":          job.ClampCookieKeepHour(st.CookieKeepHour),
+		"cookie_keep_concurrency":   st.CookieKeepConcurrency,
 		"cookie_keep_last_date":     st.CookieKeepLastDate,
 	}
 }

@@ -335,7 +335,7 @@ func (s *Store) DeleteExpiredAccounts(now int64) (int, error) {
 	}
 	n := 0
 	for _, a := range list {
-		if !a.Usage.MonthlyExpired(now) {
+		if !a.Usage.MonthlyDone(now) {
 			continue
 		}
 		if err := s.Delete(a.ID); err != nil {

@@ -4,7 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"opencode-go-manager/internal/config"
 )
 
 func TestEngineDefaultPython(t *testing.T) {
@@ -50,6 +53,31 @@ func TestFindWorker(t *testing.T) {
 	if python == "" {
 		t.Fatal("empty python")
 	}
+}
+
+func TestWorkerEnvFreeCloakDropsLicense(t *testing.T) {
+	t.Setenv("CLOAKBROWSER_LICENSE_KEY", "ck_parent")
+	t.Setenv("CLOAKBROWSER_VERSION", "151.0")
+	cfg := config.Config{LicenseKey: "ck_paid", CloakVersion: "151.0.7922.108.2"}
+	paid := workerEnv(cfg, false)
+	if !containsEnv(paid, "CLOAKBROWSER_LICENSE_KEY=ck_paid") {
+		t.Fatalf("paid env %#v", paid)
+	}
+	free := workerEnv(cfg, true)
+	for _, kv := range free {
+		if strings.HasPrefix(kv, "CLOAKBROWSER_LICENSE_KEY=") || strings.HasPrefix(kv, "CLOAKBROWSER_VERSION=") {
+			t.Fatalf("free cloak leaked %s", kv)
+		}
+	}
+}
+
+func containsEnv(env []string, want string) bool {
+	for _, kv := range env {
+		if kv == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestFindRepoRoot(t *testing.T) {

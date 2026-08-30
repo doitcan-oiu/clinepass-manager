@@ -254,9 +254,12 @@ func (s *Syncer) run(list []model.Account, forceModels bool) {
 
 func (s *Syncer) syncOne(a model.Account, forceModels bool) (model.AccountUsage, bool, error) {
 	prev, prevErr := s.store.GetAccountUsage(a.ID)
-	if prevErr == nil && prev.MonthlyExpired(time.Now().Unix()) {
+	if prevErr == nil && prev.MonthlyDone(time.Now().Unix()) {
 		_ = s.store.Delete(a.ID)
-		return model.AccountUsage{}, false, fmt.Errorf("月配额已到期，账号已删除")
+		return model.AccountUsage{}, false, fmt.Errorf("月额度已用完，账号已删除")
+	}
+	if prevErr == nil && prev.CookieStale() && !forceModels {
+		return prev, true, nil
 	}
 	st, _ := s.store.GetSettings()
 	proxy := strings.TrimSpace(a.Proxy)
@@ -265,8 +268,9 @@ func (s *Syncer) syncOne(a model.Account, forceModels bool) (model.AccountUsage,
 	}
 	if strings.TrimSpace(a.CookieHeader) != "" && (strings.TrimSpace(a.UserID) == "" || strings.TrimSpace(a.APIKey) == "") {
 		if herr := Hydrate(&a, proxy); herr != nil && strings.TrimSpace(a.UserID) == "" && strings.TrimSpace(a.WorkspaceID) == "" {
-			_ = s.store.SaveAccountUsage(a.ID, model.AccountUsage{Error: herr.Error(), SyncedAt: time.Now().Unix()})
-			return model.AccountUsage{}, false, herr
+			u := model.AccountUsage{Error: herr.Error(), SyncedAt: time.Now().Unix(), CookieExpired: model.CookieExpiredMessage(herr.Error())}
+			_ = s.store.SaveAccountUsage(a.ID, u)
+			return u, false, herr
 		}
 		if strings.TrimSpace(a.UserID) != "" || strings.TrimSpace(a.APIKey) != "" || strings.TrimSpace(a.WorkspaceID) != "" {
 			_ = s.store.SaveLoginResult(a)
@@ -275,14 +279,21 @@ func (s *Syncer) syncOne(a model.Account, forceModels bool) (model.AccountUsage,
 	includeModels := forceModels || modelsStale(prev, time.Now().Unix(), s.modelIntervalSec())
 	u, subscribed, err := s.doFetch(a, proxy, includeModels)
 	if err != nil {
+		expired := model.CookieExpiredMessage(err.Error())
 		if prevErr == nil {
 			prev.Error = err.Error()
 			prev.SyncedAt = time.Now().Unix()
+			if expired {
+				prev.CookieExpired = true
+			}
 			_ = s.store.SaveAccountUsage(a.ID, prev)
 			return prev, false, err
 		}
-		return model.AccountUsage{Error: err.Error(), SyncedAt: time.Now().Unix()}, false, err
+		return model.AccountUsage{Error: err.Error(), SyncedAt: time.Now().Unix(), CookieExpired: expired}, false, err
 	}
+	u.CookieExpired = false
+	u.HoldUntil = 0
+	u.HoldKind = ""
 	if u.Days == nil {
 		u.Days = prev.Days
 		u.Models = prev.Models

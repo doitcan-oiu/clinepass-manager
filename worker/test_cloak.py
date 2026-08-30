@@ -2,7 +2,24 @@ import os
 import tempfile
 import unittest
 
-from cloak import apply_geo_settings, chrome_args, geoip_db_ready, humanize_options
+from cloak import apply_cloak_env, apply_geo_settings, chrome_args, geoip_db_ready, humanize_options
+
+
+class ApplyCloakEnvTest(unittest.TestCase):
+    def test_empty_license_clears_paid_env(self):
+        os.environ["CLOAKBROWSER_LICENSE_KEY"] = "ck_parent"
+        os.environ["CLOAKBROWSER_VERSION"] = "151.0"
+        apply_cloak_env({"license_key": "", "cloak_version": "151.0.7922.108.2"})
+        self.assertNotIn("CLOAKBROWSER_LICENSE_KEY", os.environ)
+        self.assertNotIn("CLOAKBROWSER_VERSION", os.environ)
+
+    def test_license_sets_paid_env(self):
+        os.environ.pop("CLOAKBROWSER_LICENSE_KEY", None)
+        apply_cloak_env({"license_key": "ck_paid", "cloak_version": "151.0.7922.108.2"})
+        self.assertEqual(os.environ.get("CLOAKBROWSER_LICENSE_KEY"), "ck_paid")
+        self.assertEqual(os.environ.get("CLOAKBROWSER_VERSION"), "151.0.7922.108.2")
+        os.environ.pop("CLOAKBROWSER_LICENSE_KEY", None)
+        os.environ.pop("CLOAKBROWSER_VERSION", None)
 
 
 class HumanizeOptionsTest(unittest.TestCase):

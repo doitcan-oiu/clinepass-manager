@@ -128,6 +128,19 @@ export const api = {
     }).then((r) => json<Account>(r)),
   refreshAccountUsage: (id: string) =>
     fetch(`/api/accounts/${id}/usage`, { method: "POST" }).then((r) => json<PoolAccount>(r)),
+  models: () => fetch("/api/models").then((r) => json<{ models: { id: string; name: string }[] }>(r)),
+  testAccount: (id: string, model: string) =>
+    fetch(`/api/accounts/${id}/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    }).then((r) => json<AccountTestResult>(r)),
+  setCookieExpired: (id: string, expired: boolean) =>
+    fetch(`/api/accounts/${id}/cookie-expired`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expired }),
+    }).then((r) => json<PoolAccount>(r)),
   usageSync: () => fetch("/api/usage/sync").then((r) => json<UsageSyncStatus>(r)),
   startUsageSync: () => fetch("/api/usage/sync", { method: "POST" }).then((r) => json<UsageSyncStatus>(r)),
   keepPoolCookies: () =>
@@ -155,6 +168,15 @@ export const api = {
     const qs = p.toString()
     return fetch(`/api/herosms/catalog${qs ? `?${qs}` : ""}`).then((r) => json<HeroSMSCatalog>(r))
   },
+}
+
+export type AccountTestResult = {
+  ok: boolean
+  model: string
+  status: number
+  latency_ms: number
+  content?: string
+  error?: string
 }
 
 export type AmzKeysBalance = { currency: string; available_amount: string; frozen_amount: string }

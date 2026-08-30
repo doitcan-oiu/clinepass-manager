@@ -19,14 +19,15 @@ type Manager struct {
 	cfg   config.Config
 	store *store.Store
 
-	mu       sync.Mutex
-	jobs     map[string]*model.Job
-	subs     map[string][]chan model.JobEvent
-	active   int
-	queue    []string
-	running  map[string]string
-	warmCard func()
-	holdPump bool
+	mu           sync.Mutex
+	jobs         map[string]*model.Job
+	subs         map[string][]chan model.JobEvent
+	active       int
+	activeCookie int
+	queue        []string
+	running      map[string]string
+	warmCard     func()
+	holdPump     bool
 }
 
 func New(cfg config.Config, st *store.Store) *Manager {
@@ -227,20 +228,56 @@ func (m *Manager) maxConcurrentLocked() int {
 	return m.cfg.MaxConcurrent
 }
 
+func (m *Manager) cookieConcurrentLocked() int {
+	if st, err := m.store.GetSettings(); err == nil && st.CookieKeepConcurrency >= 1 {
+		return st.CookieKeepConcurrency
+	}
+	return 4
+}
+
 func (m *Manager) pump() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.holdPump {
 		return
 	}
-	for m.active < m.maxConcurrentLocked() && len(m.queue) > 0 {
-		id := m.queue[0]
-		m.queue = m.queue[1:]
-		job := m.jobs[id]
-		if job == nil {
+	loginMax := m.maxConcurrentLocked()
+	cookieMax := m.cookieConcurrentLocked()
+	for {
+		idx := -1
+		for i, id := range m.queue {
+			job := m.jobs[id]
+			if job == nil {
+				m.queue = append(m.queue[:i], m.queue[i+1:]...)
+				idx = -2
+				break
+			}
+			if job.Kind == KindCookie {
+				if m.activeCookie < cookieMax {
+					idx = i
+					break
+				}
+				continue
+			}
+			if m.active < loginMax {
+				idx = i
+				break
+			}
+		}
+		if idx == -2 {
 			continue
 		}
-		m.active++
+		if idx < 0 {
+			return
+		}
+		id := m.queue[idx]
+		m.queue = append(m.queue[:idx], m.queue[idx+1:]...)
+		job := m.jobs[id]
+		if job.Kind == KindCookie {
+			m.activeCookie++
+		} else {
+			m.active++
+		}
 		m.running[job.AccountID] = job.ID
 		go m.run(job)
 	}
@@ -249,7 +286,11 @@ func (m *Manager) pump() {
 func (m *Manager) run(job *model.Job) {
 	defer func() {
 		m.mu.Lock()
-		m.active--
+		if job.Kind == KindCookie {
+			m.activeCookie--
+		} else {
+			m.active--
+		}
 		delete(m.running, job.AccountID)
 		m.mu.Unlock()
 		m.pump()

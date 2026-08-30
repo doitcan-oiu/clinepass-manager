@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react"
-import { ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Download, RefreshCw, Trash2, Upload } from "lucide-react"
+import { ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Cookie, Download, Play, RefreshCw, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
-import { api } from "@/lib/api"
+import { api, type AccountTestResult } from "@/lib/api"
 import { downloadJSON } from "@/lib/download"
 import type { Batch, ModelSpend, PoolAccount, PoolStats, UsageSyncStatus, UsageWindow } from "@/lib/types"
-import { barClass, formatRefreshAt, formatResetAt, health, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, shelfOf, usageRows, windowPct } from "@/lib/quota"
+import { barClass, formatRefreshAt, formatResetAt, health, isCookieExpired, modelTone, MONTHLY_USD, monthlyExpireLabel, pctText, poolLeftUSD, remainBarClass, remainText, shelfOf, usageRows, windowPct } from "@/lib/quota"
 import { AddPaidDialog } from "@/components/accounts/add-paid-dialog"
 import { loginProviderLabel, normalizeLoginProvider } from "@/lib/login-provider"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,8 +30,15 @@ export function AccountsPage() {
   const [items, setItems] = useState<PoolAccount[]>([])
   const [weeklyLimited, setWeeklyLimited] = useState<PoolAccount[]>([])
   const [rollingLimited, setRollingLimited] = useState<PoolAccount[]>([])
+  const [cookieExpired, setCookieExpired] = useState<PoolAccount[]>([])
   const [weeklyOpen, setWeeklyOpen] = useState(false)
   const [rollingOpen, setRollingOpen] = useState(false)
+  const [cookieOpen, setCookieOpen] = useState(false)
+  const [testOf, setTestOf] = useState<PoolAccount | null>(null)
+  const [testModels, setTestModels] = useState<{ id: string; name: string }[]>([])
+  const [testModel, setTestModel] = useState("")
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<AccountTestResult | null>(null)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [batchId, setBatchId] = useState("")
@@ -59,12 +66,14 @@ export function AccountsPage() {
       setItems(again.items)
       setWeeklyLimited(again.weekly_limited || [])
       setRollingLimited(again.rolling_limited || [])
+      setCookieExpired(again.cookie_expired || [])
       setTotal(again.total)
       setStats(again.stats || emptyStats)
     } else {
       setItems(pool.items)
       setWeeklyLimited(pool.weekly_limited || [])
       setRollingLimited(pool.rolling_limited || [])
+      setCookieExpired(pool.cookie_expired || [])
       setTotal(pool.total)
       setStats(pool.stats || emptyStats)
     }
@@ -149,10 +158,53 @@ export function AccountsPage() {
       setItems((cur) => cur.map((x) => (x.id === a.id ? next : x)))
       setWeeklyLimited((cur) => cur.map((x) => (x.id === a.id ? next : x)))
       setRollingLimited((cur) => cur.map((x) => (x.id === a.id ? next : x)))
+      setCookieExpired((cur) => cur.map((x) => (x.id === a.id ? next : x)))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "刷新失败")
     } finally {
       setBusyId("")
+    }
+  }
+
+  async function markExpired(a: PoolAccount, expired: boolean) {
+    setBusyId(a.id)
+    try {
+      await api.setCookieExpired(a.id, expired)
+      toast.success(expired ? "已标记 Cookie 过期：仍按 Key 调度，滚动/周限以 429 为准" : "已清除 Cookie 过期标记")
+      await reload(page, batchId)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "标记失败")
+    } finally {
+      setBusyId("")
+    }
+  }
+
+  async function openTest(a: PoolAccount) {
+    setTestOf(a)
+    setTestResult(null)
+    try {
+      const got = await api.models()
+      const list = got.models || []
+      setTestModels(list)
+      setTestModel((cur) => cur || list[0]?.id || "")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "加载模型失败")
+    }
+  }
+
+  async function runTest() {
+    if (!testOf || !testModel) return
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const got = await api.testAccount(testOf.id, testModel)
+      setTestResult(got)
+      if (got.ok) toast.success(`测试成功 ${got.latency_ms}ms`)
+      else toast.error(got.error || "测试失败")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "测试失败")
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -227,13 +279,13 @@ export function AccountsPage() {
         </div>
       </div>
 
-      {items.length === 0 && weeklyLimited.length === 0 && rollingLimited.length === 0 ? (
+      {items.length === 0 && weeklyLimited.length === 0 && rollingLimited.length === 0 && cookieExpired.length === 0 ? (
         <div className="rounded-xl border border-dashed bg-card p-12 text-center text-muted-foreground">
           还没有已付款账号。在「提取支付链接」点确认付款后，有配额的号会出现在这里。
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-xl border border-dashed bg-card p-8 text-center text-muted-foreground">
-          当前没有可调度的账号，额度已满的号收在下面。
+          当前没有用量正常的账号。Cookie 过期的号仍可调度，额度已满的号收在下面。
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
@@ -244,6 +296,9 @@ export function AccountsPage() {
               barsOn={barsOn}
               busy={busyId === a.id}
               onModels={() => setModelsOf(a)}
+              onTest={() => openTest(a)}
+              onMarkExpired={() => markExpired(a, true)}
+              onClearExpired={() => markExpired(a, false)}
               onRefresh={() => refreshOne(a)}
               onRemove={() => setRemove(a)}
             />
@@ -251,9 +306,28 @@ export function AccountsPage() {
         </div>
       )}
 
+      {cookieExpired.length > 0 ? (
+        <QuotaFold
+          title="Cookie 已过期"
+          hint="邮箱可能登不上了，仍按 API Key 调度；滚动约 5 小时、周限约 7 天，月额 $50 用完丢号"
+          pctLabel="滚动"
+          accounts={cookieExpired}
+          windowOf={(a) => a.usage?.rolling}
+          open={cookieOpen}
+          onOpenChange={setCookieOpen}
+          busyId={busyId}
+          onModels={setModelsOf}
+          onTest={openTest}
+          onClearExpired={(a) => markExpired(a, false)}
+          onRefresh={refreshOne}
+          onRemove={setRemove}
+        />
+      ) : null}
+
       {rollingLimited.length > 0 ? (
         <QuotaFold
           title="滚动额度已满"
+          hint="不参与调度"
           pctLabel="滚动"
           accounts={rollingLimited}
           windowOf={(a) => a.usage?.rolling}
@@ -261,6 +335,8 @@ export function AccountsPage() {
           onOpenChange={setRollingOpen}
           busyId={busyId}
           onModels={setModelsOf}
+          onTest={openTest}
+          onMarkExpired={(a) => markExpired(a, true)}
           onRefresh={refreshOne}
           onRemove={setRemove}
         />
@@ -269,6 +345,7 @@ export function AccountsPage() {
       {weeklyLimited.length > 0 ? (
         <QuotaFold
           title="周限额度已满"
+          hint="不参与调度"
           pctLabel="周限"
           accounts={weeklyLimited}
           windowOf={(a) => a.usage?.weekly}
@@ -276,6 +353,8 @@ export function AccountsPage() {
           onOpenChange={setWeeklyOpen}
           busyId={busyId}
           onModels={setModelsOf}
+          onTest={openTest}
+          onMarkExpired={(a) => markExpired(a, true)}
           onRefresh={refreshOne}
           onRemove={setRemove}
         />
@@ -284,6 +363,7 @@ export function AccountsPage() {
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
           共 {stats.total} 个账号
+          {cookieExpired.length ? ` · Cookie 过期 ${cookieExpired.length} 个` : ""}
           {rollingLimited.length ? ` · 滚动 ${rollingLimited.length} 个已收起` : ""}
           {weeklyLimited.length ? ` · 周限 ${weeklyLimited.length} 个已收起` : ""}
           {sync.running && sync.message ? ` · ${sync.message}` : ""}
@@ -317,6 +397,44 @@ export function AccountsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!testOf} onOpenChange={(v) => !v && setTestOf(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>测试 {testOf?.email}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <label className="text-sm text-muted-foreground" htmlFor="test-model">模型</label>
+            <select
+              id="test-model"
+              className="h-9 rounded-lg border bg-card px-2 text-sm shadow-sm"
+              value={testModel}
+              onChange={(e) => setTestModel(e.target.value)}
+            >
+              {testModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} · {m.id}
+                </option>
+              ))}
+            </select>
+            {testResult ? (
+              <div className={`rounded-lg border px-3 py-2 text-xs ${testResult.ok ? "border-emerald-500/40 bg-emerald-500/10" : "border-red-500/40 bg-red-500/10"}`}>
+                <p className="font-medium">{testResult.ok ? `成功 ${testResult.latency_ms}ms` : `失败 ${testResult.status || ""}`.trim()}</p>
+                {testResult.content ? <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{testResult.content}</p> : null}
+                {testResult.error ? <p className="mt-1 text-red-600">{testResult.error}</p> : null}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">用这个账号的 API Key 直打上游，不走负载均衡。</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTestOf(null)}>关闭</Button>
+            <Button disabled={!testModel || testing} onClick={runTest}>
+              {testing ? "测试中…" : "发送测试"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!modelsOf} onOpenChange={(v) => !v && setModelsOf(null)}>
         <DialogContent className="sm:max-w-xl">
@@ -378,6 +496,9 @@ function AccountCard({
   barsOn,
   busy,
   onModels,
+  onTest,
+  onMarkExpired,
+  onClearExpired,
   onRefresh,
   onRemove,
 }: {
@@ -385,16 +506,20 @@ function AccountCard({
   barsOn: boolean
   busy: boolean
   onModels: () => void
+  onTest: () => void
+  onMarkExpired: () => void
+  onClearExpired: () => void
   onRefresh: () => void
   onRemove: () => void
 }) {
   const synced = !!a.usage?.synced_at
   const h = health(a)
   const expire = monthlyExpireLabel(a.usage)
+  const stale = isCookieExpired(a)
   return (
     <article
       className={`group relative flex flex-col rounded-xl border bg-card p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-500/50 ${
-        h.label === "异常" ? "border-red-500/40" : ""
+        h.label === "异常" || stale ? "border-orange-500/40" : ""
       }`}
     >
       <div className="mb-2 flex items-start gap-1">
@@ -406,8 +531,21 @@ function AccountCard({
         >
           {a.email}
         </button>
+        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="测试对话" disabled={busy || !a.api_key} onClick={onTest}>
+          <Play />
+        </Button>
         <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="本月模型" onClick={onModels}>
           <ChartColumn />
+        </Button>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className={stale ? "text-orange-600" : "text-muted-foreground"}
+          title={stale ? "清除 Cookie 过期标记" : "标记 Cookie 已过期"}
+          disabled={busy}
+          onClick={stale ? onClearExpired : onMarkExpired}
+        >
+          <Cookie />
         </Button>
         <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="刷新用量" disabled={busy} onClick={onRefresh}>
           <RefreshCw className={busy ? "animate-spin" : undefined} />
@@ -458,6 +596,7 @@ function AccountCard({
 
 function QuotaFold({
   title,
+  hint,
   pctLabel,
   accounts,
   windowOf,
@@ -465,10 +604,14 @@ function QuotaFold({
   onOpenChange,
   busyId,
   onModels,
+  onTest,
+  onMarkExpired,
+  onClearExpired,
   onRefresh,
   onRemove,
 }: {
   title: string
+  hint?: string
   pctLabel: string
   accounts: PoolAccount[]
   windowOf: (a: PoolAccount) => UsageWindow | undefined
@@ -476,6 +619,9 @@ function QuotaFold({
   onOpenChange: (open: boolean) => void
   busyId: string
   onModels: (a: PoolAccount) => void
+  onTest?: (a: PoolAccount) => void
+  onMarkExpired?: (a: PoolAccount) => void
+  onClearExpired?: (a: PoolAccount) => void
   onRefresh: (a: PoolAccount) => void
   onRemove: (a: PoolAccount) => void
 }) {
@@ -489,7 +635,7 @@ function QuotaFold({
       >
         <span className="text-sm font-medium">
           {title}
-          <span className="ml-2 text-muted-foreground">{accounts.length} 个账号，不参与调度</span>
+          <span className="ml-2 text-muted-foreground">{accounts.length} 个账号{hint ? `，${hint}` : ""}</span>
         </span>
         <ChevronDown className={`size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -514,6 +660,21 @@ function QuotaFold({
                 <span className={`font-mono text-[11px] ${pctText(pct)}`}>{pct == null ? "—" : `${pctLabel} ${Math.round(pct)}%`}</span>
                 <span className="hidden w-36 text-right text-[11px] text-muted-foreground lg:inline">{formatRefreshAt(a.usage?.synced_at || 0)}</span>
                 <span className="hidden w-28 text-right text-[11px] text-muted-foreground md:inline">{reset ? `重置 ${reset}` : ""}</span>
+                {onTest ? (
+                  <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="测试对话" disabled={busyId === a.id || !a.api_key} onClick={() => onTest(a)}>
+                    <Play />
+                  </Button>
+                ) : null}
+                {onMarkExpired && !isCookieExpired(a) ? (
+                  <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="标记 Cookie 已过期" disabled={busyId === a.id} onClick={() => onMarkExpired(a)}>
+                    <Cookie />
+                  </Button>
+                ) : null}
+                {onClearExpired && isCookieExpired(a) ? (
+                  <Button size="icon-sm" variant="ghost" className="text-orange-600" title="清除 Cookie 过期标记" disabled={busyId === a.id} onClick={() => onClearExpired(a)}>
+                    <Cookie />
+                  </Button>
+                ) : null}
                 <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="刷新用量" disabled={busyId === a.id} onClick={() => onRefresh(a)}>
                   <RefreshCw className={busyId === a.id ? "animate-spin" : undefined} />
                 </Button>

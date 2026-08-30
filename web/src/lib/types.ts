@@ -18,6 +18,9 @@ export type AccountUsage = {
   monthly: UsageWindow
   models: ModelSpend[]
   synced_at: number
+  cookie_expired?: boolean
+  hold_until?: number
+  hold_kind?: string
   error: string
 }
 
@@ -53,6 +56,7 @@ export type PoolPage = {
   items: PoolAccount[]
   weekly_limited: PoolAccount[]
   rolling_limited: PoolAccount[]
+  cookie_expired: PoolAccount[]
   total: number
   page: number
   page_size: number
@@ -122,6 +126,7 @@ export type AppConfig = {
   amzkeys_card_error: string
   cookie_keep_enabled: boolean
   cookie_keep_hour: number
+  cookie_keep_concurrency: number
   cookie_keep_last_date: string
 }
 

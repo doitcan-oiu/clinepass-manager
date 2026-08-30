@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -197,10 +198,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			if retryableStatus(resp.StatusCode) {
-				if d := cooldownFor(a, resp.StatusCode, resp.Header); d > 0 {
+				kind, d := cooldownFor(a, resp.StatusCode, resp.Header, b)
+				if kind == model.HoldMonthly {
+					_ = h.store.Delete(keyID)
+				} else if kind != "" && d > 0 {
+					_ = h.store.SetUsageHold(keyID, kind, time.Now().Add(d).Unix())
+				}
+				if d > 0 {
 					lb.cooldown(keyID, d)
 				}
-				if resp.StatusCode == http.StatusTooManyRequests {
+				if resp.StatusCode == http.StatusTooManyRequests && !a.Usage.CookieStale() && kind != model.HoldMonthly {
 					h.refreshAfter429(keyID)
 				}
 				continue
@@ -268,6 +275,73 @@ func (h *Handler) accountRPM() int {
 func (h *Handler) pool() ([]model.PoolAccount, error) {
 	_, _ = h.store.DeleteExpiredAccounts(0)
 	return h.store.ListPoolAccounts("", 10000, 0)
+}
+
+type ProbeResult struct {
+	OK        bool   `json:"ok"`
+	Model     string `json:"model"`
+	Status    int    `json:"status"`
+	LatencyMS int64  `json:"latency_ms"`
+	Content   string `json:"content,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+func (h *Handler) Probe(ctx context.Context, acc model.Account, modelID string) (ProbeResult, error) {
+	modelID = gomodel.Canonical(modelID)
+	if _, ok := gomodel.Lookup(modelID); !ok {
+		return ProbeResult{}, fmt.Errorf("未知模型")
+	}
+	if strings.TrimSpace(acc.APIKey) == "" {
+		return ProbeResult{}, fmt.Errorf("缺少 API Key")
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": modelID,
+		"messages": []map[string]string{
+			{"role": "user", "content": "Reply with the single word pong."},
+		},
+		"max_tokens": 16,
+		"stream":     false,
+	})
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(h.upstream, "/")+"/api/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(acc.APIKey))
+	started := time.Now()
+	resp, err := h.client.Do(req)
+	out := ProbeResult{Model: modelID, LatencyMS: time.Since(started).Milliseconds()}
+	if err != nil {
+		out.Error = err.Error()
+		return out, nil
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	out.Status = resp.StatusCode
+	if resp.StatusCode >= 400 {
+		out.Error = formatLogError(resp.StatusCode, raw)
+		return out, nil
+	}
+	var payload struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(raw, &payload) == nil && len(payload.Choices) > 0 {
+		out.Content = strings.TrimSpace(payload.Choices[0].Message.Content)
+	}
+	out.OK = true
+	return out, nil
 }
 
 func (h *Handler) models(w http.ResponseWriter) {

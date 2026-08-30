@@ -148,6 +148,7 @@ type Settings struct {
 	ProviderValue           string   `json:"provider_value,omitempty"`
 	CookieKeepEnabled       bool     `json:"cookie_keep_enabled"`
 	CookieKeepHour          int      `json:"cookie_keep_hour"`
+	CookieKeepConcurrency   int      `json:"cookie_keep_concurrency"`
 	CookieKeepLastDate      string   `json:"cookie_keep_last_date,omitempty"`
 }
 

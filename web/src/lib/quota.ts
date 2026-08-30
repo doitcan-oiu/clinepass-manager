@@ -52,17 +52,37 @@ export function windowExhausted(w: UsageWindow | undefined): boolean {
   return Math.round(w?.usage_percent ?? 0) >= 100
 }
 
+function holdActive(a: PoolAccount, kind: string): boolean {
+  const until = a.usage?.hold_until || 0
+  return (a.usage?.hold_kind || "") === kind && until * 1000 > Date.now()
+}
+
+function windowStillHeld(w: UsageWindow | undefined, syncedAt: number | undefined, fallbackSec: number): boolean {
+  if (!windowExhausted(w)) return false
+  const synced = syncedAt || 0
+  if (synced && (w?.reset_in_sec || 0) > 0) return (synced + (w?.reset_in_sec || 0)) * 1000 > Date.now()
+  if (synced) return (synced + fallbackSec) * 1000 > Date.now()
+  return true
+}
+
 export function isWeeklyLimited(a: PoolAccount): boolean {
-  return windowExhausted(a.usage?.weekly)
+  return holdActive(a, "weekly") || windowStillHeld(a.usage?.weekly, a.usage?.synced_at, 7 * 24 * 3600)
 }
 
 export function isRollingLimited(a: PoolAccount): boolean {
-  return !isWeeklyLimited(a) && windowExhausted(a.usage?.rolling)
+  return !isWeeklyLimited(a) && (holdActive(a, "rolling") || windowStillHeld(a.usage?.rolling, a.usage?.synced_at, 5 * 3600))
 }
 
-export function shelfOf(a: PoolAccount): "weekly" | "rolling" | "active" {
+export function isCookieExpired(a: PoolAccount): boolean {
+  if (a.usage?.cookie_expired) return true
+  const err = (a.usage?.error || "").toLowerCase()
+  return err.includes("cookie 失效") || err.includes("cookie 已过期") || err.includes("cookie已过期") || err.includes("被重定向到登录") || err.includes("缺少 cookie")
+}
+
+export function shelfOf(a: PoolAccount): "cookie" | "weekly" | "rolling" | "active" {
   if (isWeeklyLimited(a)) return "weekly"
   if (isRollingLimited(a)) return "rolling"
+  if (isCookieExpired(a)) return "cookie"
   return "active"
 }
 
@@ -74,6 +94,7 @@ export function windowPct(w: UsageWindow | undefined, synced: boolean): number |
 export function health(a: PoolAccount): { label: string; className: string } {
   const u = a.usage
   const synced = !!u?.synced_at
+  if (isCookieExpired(a)) return { label: "Cookie 过期", className: "bg-orange-500/15 text-orange-700" }
   if (!synced) return { label: "未同步", className: "bg-muted text-muted-foreground" }
   if (u.error && !u.rolling?.status) return { label: "异常", className: "bg-red-500/15 text-red-600" }
   const rows = [u.rolling, u.weekly, u.monthly]

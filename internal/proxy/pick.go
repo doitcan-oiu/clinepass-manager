@@ -182,14 +182,78 @@ func (b *balancer) recordPickLocked(id string, now time.Time) {
 	b.picks[id] = append(b.picks[id], now)
 }
 
-func cooldownFor(_ model.PoolAccount, status int, _ http.Header) time.Duration {
+func cooldownFor(a model.PoolAccount, status int, h http.Header, body []byte) (kind string, d time.Duration) {
 	if status == http.StatusUnauthorized {
-		return time.Hour
+		return model.HoldAuth, time.Hour
 	}
-	return 0
+	if status != http.StatusTooManyRequests {
+		return "", 0
+	}
+	kind = ClassifyQuotaLimit(errorMessage(body, ""))
+	switch kind {
+	case model.HoldMonthly:
+		return kind, 0
+	case model.HoldWeekly:
+		return kind, weeklyHold(a)
+	case model.HoldRolling:
+		return kind, rollingHold(a, h)
+	default:
+		if a.Usage.CookieStale() {
+			if d := parseRetryAfter(h); d > 0 {
+				return "", d
+			}
+			return "", 10 * time.Minute
+		}
+		return "", 0
+	}
+}
+
+func ClassifyQuotaLimit(msg string) string {
+	s := strings.ToLower(msg)
+	if s == "" {
+		return ""
+	}
+	switch {
+	case strings.Contains(s, "5-hour") || strings.Contains(s, "5 hour") ||
+		strings.Contains(s, "five-hour") || strings.Contains(s, "five hour") ||
+		strings.Contains(s, "five_hour") || strings.Contains(s, "滚动"):
+		return model.HoldRolling
+	case strings.Contains(s, "weekly") || strings.Contains(s, "week limit") ||
+		strings.Contains(s, "周限") || strings.Contains(s, "周配额"):
+		return model.HoldWeekly
+	case strings.Contains(s, "monthly") || strings.Contains(s, "month limit") ||
+		strings.Contains(s, "月限") || strings.Contains(s, "月配额") ||
+		strings.Contains(s, "plan limit"):
+		return model.HoldMonthly
+	default:
+		return ""
+	}
+}
+
+func weeklyHold(a model.PoolAccount) time.Duration {
+	now := time.Now().Unix()
+	if at := model.WindowResetAt(a.Usage.Weekly, a.Usage.SyncedAt); at > now {
+		return time.Until(time.Unix(at, 0))
+	}
+	return time.Duration(model.WeeklyHoldSec) * time.Second
+}
+
+func rollingHold(a model.PoolAccount, h http.Header) time.Duration {
+	if d := parseRetryAfterCapped(h, 5*time.Hour); d > 0 {
+		return d
+	}
+	now := time.Now().Unix()
+	if at := model.WindowResetAt(a.Usage.Rolling, a.Usage.SyncedAt); at > now {
+		return time.Until(time.Unix(at, 0))
+	}
+	return time.Duration(model.RollingHoldSec) * time.Second
 }
 
 func parseRetryAfter(h http.Header) time.Duration {
+	return parseRetryAfterCapped(h, 15*time.Minute)
+}
+
+func parseRetryAfterCapped(h http.Header, capD time.Duration) time.Duration {
 	if h == nil {
 		return 0
 	}
@@ -202,8 +266,8 @@ func parseRetryAfter(h http.Header) time.Duration {
 			return 0
 		}
 		d := time.Duration(n) * time.Second
-		if d > 15*time.Minute {
-			return 15 * time.Minute
+		if capD > 0 && d > capD {
+			return capD
 		}
 		return d
 	}
@@ -215,8 +279,8 @@ func parseRetryAfter(h http.Header) time.Duration {
 	if d < time.Second {
 		return 0
 	}
-	if d > 15*time.Minute {
-		return 15 * time.Minute
+	if capD > 0 && d > capD {
+		return capD
 	}
 	return d
 }
@@ -225,10 +289,17 @@ func canServeQuota(a model.PoolAccount, now time.Time) bool {
 	if strings.TrimSpace(a.APIKey) == "" {
 		return false
 	}
-	if a.Usage.MonthlyExpired(now.Unix()) {
+	unix := now.Unix()
+	if a.Usage.MonthlyDone(unix) {
 		return false
 	}
-	return !a.Usage.QuotaExhausted()
+	if a.Usage.ServingHoldUntil(unix) > unix {
+		return false
+	}
+	if a.Usage.CookieStale() {
+		return true
+	}
+	return !a.Usage.Weekly.Exhausted() && !a.Usage.Rolling.Exhausted()
 }
 
 func unavailableReason(accounts []model.PoolAccount, now time.Time) string {
@@ -247,11 +318,15 @@ func unavailableReasonRPM(accounts []model.PoolAccount, now time.Time, rpm int) 
 			noKey++
 			continue
 		}
-		if a.Usage.MonthlyExpired(now.Unix()) {
+		if a.Usage.MonthlyDone(now.Unix()) {
 			expired++
 			continue
 		}
-		if a.Usage.QuotaExhausted() {
+		if a.Usage.ServingHoldUntil(now.Unix()) > now.Unix() {
+			exhausted++
+			continue
+		}
+		if a.Usage.QuotaExhausted() && !a.Usage.CookieStale() {
 			exhausted++
 			continue
 		}

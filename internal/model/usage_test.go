@@ -29,7 +29,15 @@ func TestSplitShelved(t *testing.T) {
 			Weekly:  UsageWindow{Status: "ok", UsagePercent: 100},
 		},
 	}
-	active, weekly, rolling := SplitShelved([]PoolAccount{ok, weeklyFull, weeklyLimited, rollingOnly, both})
+	stale := PoolAccount{
+		AccountPublic: AccountPublic{Email: "stale@x.com"},
+		Usage: AccountUsage{
+			CookieExpired: true,
+			Rolling:       UsageWindow{Status: "ok", UsagePercent: 40},
+			Error:         "Cookie 失效，被重定向到登录",
+		},
+	}
+	active, weekly, rolling, expired := SplitShelved([]PoolAccount{ok, weeklyFull, weeklyLimited, rollingOnly, both, stale})
 	if len(active) != 1 || active[0].Email != "ok@x.com" {
 		t.Fatalf("active %+v", emails(active))
 	}
@@ -38,6 +46,28 @@ func TestSplitShelved(t *testing.T) {
 	}
 	if len(rolling) != 1 || rolling[0].Email != "roll@x.com" {
 		t.Fatalf("rolling %+v", emails(rolling))
+	}
+	if len(expired) != 1 || expired[0].Email != "stale@x.com" {
+		t.Fatalf("expired %+v", emails(expired))
+	}
+}
+
+func TestCookieExpiredMessage(t *testing.T) {
+	if !CookieExpiredMessage("Cookie 失效，被重定向到登录") {
+		t.Fatal("redirect")
+	}
+	if !CookieExpiredMessage("Cookie 已过期（手动标记）") {
+		t.Fatal("manual")
+	}
+	if !CookieExpiredMessage("缺少 Cookie") {
+		t.Fatal("missing")
+	}
+	if CookieExpiredMessage("滚动额度已满") {
+		t.Fatal("quota")
+	}
+	u := AccountUsage{CookieExpired: true, Error: ""}
+	if !u.CookieStale() {
+		t.Fatal("flag")
 	}
 }
 
