@@ -57,20 +57,12 @@ function holdActive(a: PoolAccount, kind: string): boolean {
   return (a.usage?.hold_kind || "") === kind && until * 1000 > Date.now()
 }
 
-function windowStillHeld(w: UsageWindow | undefined, syncedAt: number | undefined, fallbackSec: number): boolean {
-  if (!windowExhausted(w)) return false
-  const synced = syncedAt || 0
-  if (synced && (w?.reset_in_sec || 0) > 0) return (synced + (w?.reset_in_sec || 0)) * 1000 > Date.now()
-  if (synced) return (synced + fallbackSec) * 1000 > Date.now()
-  return true
-}
-
 export function isWeeklyLimited(a: PoolAccount): boolean {
-  return holdActive(a, "weekly") || windowStillHeld(a.usage?.weekly, a.usage?.synced_at, 7 * 24 * 3600)
+  return holdActive(a, "weekly")
 }
 
 export function isRollingLimited(a: PoolAccount): boolean {
-  return !isWeeklyLimited(a) && (holdActive(a, "rolling") || windowStillHeld(a.usage?.rolling, a.usage?.synced_at, 5 * 3600))
+  return !isWeeklyLimited(a) && holdActive(a, "rolling")
 }
 
 export function isCookieExpired(a: PoolAccount): boolean {
@@ -94,13 +86,14 @@ export function windowPct(w: UsageWindow | undefined, synced: boolean): number |
 export function health(a: PoolAccount): { label: string; className: string } {
   const u = a.usage
   const synced = !!u?.synced_at
+  if (isWeeklyLimited(a) || isRollingLimited(a)) return { label: "冷却中", className: "bg-amber-500/15 text-amber-700" }
   if (isCookieExpired(a)) return { label: "Cookie 过期", className: "bg-orange-500/15 text-orange-700" }
   if (!synced) return { label: "未同步", className: "bg-muted text-muted-foreground" }
   if (u.error && !u.rolling?.status) return { label: "异常", className: "bg-red-500/15 text-red-600" }
-  const rows = [u.rolling, u.weekly, u.monthly]
-  if (rows.some((w) => w?.status === "rate-limited" || Math.round(w?.usage_percent ?? 0) >= 100)) {
+  if (Math.round(u.monthly?.usage_percent ?? 0) >= 100 || u.monthly?.status === "rate-limited") {
     return { label: "额度用尽", className: "bg-red-500/15 text-red-600" }
   }
+  const rows = [u.rolling, u.weekly, u.monthly]
   if (rows.some((w) => (w?.usage_percent ?? 0) >= WARN)) {
     return { label: "额度紧张", className: "bg-amber-500/15 text-amber-600" }
   }

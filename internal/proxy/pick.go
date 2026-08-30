@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -189,14 +190,15 @@ func cooldownFor(a model.PoolAccount, status int, h http.Header, body []byte) (k
 	if status != http.StatusTooManyRequests {
 		return "", 0
 	}
-	kind = ClassifyQuotaLimit(errorMessage(body, ""))
+	msg := errorMessage(body, "")
+	kind = ClassifyQuotaLimit(msg)
 	switch kind {
 	case model.HoldMonthly:
 		return kind, 0
 	case model.HoldWeekly:
-		return kind, weeklyHold(a)
+		return kind, weeklyHold(a, msg)
 	case model.HoldRolling:
-		return kind, rollingHold(a, h)
+		return kind, rollingHold(a, h, msg)
 	default:
 		if a.Usage.CookieStale() {
 			if d := parseRetryAfter(h); d > 0 {
@@ -230,7 +232,52 @@ func ClassifyQuotaLimit(msg string) string {
 	}
 }
 
-func weeklyHold(a model.PoolAccount) time.Duration {
+var (
+	resetInPrefix = regexp.MustCompile(`(?i)resets?\s+in\s+`)
+	resetInPart   = regexp.MustCompile(`(?i)^(\d+)\s*([dhms])`)
+)
+
+func parseResetIn(msg string) time.Duration {
+	loc := resetInPrefix.FindStringIndex(msg)
+	if loc == nil {
+		return 0
+	}
+	rest := strings.TrimSpace(msg[loc[1]:])
+	var d time.Duration
+	for i := 0; i < 4 && rest != ""; i++ {
+		m := resetInPart.FindStringSubmatch(rest)
+		if m == nil {
+			break
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil || n < 0 {
+			break
+		}
+		switch strings.ToLower(m[2]) {
+		case "d":
+			d += time.Duration(n) * 24 * time.Hour
+		case "h":
+			d += time.Duration(n) * time.Hour
+		case "m":
+			d += time.Duration(n) * time.Minute
+		case "s":
+			d += time.Duration(n) * time.Second
+		}
+		rest = strings.TrimSpace(rest[len(m[0]):])
+	}
+	if d < time.Second {
+		return 0
+	}
+	if d > 8*24*time.Hour {
+		return 8 * 24 * time.Hour
+	}
+	return d
+}
+
+func weeklyHold(a model.PoolAccount, msg string) time.Duration {
+	if d := parseResetIn(msg); d > 0 {
+		return d
+	}
 	now := time.Now().Unix()
 	if at := model.WindowResetAt(a.Usage.Weekly, a.Usage.SyncedAt); at > now {
 		return time.Until(time.Unix(at, 0))
@@ -238,7 +285,13 @@ func weeklyHold(a model.PoolAccount) time.Duration {
 	return time.Duration(model.WeeklyHoldSec) * time.Second
 }
 
-func rollingHold(a model.PoolAccount, h http.Header) time.Duration {
+func rollingHold(a model.PoolAccount, h http.Header, msg string) time.Duration {
+	if d := parseResetIn(msg); d > 0 {
+		if d > 5*time.Hour {
+			return 5 * time.Hour
+		}
+		return d
+	}
 	if d := parseRetryAfterCapped(h, 5*time.Hour); d > 0 {
 		return d
 	}
@@ -296,10 +349,7 @@ func canServeQuota(a model.PoolAccount, now time.Time) bool {
 	if a.Usage.ServingHoldUntil(unix) > unix {
 		return false
 	}
-	if a.Usage.CookieStale() {
-		return true
-	}
-	return !a.Usage.Weekly.Exhausted() && !a.Usage.Rolling.Exhausted()
+	return true
 }
 
 func unavailableReason(accounts []model.PoolAccount, now time.Time) string {
@@ -323,10 +373,6 @@ func unavailableReasonRPM(accounts []model.PoolAccount, now time.Time, rpm int) 
 			continue
 		}
 		if a.Usage.ServingHoldUntil(now.Unix()) > now.Unix() {
-			exhausted++
-			continue
-		}
-		if a.Usage.QuotaExhausted() && !a.Usage.CookieStale() {
 			exhausted++
 			continue
 		}

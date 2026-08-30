@@ -5,43 +5,37 @@ import "testing"
 func TestSplitShelved(t *testing.T) {
 	ok := PoolAccount{
 		AccountPublic: AccountPublic{Email: "ok@x.com"},
-		Usage:         AccountUsage{Weekly: UsageWindow{Status: "ok", UsagePercent: 40}},
-	}
-	weeklyFull := PoolAccount{
-		AccountPublic: AccountPublic{Email: "full@x.com"},
 		Usage:         AccountUsage{Weekly: UsageWindow{Status: "ok", UsagePercent: 100}},
 	}
-	weeklyLimited := PoolAccount{
-		AccountPublic: AccountPublic{Email: "lim@x.com"},
-		Usage:         AccountUsage{Weekly: UsageWindow{Status: "rate-limited", UsagePercent: 90}},
-	}
-	rollingOnly := PoolAccount{
-		AccountPublic: AccountPublic{Email: "roll@x.com"},
+	weeklyHold := PoolAccount{
+		AccountPublic: AccountPublic{Email: "week@x.com"},
 		Usage: AccountUsage{
-			Rolling: UsageWindow{Status: "ok", UsagePercent: 100},
-			Weekly:  UsageWindow{Status: "ok", UsagePercent: 10},
+			HoldKind:  HoldWeekly,
+			HoldUntil: 1 << 40,
+			Weekly:    UsageWindow{Status: "ok", UsagePercent: 10},
 		},
 	}
-	both := PoolAccount{
-		AccountPublic: AccountPublic{Email: "both@x.com"},
+	rollingHold := PoolAccount{
+		AccountPublic: AccountPublic{Email: "roll@x.com"},
 		Usage: AccountUsage{
-			Rolling: UsageWindow{Status: "ok", UsagePercent: 100},
-			Weekly:  UsageWindow{Status: "ok", UsagePercent: 100},
+			HoldKind:  HoldRolling,
+			HoldUntil: 1 << 40,
+			Rolling:   UsageWindow{Status: "ok", UsagePercent: 10},
 		},
 	}
 	stale := PoolAccount{
 		AccountPublic: AccountPublic{Email: "stale@x.com"},
 		Usage: AccountUsage{
 			CookieExpired: true,
-			Rolling:       UsageWindow{Status: "ok", UsagePercent: 40},
+			Rolling:       UsageWindow{Status: "ok", UsagePercent: 100},
 			Error:         "Cookie 失效，被重定向到登录",
 		},
 	}
-	active, weekly, rolling, expired := SplitShelved([]PoolAccount{ok, weeklyFull, weeklyLimited, rollingOnly, both, stale})
+	active, weekly, rolling, expired := SplitShelved([]PoolAccount{ok, weeklyHold, rollingHold, stale})
 	if len(active) != 1 || active[0].Email != "ok@x.com" {
 		t.Fatalf("active %+v", emails(active))
 	}
-	if len(weekly) != 3 || weekly[0].Email != "full@x.com" || weekly[1].Email != "lim@x.com" || weekly[2].Email != "both@x.com" {
+	if len(weekly) != 1 || weekly[0].Email != "week@x.com" {
 		t.Fatalf("weekly %+v", emails(weekly))
 	}
 	if len(rolling) != 1 || rolling[0].Email != "roll@x.com" {

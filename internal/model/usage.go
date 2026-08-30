@@ -99,28 +99,9 @@ func WindowResetAt(w UsageWindow, syncedAt int64) int64 {
 	return syncedAt + int64(w.ResetInSec)
 }
 
-func exhaustedUntil(w UsageWindow, syncedAt, fallbackSec, now int64) int64 {
-	if !w.Exhausted() {
-		return 0
-	}
-	if at := WindowResetAt(w, syncedAt); at > 0 {
-		return at
-	}
-	if syncedAt > 0 {
-		return syncedAt + fallbackSec
-	}
-	return now + fallbackSec
-}
-
 func (u AccountUsage) ServingHoldUntil(now int64) int64 {
 	if u.HoldUntil > now {
 		return u.HoldUntil
-	}
-	if at := exhaustedUntil(u.Weekly, u.SyncedAt, WeeklyHoldSec, now); at > now {
-		return at
-	}
-	if at := exhaustedUntil(u.Rolling, u.SyncedAt, RollingHoldSec, now); at > now {
-		return at
 	}
 	return 0
 }
@@ -134,9 +115,9 @@ func SplitShelved(list []PoolAccount) (active, weekly, rolling, cookieExpired []
 	for _, a := range list {
 		hold := a.Usage.ServingHoldUntil(now)
 		switch {
-		case a.Usage.Weekly.Exhausted() && hold > now || a.Usage.HoldKind == HoldWeekly && hold > now:
+		case a.Usage.HoldKind == HoldWeekly && hold > now:
 			weekly = append(weekly, a)
-		case a.Usage.Rolling.Exhausted() && hold > now || a.Usage.HoldKind == HoldRolling && hold > now:
+		case a.Usage.HoldKind == HoldRolling && hold > now:
 			rolling = append(rolling, a)
 		case a.Usage.CookieStale():
 			cookieExpired = append(cookieExpired, a)

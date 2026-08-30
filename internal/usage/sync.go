@@ -292,8 +292,10 @@ func (s *Syncer) syncOne(a model.Account, forceModels bool) (model.AccountUsage,
 		return model.AccountUsage{Error: err.Error(), SyncedAt: time.Now().Unix(), CookieExpired: expired}, false, err
 	}
 	u.CookieExpired = false
-	u.HoldUntil = 0
-	u.HoldKind = ""
+	if prevErr == nil && prev.HoldUntil > time.Now().Unix() {
+		u.HoldUntil = prev.HoldUntil
+		u.HoldKind = prev.HoldKind
+	}
 	if u.Days == nil {
 		u.Days = prev.Days
 		u.Models = prev.Models

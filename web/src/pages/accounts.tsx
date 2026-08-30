@@ -309,7 +309,7 @@ export function AccountsPage() {
       {cookieExpired.length > 0 ? (
         <QuotaFold
           title="Cookie 已过期"
-          hint="邮箱可能登不上了，仍按 API Key 调度；滚动约 5 小时、周限约 7 天，月额 $50 用完丢号"
+          hint="邮箱可能登不上了，仍按 API Key 调度；只有 429 带重置时间才冷却"
           pctLabel="滚动"
           accounts={cookieExpired}
           windowOf={(a) => a.usage?.rolling}
@@ -326,8 +326,8 @@ export function AccountsPage() {
 
       {rollingLimited.length > 0 ? (
         <QuotaFold
-          title="滚动额度已满"
-          hint="不参与调度"
+          title="滚动冷却"
+          hint="429 正文里的重置时间未到，不调度"
           pctLabel="滚动"
           accounts={rollingLimited}
           windowOf={(a) => a.usage?.rolling}
@@ -344,8 +344,8 @@ export function AccountsPage() {
 
       {weeklyLimited.length > 0 ? (
         <QuotaFold
-          title="周限额度已满"
-          hint="不参与调度"
+          title="周限冷却"
+          hint="按 429「resets in 3d 7h」这类剩余时间停车，不按用量百分比收起"
           pctLabel="周限"
           accounts={weeklyLimited}
           windowOf={(a) => a.usage?.weekly}

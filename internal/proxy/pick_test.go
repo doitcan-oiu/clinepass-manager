@@ -19,10 +19,10 @@ func TestRankSkipsExhaustedKeepsUsable(t *testing.T) {
 	noKey := acc("e@x.com", "", win("ok", 0), win("ok", 0), win("ok", 0), "glm-5.3", 0)
 
 	got := Rank([]model.PoolAccount{limited, fullPct, overModel, overPool, busy, best, noKey}, "glm-5.3")
-	if len(got) != 4 {
+	if len(got) != 6 {
 		t.Fatalf("len=%d emails=%v", len(got), emails(got))
 	}
-	if got[0].Email != "b@x.com" || got[1].Email != "c@x.com" || got[2].Email != "d@x.com" || got[3].Email != "g@x.com" {
+	if got[0].Email != "a@x.com" || got[1].Email != "b@x.com" || got[2].Email != "c@x.com" || got[3].Email != "d@x.com" || got[4].Email != "f@x.com" || got[5].Email != "g@x.com" {
 		t.Fatalf("order %v", emails(got))
 	}
 }
@@ -34,8 +34,13 @@ func TestRankSkipsRoundedHundredPercent(t *testing.T) {
 	monthly := acc("m@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 100), "glm-5.3", 1)
 	ok := acc("ok@x.com", "k", win("ok", 99.4), win("ok", 10), win("ok", 10), "glm-5.3", 1)
 	got := Rank([]model.PoolAccount{rolling, weekly, monthly, ok}, "glm-5.3")
-	if len(got) != 1 || got[0].Email != "ok@x.com" {
-		t.Fatalf("got %v", emails(got))
+	if len(got) != 3 {
+		t.Fatalf("rolling/weekly percent must not skip, got %v", emails(got))
+	}
+	for _, a := range got {
+		if a.Email == "m@x.com" {
+			t.Fatalf("monthly done still picked: %v", emails(got))
+		}
 	}
 }
 
@@ -106,10 +111,20 @@ func TestRankSkipsCookieExpiredWeeklyHold(t *testing.T) {
 	resetBalancer()
 	stale := acc("stale@x.com", "k", win("ok", 10), win("ok", 100), win("ok", 40), "glm-5.3", 1)
 	stale.Usage.CookieExpired = true
-	stale.Usage.Weekly.ResetInSec = int((6 * 24 * time.Hour).Seconds())
+	stale.Usage.HoldKind = model.HoldWeekly
+	stale.Usage.HoldUntil = time.Now().Add(3*24*time.Hour + 7*time.Hour).Unix()
 	got := Rank([]model.PoolAccount{stale}, "glm-5.3")
 	if len(got) != 0 {
 		t.Fatalf("weekly hold must wait even without cookie, got %v", emails(got))
+	}
+}
+
+func TestRankKeepsWeeklyPercentWithout429Hold(t *testing.T) {
+	resetBalancer()
+	full := acc("w@x.com", "k", win("ok", 100), win("ok", 100), win("ok", 40), "glm-5.3", 1)
+	got := Rank([]model.PoolAccount{full}, "glm-5.3")
+	if len(got) != 1 {
+		t.Fatalf("usage percent alone must not stop scheduling, got %v", emails(got))
 	}
 }
 
@@ -126,7 +141,7 @@ func TestClassifyQuotaLimit(t *testing.T) {
 	if ClassifyQuotaLimit("You have reached your 5-hour Clinepass limit") != model.HoldRolling {
 		t.Fatal("rolling")
 	}
-	if ClassifyQuotaLimit("weekly limit reached") != model.HoldWeekly {
+	if ClassifyQuotaLimit("Error 429: You have reached your weekly Clinepass limit. The limit resets in 3d 7h, please try again later.") != model.HoldWeekly {
 		t.Fatal("weekly")
 	}
 	if ClassifyQuotaLimit("monthly plan limit") != model.HoldMonthly {
@@ -152,9 +167,25 @@ func TestCooldownForCookieExpired429(t *testing.T) {
 	if kind, d := cooldownFor(a, http.StatusTooManyRequests, nil, []byte(`{"error":"weekly limit reached"}`)); kind != model.HoldWeekly || d != 7*24*time.Hour {
 		t.Fatalf("weekly kind=%s d=%s", kind, d)
 	}
+	weeklyBody := []byte(`{"error":"Error 429: You have reached your weekly Clinepass limit. The limit resets in 3d 7h, please try again later."}`)
+	if kind, d := cooldownFor(a, http.StatusTooManyRequests, nil, weeklyBody); kind != model.HoldWeekly || d != 3*24*time.Hour+7*time.Hour {
+		t.Fatalf("weekly reset-in kind=%s d=%s", kind, d)
+	}
 	fresh := acc("ok@x.com", "k", win("ok", 10), win("ok", 10), win("ok", 10), "glm-5.3", 1)
 	if kind, d := cooldownFor(fresh, http.StatusTooManyRequests, nil, []byte(`{"error":"rate"}`)); kind != "" || d != 0 {
 		t.Fatalf("fresh unknown 429 kind=%s d=%s", kind, d)
+	}
+}
+
+func TestParseResetIn(t *testing.T) {
+	if d := parseResetIn("The limit resets in 3d 7h, please try again later."); d != 3*24*time.Hour+7*time.Hour {
+		t.Fatalf("got %s", d)
+	}
+	if d := parseResetIn("resets in 4h 12m"); d != 4*time.Hour+12*time.Minute {
+		t.Fatalf("got %s", d)
+	}
+	if d := parseResetIn("no reset"); d != 0 {
+		t.Fatalf("got %s", d)
 	}
 }
 
@@ -249,6 +280,8 @@ func TestReserveLeastInflightNotLowestUsage(t *testing.T) {
 	low := acc("low@x.com", "k", win("ok", 5), win("ok", 5), win("ok", 5), "glm-5.3", 1)
 	high := acc("high@x.com", "k", win("ok", 80), win("ok", 80), win("ok", 80), "glm-5.3", 1)
 	dead := acc("dead@x.com", "k", win("ok", 100), win("ok", 10), win("ok", 10), "glm-5.3", 1)
+	dead.Usage.HoldKind = model.HoldRolling
+	dead.Usage.HoldUntil = time.Now().Add(2 * time.Hour).Unix()
 	list := []model.PoolAccount{low, high, dead}
 
 	var picks []string
