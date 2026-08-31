@@ -112,7 +112,8 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 			return Result{}, wrapIfAuthkit(err, page.URL())
 		}
 		log("等待进入 Cline")
-		if err := waitCline(page, 180000, log, provider); err != nil {
+		page, err = waitCline(page, 180000, log, provider)
+		if err != nil {
 			return Result{}, wrapIfAuthkit(err, page.URL())
 		}
 		if err := handleRadar(page, cfg, log); err != nil {
@@ -121,7 +122,8 @@ func runOnce(cfg config.Config, acc model.Account, log Logger) (Result, error) {
 		if err := handleTerms(page, log); err != nil {
 			return Result{}, CompactError(err)
 		}
-		if err := waitCline(page, 60000, log, provider); err != nil {
+		page, err = waitCline(page, 60000, log, provider)
+		if err != nil {
 			return Result{}, wrapIfAuthkit(err, page.URL())
 		}
 	}
@@ -251,6 +253,10 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 	passAt := time.Time{}
 
 	for time.Now().Before(deadline) {
+		if nxt := followDonePage(page); identityDoneURL(nxt.URL()) {
+			log("已离开谷歌登录，当前 URL=%s", nxt.URL())
+			return nil
+		}
 		rawURL := page.URL()
 		if loggedIn(page) {
 			log("已离开谷歌登录，当前 URL=%s", rawURL)
@@ -290,10 +296,10 @@ func googleLogin(page playwright.Page, acc model.Account, log Logger) error {
 			continue
 		}
 		if step == "consent" {
-			if time.Since(lastConsent) > 6*time.Second {
+			if (visible(page, `div[jsname="uRHG6"] button`) || visible(page, `#submit_approve_access`)) && time.Since(lastConsent) > 6*time.Second {
 				log("检测到授权页，点击同意授权")
 				if err := clickOneOf(page, consentSelectors(), 15000, log, "同意授权"); err != nil {
-					if loggedIn(page) {
+					if loggedIn(page) || identityDoneURL(followDonePage(page).URL()) {
 						return nil
 					}
 					return stepErr(err)
@@ -573,13 +579,14 @@ func startIdentityLogin(page playwright.Page, acc model.Account, provider string
 	return nil
 }
 
-func waitCline(page playwright.Page, timeout float64, log Logger, provider string) error {
+func waitCline(page playwright.Page, timeout float64, log Logger, provider string) (playwright.Page, error) {
 	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
 	last := time.Time{}
 	lastAuthkitClick := time.Time{}
 	for time.Now().Before(deadline) {
-		if onCline(page.URL()) || onRadarFlow(page) {
-			return nil
+		page = followDonePage(page)
+		if identityDoneURL(page.URL()) || onRadarFlow(page) {
+			return page, nil
 		}
 		if classifyGoogle(page.URL()) == "tos" && visible(page, `#gaplustosNext button`) {
 			_ = acceptWorkspaceTos(page, log)
@@ -593,10 +600,10 @@ func waitCline(page playwright.Page, timeout float64, log Logger, provider strin
 		if urlHost(page.URL()) == "authkit.cline.bot" && !onRadarFlow(page) {
 			done, err := handleAuthkitWait(page, log, &lastAuthkitClick, provider)
 			if err != nil {
-				return err
+				return page, err
 			}
 			if done {
-				return nil
+				return page, nil
 			}
 			continue
 		}
@@ -606,7 +613,7 @@ func waitCline(page playwright.Page, timeout float64, log Logger, provider strin
 		}
 		sleep(200)
 	}
-	return fmt.Errorf("等待进入 Cline 超时，当前 URL=%s", page.URL())
+	return page, fmt.Errorf("等待进入 Cline 超时，当前 URL=%s", page.URL())
 }
 
 func googleAuthSelectors() []string {
@@ -761,10 +768,44 @@ func googlePath(raw string) string {
 }
 
 func loggedIn(page playwright.Page) bool {
+	if onIdentityProvider(page.URL()) {
+		return false
+	}
 	return leftGoogle(page) || onRadarFlow(page)
 }
 
+func onIdentityProvider(u string) bool {
+	host := urlHost(u)
+	return strings.HasSuffix(host, "google.com") || strings.HasSuffix(host, "google.com.hk") || onMicrosoftURL(u)
+}
+
+func identityDoneURL(u string) bool {
+	return onCline(u) || onRadarURL(u)
+}
+
+func followDonePage(page playwright.Page) playwright.Page {
+	if page == nil {
+		return page
+	}
+	ctx := page.Context()
+	if ctx == nil {
+		return page
+	}
+	for _, p := range ctx.Pages() {
+		if p == nil {
+			continue
+		}
+		if identityDoneURL(p.URL()) {
+			return p
+		}
+	}
+	return page
+}
+
 func onRadarFlow(page playwright.Page) bool {
+	if onIdentityProvider(page.URL()) {
+		return false
+	}
 	if onRadarURL(page.URL()) {
 		return true
 	}
@@ -879,6 +920,9 @@ func waitAuthkitAdvance(page playwright.Page, timeout float64) bool {
 }
 
 func onRadarURL(u string) bool {
+	if onIdentityProvider(u) {
+		return false
+	}
 	p := googlePath(u)
 	return strings.Contains(p, "radar-challenge") || strings.Contains(p, "/radar")
 }

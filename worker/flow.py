@@ -4,7 +4,7 @@ from authkit import handle_authkit_wait
 from errors import WorkerError
 from google import CONSENT, accept_workspace_tos, recover_unknown_error, start_google
 from microsoft import start_microsoft
-from pageutil import click_one_of, on_radar_flow, serialize_cookies, sleep_ms, visible
+from pageutil import click_one_of, on_radar_flow, serialize_cookies, sleep_ms, switch_if_done, visible
 from payment import capture_payment
 from stripe_pay import autopay
 from protocol import log
@@ -14,6 +14,7 @@ from urls import (
     authkit_callback_error,
     classify_google,
     cookie_expired,
+    identity_done_url,
     on_cline,
     on_cline_app,
     on_radar_url,
@@ -24,13 +25,14 @@ AUTH_URL = "https://authkit.cline.bot"
 APP_DASHBOARD = "https://app.cline.bot/dashboard"
 
 
-def wait_cline(page, timeout_ms: float, provider: str) -> None:
+def wait_cline(page, timeout_ms: float, provider: str, context=None):
     deadline = time.time() + timeout_ms / 1000.0
     last = 0.0
     last_click = [0.0]
     while time.time() < deadline:
-        if on_cline(page.url) or on_radar_flow(page):
-            return
+        page = switch_if_done(context, page)
+        if identity_done_url(page.url) or on_radar_flow(page):
+            return page
         if classify_google(page.url) == "tos" and visible(page, "#gaplustosNext button"):
             accept_workspace_tos(page)
         if classify_google(page.url) == "unknownerror":
@@ -44,7 +46,7 @@ def wait_cline(page, timeout_ms: float, provider: str) -> None:
                 pass
         if url_host(page.url) == AUTH_HOST and not on_radar_flow(page):
             if handle_authkit_wait(page, last_click, provider):
-                return
+                return page
             continue
         if time.time() - last > 8:
             log("仍在等待进入 Cline，当前 URL=%s", page.url)
@@ -93,10 +95,10 @@ def run_login(page, context, acc: dict, settings: dict) -> dict:
         except Exception as exc:
             wrap_authkit(exc, page.url)
         log("等待进入 Cline")
-        wait_cline(page, 180000, provider)
+        page = wait_cline(page, 180000, provider, context) or page
         handle_radar(page, settings)
         handle_terms(page)
-        wait_cline(page, 60000, provider)
+        page = wait_cline(page, 60000, provider, context) or page
     try:
         page.goto(APP_DASHBOARD, wait_until="domcontentloaded", timeout=60000)
     except Exception as exc:

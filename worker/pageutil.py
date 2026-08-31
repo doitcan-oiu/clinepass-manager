@@ -2,7 +2,7 @@ import random
 import time
 
 from errors import LoggedIn
-from urls import left_identity_url, on_radar_url
+from urls import identity_done_url, left_identity_url, on_identity_provider, on_radar_url
 
 
 def sleep_ms(ms: int) -> None:
@@ -24,7 +24,10 @@ def page_title(page) -> str:
 
 
 def on_radar_flow(page) -> bool:
-    if on_radar_url(page.url):
+    raw = page_url(page)
+    if on_identity_provider(raw):
+        return False
+    if on_radar_url(raw):
         return True
     return (
         visible(page, 'input[name="local_number"]')
@@ -35,6 +38,8 @@ def on_radar_flow(page) -> bool:
 
 
 def logged_in(page) -> bool:
+    if on_identity_provider(page_url(page)):
+        return False
     return left_identity_url(page.url) or on_radar_flow(page)
 
 
@@ -123,6 +128,13 @@ def follow_identity_page(context, page, ready):
 
                 log("已切到身份页 URL=%s", u)
             return p
+    return page
+
+
+def switch_if_done(context, page):
+    nxt = follow_identity_page(context, page, identity_done_url)
+    if nxt is not page and identity_done_url(page_url(nxt)):
+        return nxt
     return page
 
 

@@ -2,9 +2,9 @@ import time
 
 from errors import WorkerError
 from herosms import Client
-from pageutil import click_one_of, input_value, on_radar_flow, sleep_ms, type_field, visible, wait_any_url
+from pageutil import click_one_of, field_ready, input_value, sleep_ms, visible, wait_any_url
 from protocol import log
-from urls import radar_send_url
+from urls import on_radar_url, radar_send_url
 
 
 def digits_only(s: str) -> str:
@@ -15,20 +15,47 @@ def authkit_input_match(page, selector: str, want: str) -> bool:
     return digits_only(input_value(page, selector)) == digits_only(want)
 
 
+def type_authkit_field(page, selector: str, value: str) -> None:
+    loc = page.locator(selector).first
+    try:
+        loc.fill(value, timeout=12000)
+        if authkit_input_match(page, selector, value):
+            return
+    except Exception:
+        pass
+    loc.click(timeout=8000)
+    page.keyboard.press("Control+a")
+    page.keyboard.press("Backspace")
+    loc.type(value, delay=18, timeout=12000)
+
+
 def fill_authkit_field(page, selector: str, value: str) -> None:
     from pageutil import wait_visible
 
     wait_visible(page, selector, 20000, stop_if_done=False)
-    type_field(page, selector, value)
+    type_authkit_field(page, selector, value)
     if authkit_input_match(page, selector, value):
         return
     typed = value
     current = input_value(page, selector)
     if current.strip().startswith("+") and value.startswith("+"):
         typed = value[1:]
-    type_field(page, selector, typed)
+    type_authkit_field(page, selector, typed)
     if not authkit_input_match(page, selector, value):
         raise RuntimeError(f'页面是 "{input_value(page, selector)}"，期望 "{value}"')
+
+
+def radar_form_ready(page) -> bool:
+    return field_ready(page, 'input[name="country_code"]') and field_ready(page, 'input[name="local_number"]')
+
+
+def wait_radar_form(page, timeout_ms: float = 15000) -> None:
+    deadline = time.time() + timeout_ms / 1000.0
+    while time.time() < deadline:
+        if radar_form_ready(page):
+            return
+        sleep_ms(200)
+    raise RuntimeError(f"接码页没有可填的手机号输入框，当前 URL={page.url}")
 
 
 def fill_otp(page, code: str) -> None:
@@ -86,6 +113,7 @@ def goto_radar_send(page, send_url: str) -> None:
 
 
 def request_radar_code(page, settings: dict, sms: Client, attempt: int) -> None:
+    wait_radar_form(page)
     country = int(settings.get("hero_sms_country") or 0)
     price = float(settings.get("hero_sms_max_price") or 0)
     log("Hero SMS 取号 country=%d price=%s（第 %d 次）", country, ("%g" % price) if price > 0 else "auto", attempt)
@@ -154,12 +182,13 @@ def should_retry_phone(exc: Exception) -> bool:
 
 
 def handle_radar(page, settings: dict) -> None:
-    if "radar-challenge" not in page.url:
+    if not on_radar_url(page.url):
         return
     if not (settings.get("hero_sms_api_key") or "").strip():
         raise RuntimeError("遇到手机验证，请先在设置里填写 Hero SMS API Key")
     if int(settings.get("hero_sms_country") or 0) <= 0:
         raise RuntimeError("遇到手机验证，请先在设置里选择接码区域和报价")
+    wait_radar_form(page)
     send_url = page.url
     if "radar-challenge/verify" in send_url:
         send_url = radar_send_url(send_url)

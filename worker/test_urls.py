@@ -5,9 +5,13 @@ from urls import (
     authkit_callback_error,
     classify_google,
     google_ready_url,
+    identity_done_url,
     microsoft_ready_url,
     microsoft_step,
+    on_google_url,
+    on_identity_provider,
     on_microsoft_url,
+    on_radar_url,
     on_workos_url,
     radar_send_url,
 )
@@ -45,6 +49,14 @@ class URLTests(unittest.TestCase):
         self.assertFalse(microsoft_ready_url(workos))
         self.assertTrue(microsoft_ready_url("https://login.live.com/oauth20_authorize.srf"))
         self.assertTrue(google_ready_url("https://accounts.google.com/signin"))
+
+    def test_google_oauth_id_is_not_radar_or_done(self):
+        oauth = "https://accounts.google.com/signin/oauth/id?authuser=0&client_id=941048379330.apps.googleusercontent.com"
+        self.assertTrue(on_google_url(oauth))
+        self.assertTrue(on_identity_provider(oauth))
+        self.assertFalse(on_radar_url(oauth))
+        self.assertFalse(identity_done_url(oauth))
+        self.assertTrue(identity_done_url("https://authkit.cline.bot/radar-challenge/send?user_id=1"))
 
     def test_radar_send_url(self):
         self.assertIn(

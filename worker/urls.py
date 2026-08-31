@@ -36,9 +36,24 @@ def authkit_callback_error(raw: str) -> str:
     return authkit_query(raw, "error")
 
 
+def on_google_url(raw: str) -> bool:
+    host = url_host(raw)
+    return host.endswith("google.com") or host.endswith("google.com.hk")
+
+
+def on_identity_provider(raw: str) -> bool:
+    return on_google_url(raw) or on_microsoft_url(raw)
+
+
 def on_radar_url(raw: str) -> bool:
+    if on_identity_provider(raw):
+        return False
     path = url_path(raw)
     return "radar-challenge" in path or "/radar" in path
+
+
+def identity_done_url(raw: str) -> bool:
+    return on_cline(raw) or on_radar_url(raw)
 
 
 def on_cline_app(raw: str) -> bool:

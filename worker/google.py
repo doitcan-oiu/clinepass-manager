@@ -7,6 +7,7 @@ from pageutil import (
     human_scroll,
     logged_in,
     sleep_ms,
+    switch_if_done,
     type_field,
     visible,
     wait_any_url,
@@ -15,12 +16,16 @@ from pageutil import (
     wait_visible,
 )
 from protocol import log
-from urls import AUTH_HOST, classify_google, google_continue_url, on_cline, url_host
+from urls import AUTH_HOST, classify_google, google_continue_url, identity_done_url, on_cline, url_host
 
 CONSENT = [
     'div[jsname="uRHG6"] button',
     "#submit_approve_access",
     'button[data-idom-class*="P62QJc"]',
+]
+CONSENT_READY = [
+    'div[jsname="uRHG6"] button',
+    "#submit_approve_access",
 ]
 EMAIL_SEL = 'input#identifierId:not([aria-hidden="true"])'
 PASS_SEL = 'input[name="Passwd"], #password input[type="password"]'
@@ -100,7 +105,7 @@ def recover_unknown_error(page) -> None:
         raise RuntimeError(f"谷歌 unknownerror 恢复失败，当前 URL={page.url}")
 
 
-def google_login(page, acc: dict) -> None:
+def google_login(page, acc: dict, context=None):
     deadline = time.time() + 180
     chooser = f'div[data-identifier="{acc.get("email") or ""}"]'
     email_done = False
@@ -111,16 +116,17 @@ def google_login(page, acc: dict) -> None:
     email_at = 0.0
     pass_at = 0.0
     while time.time() < deadline:
+        page = switch_if_done(context, page)
         raw = page.url
-        if logged_in(page):
+        if logged_in(page) or identity_done_url(raw):
             log("已离开谷歌登录，当前 URL=%s", raw)
-            return
+            return page
         step = classify_google(raw)
         if step == "password":
             email_done = True
         if url_host(raw) == AUTH_HOST:
             if handle_authkit_wait(page, last_click, "google"):
-                return
+                return page
             continue
         if step == "tos":
             accept_workspace_tos(page)
@@ -129,7 +135,7 @@ def google_login(page, acc: dict) -> None:
             recover_unknown_error(page)
             continue
         if step == "consent":
-            if time.time() - last_consent > 6:
+            if any(visible(page, sel) for sel in CONSENT_READY) and time.time() - last_consent > 6:
                 log("检测到授权页，点击同意授权")
                 click_one_of(page, CONSENT, 15000, "同意授权")
                 last_consent = time.time()
@@ -162,7 +168,7 @@ def google_login(page, acc: dict) -> None:
                 try:
                     wait_visible(page, PASS_SEL, 12000)
                 except LoggedIn:
-                    return
+                    return page
                 except Exception:
                     sleep_ms(200)
                     continue
@@ -173,7 +179,7 @@ def google_login(page, acc: dict) -> None:
             pass_done = True
             pass_at = time.time()
             if logged_in(page):
-                return
+                return page
             continue
         if email_done and step == "email" and not visible(page, PASS_SEL):
             if time.time() - email_at > 8:
@@ -191,7 +197,7 @@ def google_login(page, acc: dict) -> None:
             try:
                 wait_visible(page, PASS_SEL, 12000)
             except LoggedIn:
-                return
+                return page
             except Exception:
                 pass
             continue
@@ -203,8 +209,8 @@ def google_login(page, acc: dict) -> None:
             log("谷歌页面未识别，当前 URL=%s", raw)
             last_unknown = time.time()
         sleep_ms(200)
-    if logged_in(page):
-        return
+    if logged_in(page) or identity_done_url(page.url):
+        return page
     raise RuntimeError(f"Google 登录未完成，当前 URL={page.url}")
 
 
@@ -226,5 +232,5 @@ def start_google(page, acc: dict, context=None):
         page = follow_identity_page(context, page, google_ready_url)
         log("等待授权页超时，当前 URL=%s", page_url(page))
     if "accounts.google.com" in page_url(page) or visible(page, 'input#identifierId, input[name="identifier"], input[name="Passwd"]'):
-        google_login(page, acc)
-    return page
+        page = google_login(page, acc, context) or page
+    return switch_if_done(context, page)

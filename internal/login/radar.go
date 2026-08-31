@@ -18,8 +18,11 @@ import (
 const radarPhoneAttempts = 3
 
 func handleRadar(page playwright.Page, cfg config.Config, log Logger) error {
-	if !strings.Contains(page.URL(), "radar-challenge") {
+	if !strings.Contains(googlePath(page.URL()), "radar-challenge") || onIdentityProvider(page.URL()) {
 		return nil
+	}
+	if err := waitRadarForm(page); err != nil {
+		return err
 	}
 	if cfg.HeroSMSAPIKey == "" {
 		return fmt.Errorf("遇到手机验证，请先在设置里填写 Hero SMS API Key")
@@ -59,6 +62,9 @@ func handleRadar(page playwright.Page, cfg config.Config, log Logger) error {
 }
 
 func requestRadarCode(page playwright.Page, cfg config.Config, sms *herosms.Client, log Logger, attempt int) error {
+	if err := waitRadarForm(page); err != nil {
+		return err
+	}
 	log("Hero SMS 取号 country=%d price=%s（第 %d/%d 次）", cfg.HeroSMSCountry, formatPrice(cfg.HeroSMSMaxPrice), attempt, radarPhoneAttempts)
 	num, err := sms.GetNumber(cfg.HeroSMSCountry, cfg.HeroSMSMaxPrice)
 	if err != nil {
@@ -155,6 +161,17 @@ func gotoRadarSend(page playwright.Page, sendURL string, log Logger) error {
 
 func radarSendURL(raw string) string {
 	return strings.Replace(raw, "radar-challenge/verify", "radar-challenge/send", 1)
+}
+
+func waitRadarForm(page playwright.Page) error {
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if visible(page, `input[name="country_code"]`) && visible(page, `input[name="local_number"]`) {
+			return nil
+		}
+		sleep(200)
+	}
+	return fmt.Errorf("接码页没有可填的手机号输入框，当前 URL=%s", page.URL())
 }
 
 func onRadarSend(u string) bool {
