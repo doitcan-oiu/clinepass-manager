@@ -48,6 +48,39 @@ Windows 的 Vite 默认代理仍指向 `:8081`，开发时可先设置 `$env:ADD
 
 ## 构建与部署
 
+### 主程序使用 Docker Compose
+
+在主服务器安装 Docker Engine / Docker Desktop 和 Compose 插件后，在仓库根目录运行：
+
+```bash
+docker compose build
+docker compose up -d
+# 或合并为一条命令：
+docker compose up -d --build
+```
+
+打开 `http://服务器IP:9999`。Dockerfile 会分阶段构建前端和 Go 主程序，运行镜像只包含主程序、前端静态资源及证书等运行依赖；不需要宿主机安装 Go 或 Node。Compose 只启动 `manager`，Auto 仍在另一台服务器独立启动。
+
+数据库、账号池、连接设置和统计保存在宿主机 `./data`，整个目录挂载到 `/app/data`，重建镜像或容器不会清除这些数据。`config.yaml` 只读挂载到容器，不会被打包进镜像。容器内部固定监听 `9999`，如需修改对外端口，在仓库根目录的 `.env` 写入 `MANAGER_PORT=8080` 后重新执行 `docker compose up -d`。时区可在 `.env` 中用 `TZ=Asia/Shanghai` 指定。
+
+启动后到设置 → Auto 连接填写 **Auto 服务器实际可访问的地址**及密钥；容器内的 `127.0.0.1` 指向容器自身。Compose 健康检查只检查主程序，不要求 Auto 在线。
+
+```bash
+docker compose logs -f manager           # 查看日志
+docker compose ps                       # 查看运行及健康状态
+docker compose up -d --build             # 更新代码后重新构建并启动
+docker compose down                     # 停止并移除容器，保留宿主机 ./data
+```
+
+也可以单独构建镜像，再按上述 Compose 文件启动：
+
+```bash
+docker build -t clinepass-manager:local .
+docker compose up -d
+```
+
+### 直接运行与 Auto 部署
+
 ```bash
 make build                # 构建前端和 bin/server；不安装任何浏览器依赖
 make build-auto           # 编译 bin/auto
@@ -59,7 +92,7 @@ make start-all
 
 生产默认主服务 `:9999`，Auto 监听 `:9998`。没有 systemd 时，上述 `start` 命令前台运行对应进程；需在不同终端启动两个服务。只想直接运行二进制可执行 `./bin/server` 和 `./bin/auto`。
 
-两台服务器分别部署：主服务器执行 `make start`，自动化服务器执行 `make start-auto`。在主程序的设置 → Auto 连接中填写 Auto 地址（如 `https://auto.example.com`）及连接密钥，测试并保存后立即生效。Auto 首次启动会生成密钥，写入自己的数据目录下的 `auto-token` 文件，并在首次启动日志显示一次；也可通过 `AUTO_TOKEN` 预先指定。跨公网连接使用 HTTPS 反向代理，Auto 端口可仅允许主服务器访问。
+两台服务器分别部署：主服务器执行 `docker compose up -d --build`（也可直接运行 `make start`），自动化服务器执行 `make start-auto`。在主程序的设置 → Auto 连接中填写 Auto 地址（如 `https://auto.example.com`）及连接密钥，测试并保存后立即生效。Auto 首次启动会生成密钥，写入自己的数据目录下的 `auto-token` 文件，并在首次启动日志显示一次；也可通过 `AUTO_TOKEN` 预先指定。跨公网连接使用 HTTPS 反向代理，Auto 端口可仅允许主服务器访问。
 
 浏览器只访问主程序，主程序携带保存的密钥调用 Auto，包括任务日志流。Auto 的全部接口均要求 Bearer 认证。自动化设置保存在远程 Auto，连接信息和转发设置保存在主程序。停止 Auto 后，负载均衡、账号池、用量统计和仪表盘继续运行；`GET /api/auto/status` 可查看连接状态。
 

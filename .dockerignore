@@ -1,0 +1,22 @@
+# Send only the manager and frontend build inputs to Docker.
+**
+!Dockerfile
+!go.mod
+!go.sum
+!cmd/
+!cmd/server/
+!cmd/server/**
+!internal/
+!internal/**
+!web/
+!web/**
+
+# Generated files, test fixtures and local frontend environment variables.
+**/node_modules/
+**/dist/
+**/.env
+**/.env.*
+**/*_test.go
+**/testdata/
+**/*.tsbuildinfo
+**/*.log

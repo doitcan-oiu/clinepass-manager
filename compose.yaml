@@ -1,0 +1,21 @@
+services:
+  manager:
+    image: clinepass-manager:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${MANAGER_PORT:-9999}:9999"
+    environment:
+      ADDR: ":9999"
+      DATA_DIR: /app/data
+      TZ: "${TZ:-Asia/Shanghai}"
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
