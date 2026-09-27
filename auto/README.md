@@ -2,6 +2,37 @@
 
 独立 Go 自动化服务，可部署在与主程序不同的服务器。两端通过带密钥的 HTTP API 通信，各自拥有 SQLite 数据库，不共享目录或数据库。
 
+## Windows（CMD / PowerShell）
+
+Windows 不需要安装 `make`。先安装 Go 1.26 或更高版本并重新打开终端；`go version` 应能显示版本。在 `auto` 目录下执行：
+
+```bat
+build.cmd
+start.cmd
+```
+
+PowerShell 使用 `./build.cmd` 和 `./start.cmd`。脚本会自动定位仓库根目录，生成 `bin/auto.exe` 并前台运行，按 Ctrl+C 停止。`start.cmd` 仅在程序尚未构建时自动构建；更新代码后先运行 `build.cmd`。
+
+也可以在 `auto` 目录直接执行等价命令：
+
+```bat
+go build -o ..\bin\auto.exe .
+..\bin\auto.exe
+```
+
+临时运行可用 `go run .`。保留完整仓库目录，Auto 需要读取根目录配置及 `auto/worker` 执行器。
+
+默认的浏览器执行器还需要 Python 3.10 或更高版本。首次使用时，在 `auto` 目录安装其独立环境（`py -3 --version` 应正常显示版本）：
+
+```bat
+py -3 -m venv worker\.venv
+worker\.venv\Scripts\python.exe -m pip install -r worker\requirements.txt
+```
+
+如果没有 `py` 启动器但 `python --version` 正常，将第一条命令的 `py -3` 换为 `python`。无需手动激活虚拟环境，Auto 会自动寻找 `worker/.venv/Scripts/python.exe`。若配置过 `LOGIN_PYTHON` 或 `login_python`，它们会优先于自动查找，请勿保留另一台 Linux 服务器的 Python 路径。服务启动后，在主程序填写 Auto 服务器地址、默认端口 `9998` 及首次启动显示的连接密钥。
+
+## Linux / macOS
+
 ```bash
 # 仓库根目录
 make ensure-env
@@ -10,6 +41,8 @@ make auto
 cd auto
 go run .
 ```
+
+## 连接与运行配置
 
 默认监听所有网卡的 `:9998`。用 Auto 服务器上的 `config.yaml` 的 `auto_addr` 或 `AUTO_ADDR` 修改。独立数据目录默认为 `./auto/data`，可通过 `auto_data_dir` / `AUTO_DATA_DIR` 修改，Auto 不使用主程序的 `data_dir` / `DATA_DIR`。
 

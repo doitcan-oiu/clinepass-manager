@@ -44,7 +44,7 @@ npm install
 npm run dev
 ```
 
-Windows 的 Vite 默认代理仍指向 `:8081`，开发时可先设置 `$env:ADDR=":8081"`；生产 `web/dist` 由主程序托管，无需 Vite。Windows 自动化可用 `python -m venv auto/worker/.venv`，然后用该环境的 `Scripts/python.exe -m pip install -r auto/worker/requirements.txt` 安装执行器。
+Windows 的 Vite 默认代理仍指向 `:8081`，开发时可先设置 `$env:ADDR=":8081"`；生产 `web/dist` 由主程序托管，无需 Vite。Windows Auto 不需要 `make`，在 `auto` 目录运行 `build.cmd`、`start.cmd` 即可构建并启动（PowerShell 加 `./`）。首次使用还需安装 Python 执行器，完整命令见 [Auto 的 Windows 启动说明](auto/README.md)。
 
 ## 构建与部署
 

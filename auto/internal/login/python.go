@@ -256,7 +256,7 @@ func findWorker() (python, script string, err error) {
 	if p, e := exec.LookPath("python"); e == nil {
 		return p, script, nil
 	}
-	return "", "", fmt.Errorf("未找到 Python，请先执行 make worker-venv")
+	return "", "", fmt.Errorf("未找到 Python，请按 auto/README.md 的对应系统步骤创建 auto/worker/.venv 并安装执行器依赖")
 }
 
 func FindRepoRoot() (string, error) {
