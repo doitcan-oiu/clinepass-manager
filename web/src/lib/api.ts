@@ -1,4 +1,4 @@
-import type { Account, AppConfig, Batch, BatchPage, CloakUpdate, Job, PoolAccount, PoolPage, RequestLogPage, UsageSyncStatus } from "@/lib/types"
+import type { Account, AppConfig, AutoConnection, AutoImportResult, AutoStatus, Batch, BatchPage, CloakUpdate, Job, MainConfig, PoolAccount, PoolPage, RequestLogPage, UsageSyncStatus } from "@/lib/types"
 
 export type AccountBackup = {
   version: number
@@ -33,19 +33,49 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
-  config: () => fetch("/api/config").then((r) => json<AppConfig>(r)),
-  saveConfig: (body: Partial<AppConfig> & { hero_sms_api_key?: string; cloak_license_key?: string; amzkeys_app_key?: string; amzkeys_private_key?: string }) =>
-    fetch("/api/config", {
+  autoConnection: () => fetch("/api/auto/connection").then((r) => json<AutoConnection>(r)),
+  saveAutoConnection: (body: { url: string; token?: string; clear_token?: boolean }) =>
+    fetch("/api/auto/connection", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<AutoConnection>(r)),
+  testAutoConnection: (body: { url?: string; token?: string }) =>
+    fetch("/api/auto/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<AutoStatus>(r)),
+  autoStatus: () => fetch("/api/auto/status").then((r) => json<AutoStatus>(r)),
+  autoUsageSync: () => fetch("/api/auto/usage/sync").then((r) => json<UsageSyncStatus>(r)),
+  autoConfig: () => fetch("/api/auto/config").then((r) => json<AppConfig>(r)),
+  saveAutoConfig: (body: Partial<AppConfig>) =>
+    fetch("/api/auto/config", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => json<AppConfig>(r)),
+  importAutoAccounts: (batchId?: string) =>
+    fetch("/api/auto/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(batchId ? { batch_id: batchId } : {}),
+    }).then((r) => json<AutoImportResult>(r)),
+  autoAccount: (id: string) => fetch(`/api/auto/accounts/${id}`).then((r) => json<Account>(r)),
+  deleteAutoAccount: (id: string) => fetch(`/api/auto/accounts/${id}`, { method: "DELETE" }).then((r) => json<null>(r)),
+  config: () => fetch("/api/config").then((r) => json<MainConfig>(r)),
+  saveConfig: (body: Partial<MainConfig>) =>
+    fetch("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<MainConfig>(r)),
   updateCloak: () =>
     fetch("/api/cloak/update", { method: "POST" }).then((r) => json<CloakUpdate>(r)),
   account: (id: string) => fetch(`/api/accounts/${id}`).then((r) => json<Account>(r)),
   deleteAccount: (id: string) => fetch(`/api/accounts/${id}`, { method: "DELETE" }).then((r) => json<null>(r)),
   loginAccount: (id: string, autoPay = false) =>
-    fetch(`/api/accounts/${id}/login`, {
+    fetch(`/api/auto/accounts/${id}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ auto_pay: autoPay }),
@@ -88,7 +118,7 @@ export const api = {
       body: JSON.stringify({ auto_pay: autoPay }),
     }).then((r) => json<Job[]>(r)),
   refreshAccount: (id: string, autoPay = false) =>
-    fetch(`/api/accounts/${id}/refresh`, {
+    fetch(`/api/auto/accounts/${id}/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ auto_pay: autoPay }),

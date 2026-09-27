@@ -43,10 +43,12 @@ export function DetailDialog({
   account,
   open,
   onOpenChange,
+  source = "pool",
 }: {
   account: Account | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  source?: "pool" | "auto"
 }) {
   const [full, setFull] = useState<Account | null>(null)
 
@@ -56,8 +58,9 @@ export function DetailDialog({
       return
     }
     let cancelled = false
-    api
-      .account(account.id)
+    setFull(null)
+    const load = source === "auto" ? api.autoAccount : api.account
+    load(account.id)
       .then((a) => {
         if (!cancelled) setFull(a)
       })
@@ -67,7 +70,7 @@ export function DetailDialog({
     return () => {
       cancelled = true
     }
-  }, [open, account?.id])
+  }, [open, account?.id, source])
 
   const view = full || account
   if (!view) return null

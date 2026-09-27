@@ -56,15 +56,15 @@ export function AddBatchDialog({ onSaved }: { onSaved: () => void }) {
   return (
     <Dialog open={open} onOpenChange={openChange}>
       <DialogTrigger asChild>
-        <Button>导入一批账号</Button>
+        <Button>添加待提取账号</Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>导入一批账号</DialogTitle>
+          <DialogTitle>添加待提取账号到 Auto</DialogTitle>
           <DialogDescription>
             {loginProvider === "microsoft"
-              ? "微软账号一行一个：邮箱----密码。导入后不会自动登录，下一步再点「生成」提取支付链接。"
-              : "谷歌账号一行一个：邮箱----密码----辅助邮箱。导入后不会自动登录，下一步再点「生成」提取支付链接。"}
+              ? "微软账号一行一个：邮箱----密码。账号会保存到已连接的 Auto 服务器，下一步点「生成」提取支付链接。"
+              : "谷歌账号一行一个：邮箱----密码----辅助邮箱。账号会保存到已连接的 Auto 服务器，下一步点「生成」提取支付链接。"}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -104,7 +104,7 @@ export function AddBatchDialog({ onSaved }: { onSaved: () => void }) {
             取消
           </Button>
           <Button disabled={pending || !text.trim()} onClick={onSubmit}>
-            导入这批账号
+            {pending ? "正在添加…" : "添加到 Auto"}
           </Button>
         </DialogFooter>
       </DialogContent>

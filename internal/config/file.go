@@ -10,6 +10,10 @@ import (
 
 type fileConfig struct {
 	Addr            *flexString `yaml:"addr"`
+	AutoAddr        *string     `yaml:"auto_addr"`
+	AutoURL         *string     `yaml:"auto_url"`
+	AutoToken       *string     `yaml:"auto_token"`
+	AutoDataDir     *string     `yaml:"auto_data_dir"`
 	DataDir         *string     `yaml:"data_dir"`
 	InviteURL       *string     `yaml:"invite_url"`
 	Headless        *bool       `yaml:"headless"`
@@ -69,6 +73,10 @@ func loadFile(path string, c *Config) error {
 		}
 	}
 	setStr(&c.DataDir, f.DataDir)
+	setStr(&c.AutoAddr, f.AutoAddr)
+	setStr(&c.AutoURL, f.AutoURL)
+	setStr(&c.AutoToken, f.AutoToken)
+	setStr(&c.AutoDataDir, f.AutoDataDir)
 	setStr(&c.InviteURL, f.InviteURL)
 	setStr(&c.Proxy, f.Proxy)
 	setStr(&c.LoginEngine, f.LoginEngine)

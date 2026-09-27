@@ -1,155 +1,113 @@
 # ClinePass Manager
 
-多账号登录管理：Go 提供 API、任务队列和前端托管；默认用 **Python Cloak 官方包装**（`humanize` + `geoip`）跑浏览器登录，提取 Cookie / 用户 ID / API Key / 支付链接，并转发套餐用量。
-
-前端是 React + Vite + shadcn/ui。
+主程序负责账号池、负载均衡、OpenAI 兼容转发、套餐用量、请求日志、仪表盘和前端托管。自动化已拆成 `auto/` 下的独立 Go 程序，负责登录、提取 Cookie / 用户 ID / API Key / 支付链接、支付、虚拟卡、短信和定时续 Cookie。两个程序可以分别启动、停止和更新。
 
 ## 目录
 
+```text
+cmd/server/       主程序入口
+internal/         主程序 API、配置/模型/存储公共代码、账号池、转发和统计
+auto/main.go      独立自动化服务入口
+auto/internal/    自动化 API、任务队列、浏览器、登录、卡台、短信、导出
+auto/worker/      现有 Python Cloak 执行器及测试
+auto/login-tool/  独立人工付款助手
+auto/scripts/    自动化环境安装和 systemd 安装脚本
+scripts/         主程序 systemd 安装脚本
+web/             React + Vite 前端
+data/            主程序 SQLite（运行数据）
+auto/data/       Auto 独立 SQLite、连接密钥、浏览器配置和截图
 ```
-cmd/server/      HTTP 入口
-internal/        API、任务、存储、用量、Playwright-Go 回退
-worker/          Python 登录工人（Cloak 官方 launch）
-scripts/         环境检测与自动安装
-web/             前端
-data/            运行时数据（库、浏览器配置目录、截图）
-bin/server       生产二进制（make build 生成）
-```
 
-## 准备
-
-本机需要能编译 Go、跑前端。登录工人的 Python / uv / 虚拟环境可以由 Make 自动补：
-
-- Go 1.22+
-- Node 20+
-- Linux 上装 Chromium 依赖和 Xvfb（无桌面服务器必须）：`make browser-deps`
-
-`make`、`make build`、`make ensure-env` 都会跑 `scripts/ensure-worker-env.sh`，按顺序检查：
-
-1. Python 3（没有就 `apt` 装 `python3` / `python3-venv` / `python3-pip`）
-2. [uv](https://github.com/astral-sh/uv)（没有或不能用，就走官方安装脚本）
-3. 系统 `python3-venv`（有 Python 但缺 `ensurepip` 时自动装）
-4. `worker/.venv` 和 `cloakbrowser`（没有或坏了就重建）
-
-已经装好的会跳过。用 `apt` 时需要 sudo。
-
-首次启动会在后台下载 CloakBrowser 到缓存目录（约 200MB），HTTP 先起来，不会因此 502。systemd 开了 `ProtectHome` 时，缓存和运行目录在 `data/` 下。版本和 license 在网页「设置 → 运行环境」里改，不用每次改 yaml。
-
-## 常用命令
-
-都在仓库根目录执行。`make` 等于 `make dev`。
-
-| 命令 | 做什么 |
-|---|---|
-| `make` / `make dev` | 先 `ensure-env`，再 `go mod tidy`、装前端依赖，同时起后端 `:8081` 和 Vite `:5173` |
-| `make build` | 先 `ensure-env`，构建 `web/dist`，再编译 `bin/server`（生产） |
-| `make start` | `make build` 后生成 systemd 单元并启动。没有 systemd 则前台跑 `bin/server` |
-| `make ensure-env` | 只检查/安装 Python、uv、工人虚拟环境，不启动服务 |
-| `make worker-venv` | 与 `ensure-env` 相同（兼容旧名字） |
-| `make api` | 只起后端，开发端口 `:8081`（不跑 ensure-env，不启前端） |
-| `make web` | 只起 Vite 前端 `:5173` |
-| `make install-web` | `cd web && npm install` |
-| `make build-web` | 先 `npm install`，再 `npm run build` |
-| `make tidy` | `go mod tidy` |
-| `make browser-deps` | `apt` 安装 Xvfb 和 Chromium 运行库（需要 sudo） |
-| `make worker-test` | 跑工人单测（`test_urls`、`test_herosms`、`test_cloak`、`test_radar`） |
-| `make install-pw` | 安装 Playwright-Go 驱动（仅 `LOGIN_ENGINE=go` 回退时需要） |
-
-单独补环境、不启动：
-
-```bash
-make ensure-env
-```
+两个 Go 程序共用仓库的 `go.mod` 和基础存储代码，但单独编译、单独运行。主程序编译依赖中不包含 Playwright、Chrome、登录任务、短信或卡台客户端。默认自动化仍使用原有 Python Cloak 执行器，Go 负责服务和调度；没有把浏览器流程重写成纯 Go。可用 `LOGIN_ENGINE=go` 选择原有 Playwright-Go 回退引擎。
 
 ## 开发
 
-```bash
-make
-```
-
-会先补齐工人环境，再安装 Go / 前端依赖，然后同时启动：
-
-| 服务 | 地址 |
-|---|---|
-| 后端 API | http://127.0.0.1:8081 |
-| 前端（Vite，`/api` 代理到后端） | http://127.0.0.1:5173 |
-
-浏览器打开 **http://127.0.0.1:5173**。`Ctrl+C` 同时退出两边。后端 `go run` 就绪后才会起前端。
-
-已经 `ensure-env` 过、只想重开服务：
+需要 Go 1.26 和 Node 20+。仅运行主程序及前端不需要 Python、CloakBrowser 或 Xvfb：
 
 ```bash
-make api    # 仅后端，:8081
-make web    # 仅前端，:5173
+make dev                  # 主程序 :8081，前端 :5173
+# 需要自动化时，另外一个终端：
+make ensure-env           # 安装 Python/uv/Cloak 执行器及 Linux 浏览器依赖
+make auto                 # 独立 Auto 服务 :9998，首次启动生成连接密钥
 ```
 
-页面：`/` 仪表盘，`/automation` 提取支付链接，`/account` 账号，`/logs` 日志，`/settings` 设置。
+`make dev-all` 会准备自动化依赖并同时启动三个进程。也可以分别运行 `make api`、`make web` 和 `make auto`。本机开发也使用独立数据库，需要在设置 → Auto 连接中保存 `http://127.0.0.1:9998` 和 Auto 密钥。
 
-改 `worker/` 后不用重编 Go，重启任务即可。改 Go 代码在开发模式用 `make`（`go run`）会重新编译。
+Windows 可分别在终端运行：
 
-## 生产
+```powershell
+go run ./cmd/server
+go run ./auto
+# 前端另一个终端：
+cd web
+npm install
+npm run dev
+```
 
-在项目根目录一行启动（补环境、装 Xvfb、编前端/后端、按当前目录生成 systemd 单元并重启）：
+Windows 的 Vite 默认代理仍指向 `:8081`，开发时可先设置 `$env:ADDR=":8081"`；生产 `web/dist` 由主程序托管，无需 Vite。Windows 自动化可用 `python -m venv auto/worker/.venv`，然后用该环境的 `Scripts/python.exe -m pip install -r auto/worker/requirements.txt` 安装执行器。
+
+## 构建与部署
 
 ```bash
-make start
+make build                # 构建前端和 bin/server；不安装任何浏览器依赖
+make build-auto           # 编译 bin/auto
+make start                # 安装并启动 clinepass-manager.service
+make start-auto           # 准备自动化依赖，安装并启动 clinepass-auto.service
+# 或一次处理两套服务：
+make start-all
 ```
 
-然后打开 **http://127.0.0.1:9999**。单元里的路径按仓库实际位置生成，不必手写 `/data/...`。没有 systemd 时，`make start` 会前台跑 `./bin/server`。
+生产默认主服务 `:9999`，Auto 监听 `:9998`。没有 systemd 时，上述 `start` 命令前台运行对应进程；需在不同终端启动两个服务。只想直接运行二进制可执行 `./bin/server` 和 `./bin/auto`。
 
-只构建、不装服务：
+两台服务器分别部署：主服务器执行 `make start`，自动化服务器执行 `make start-auto`。在主程序的设置 → Auto 连接中填写 Auto 地址（如 `https://auto.example.com`）及连接密钥，测试并保存后立即生效。Auto 首次启动会生成密钥，写入自己的数据目录下的 `auto-token` 文件，并在首次启动日志显示一次；也可通过 `AUTO_TOKEN` 预先指定。跨公网连接使用 HTTPS 反向代理，Auto 端口可仅允许主服务器访问。
 
-```bash
-make build
-./bin/server
-```
+浏览器只访问主程序，主程序携带保存的密钥调用 Auto，包括任务日志流。Auto 的全部接口均要求 Bearer 认证。自动化设置保存在远程 Auto，连接信息和转发设置保存在主程序。停止 Auto 后，负载均衡、账号池、用量统计和仪表盘继续运行；`GET /api/auto/status` 可查看连接状态。
 
-`bin/server` 会自己切到项目根目录，再找 `worker/login.py`、`worker/.venv`、`web/dist`。HTTP 先监听，Cloak 二进制在后台下载。
+## 独立数据与成功账号导入
 
-改过 Go 或前端后，再执行一次 `make start`。只改 Python 工人时 `sudo systemctl restart clinepass-manager` 即可。不要把开发态的 `:8081` 当生产。
+主程序使用 `DATA_DIR`（默认 `./data`），Auto 使用 `AUTO_DATA_DIR`（默认 `./auto/data`），各自保存 `manager.db`，无需共享磁盘。Auto 独立保存待提取批次、浏览器资料、支付配置和任务；主程序独立保存可用账号池、负载均衡配置和统计历史。
 
-指定解释器或回退旧引擎：
+接通后在自动化页面添加待提取账号，执行提取或自动支付。手动支付后先「检查已支付」，待订阅验证完成，再点击「导入已成功账号」；可导入全部结果或单个批次。仅已确认付款且具有 API Key、Cookie 的账号可导入。账号按邮箱去重，远端和本地使用各自的 ID，重复导入跳过未变更结果，更新后的凭据可再次导入。导入不会带入 Auto 的浏览器代理。
 
-```bash
-LOGIN_PYTHON=./worker/.venv/bin/python ./bin/server
-LOGIN_ENGINE=go ./bin/server          # 回退 Playwright-Go，没有官方 humanize/geoip
-```
+账号池的手动 Cookie 续期会把所需账号发送到 Auto 执行，主程序保存对应关系并定期取回成功结果；主程序重启后仍会继续检查。Auto 每日续期产生的新凭据也会自动回传给已关联的本地账号，不会自动新增账号或覆盖更新的本地凭据。切换 Auto 地址后，只同步当前连接的结果。
 
-无图形界面的服务器会自动起 Xvfb，按有界面方式跑 Chrome。本机已有 `DISPLAY` 时，设置里的「无头」仍然生效。`ProtectHome` 可保留，HOME / 缓存 / `XDG_RUNTIME_DIR` 都落在 `data/`。
-
-## 账号格式
-
-- 谷歌：`邮箱----密码----辅助邮箱`
-- 微软：`邮箱----密码`（导入批次选微软）
-
-不要把真实账密、Cookie、代理密码写进仓库。
+从旧版共享数据库升级：等待任务结束，停止两端并备份旧 `data`，将旧数据库及浏览器资料的完整副本放到 Auto 服务器的 `AUTO_DATA_DIR`，主程序保留原数据库。此后两端分别写入自己的数据目录。旧 `worker/.venv` 应在 `auto/worker/.venv` 重新建立；显式配置的 `LOGIN_PYTHON` 路径也要调整。任务队列和实时日志仍在 Auto 内存中，重启前等待任务完成。只更新 Python 时重启 `clinepass-auto` 即可。
 
 ## 配置
 
-端口、数据目录等可以写在项目根目录的 `config.yaml`。启动后改文件需要重启才生效。
+启动配置在 `config.yaml`，也可用 `CONFIG_FILE=/path/to.yaml` 指定。优先级为环境变量 > 配置文件 > 默认值；网页保存的业务设置会覆盖对应的启动初始值。监听地址变更需重启。
 
-优先级：**环境变量 > config.yaml > 代码默认值**。
-
-`make` / `make api` 仍会设 `ADDR=:8081`，所以开发端口不受 yaml 影响。生产 `make start` 读 yaml 里的 `addr`（默认 `:9999`）。
-
-也可以用 `CONFIG_FILE=/path/to.yaml` 指定别的文件。
-
-## 环境变量
-
-| 变量 | 默认 | 说明 |
+| 配置 / 环境变量 | 默认值 | 用途 |
 |---|---|---|
-| `ADDR` | `:9999` | 监听地址，也可写在 `config.yaml` 的 `addr`。`make` / `make api` 开发固定 `:8081` |
-| `DATA_DIR` | `./data` | SQLite、浏览器配置目录、截图、HOME 不可写时的回退目录 |
-| `HOME` | 进程用户家目录 | systemd `ProtectHome` 时请指到 `DATA_DIR/home` |
-| `INVITE_URL` | `https://authkit.cline.bot` | 邀请链接，可在设置里改 |
-| `HEADLESS` | `true` | 无头初始值，可在设置里改 |
-| `PROXY` | 空 | 全局代理初始值，可在设置里改 |
-| `MAX_CONCURRENT` | `1` | 同时登录数。Cloak 免费版通常为 1 |
-| `LOGIN_ENGINE` | `python` | `python` 走官方包装；`go` 走旧 Playwright-Go |
-| `LOGIN_PYTHON` | `worker/.venv/bin/python` | 工人解释器 |
-| `CLOAKBROWSER_VERSION` | `151.0.7922.108.2` | 二进制初始版本，可在设置里改。151 需 Cloak license；没 key 时包装会回落免费 146 |
-| `CLOAKBROWSER_CACHE_DIR` | `$HOME/.cloakbrowser` | 缓存目录。HOME 不可写时落到 `data/home/.cloakbrowser` |
-| `CLOAKBROWSER_BINARY_PATH` | 空 | 跳过下载，使用本地 chrome |
-| `CLOAKBROWSER_LICENSE_KEY` | 空 | Cloak key 初始值，可在设置里改。151 必须有，下载走 `cloakbrowser.dev/api/download/{version}` |
+| `addr` / `ADDR` | `:9999` | 主程序地址，`make api` / `make dev` 使用 `:8081` |
+| `auto_addr` / `AUTO_ADDR` | `:9998` | Auto 监听地址 |
+| `auto_url` / `AUTO_URL` | 空 | 主程序连接 Auto 的初始地址，推荐在网页保存 |
+| `auto_token` / `AUTO_TOKEN` | 空 | Auto 认证密钥；Auto 未指定时自动生成，主程序需填写匹配值 |
+| `data_dir` / `DATA_DIR` | `./data` | 主程序数据目录 |
+| `auto_data_dir` / `AUTO_DATA_DIR` | `./auto/data` | Auto 独立数据目录，不受 `DATA_DIR` 影响 |
+| `login_engine` / `LOGIN_ENGINE` | `python` | auto 的执行引擎，支持 `python` / `go` |
+| `login_python` / `LOGIN_PYTHON` | 自动检测 | 优先使用 `auto/worker/.venv/bin/python`，Windows 使用 `Scripts/python.exe` |
+| `CLOAKBROWSER_BINARY_PATH` | 空 | auto 使用现有浏览器，跳过下载 |
+| `CLOAKBROWSER_CACHE_DIR` | `$HOME/.cloakbrowser` | auto 浏览器缓存目录 |
+| `CLOAKBROWSER_LICENSE_KEY` | 空 | auto 的 Cloak License 初始值 |
 
-登录失败截图在 `data/screenshots/<账号ID>.png`。每个账号的浏览器配置在 `data/profiles/<账号ID>/`。
+设置按标签区分 Auto 连接、主程序转发与用量、远程自动化、浏览器、短信和卡台。主程序与 Auto 的代理分别设置，连接地址和密钥保存在主程序数据库中；网页保存连接后会覆盖对应的启动初始值，无需重启。
+
+## 仪表盘与历史数据
+
+`GET /api/dashboard?range=30d` 提供仪表盘数据，支持 `24h`、`7d`、`30d`、`90d`。请求趋势按 UTC 小时或自然日汇总（包含当前时段），请求活跃度固定显示近 180 天；账号、模型和密钥可用性为当前状态。首包耗时与输出速度只统计成功的流式请求。
+
+请求历史汇总独立保存，清空请求明细、14 天日志保留期及 50,000 条明细上限均不会清除仪表盘历史。升级时只能回填尚存的日志，已被清理的数据无法恢复，页面会注明历史不完整。
+
+计费来自上游同步的账号日账单，可能包括网关外的使用，且账单日期与 UTC 请求分桶可能有时区差异；它不是逐次请求扣费。未同步的日期和模型显示为空，`24h` 不把日账单拆成小时费用。账号过期后已同步账单仍保留。
+
+## 测试和工具
+
+```bash
+go test ./...             # 主程序、自动化与共享存储单测
+make worker-test          # 原 Python 执行器单测
+make pay-tool             # 生成 auto/login-tool/dist 付款助手
+make install-pw           # 仅 Go 回退引擎需要的 Playwright 驱动
+```
+
+谷歌批次格式为 `邮箱----密码----辅助邮箱`；微软为 `邮箱----密码`。截图和浏览器配置分别位于 Auto 数据目录的 `screenshots/` 和 `profiles/`。不要把真实账密、Cookie、连接密钥或代理密码提交到仓库。

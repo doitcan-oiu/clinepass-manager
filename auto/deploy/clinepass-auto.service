@@ -1,0 +1,37 @@
+[Unit]
+Description=ClinePass Auto Automation
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=__ROOT__
+ExecStart=__ROOT__/bin/auto
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=clinepass-auto
+
+# Cloak / Chrome 会写 $HOME 和 XDG_RUNTIME_DIR。
+# Auto 拥有独立目录，不读取主程序的数据文件。
+Environment=HOME=__ROOT__/auto/data/home
+# auto_data_dir is read from config.yaml; do not override it here.
+Environment=CLOAKBROWSER_CACHE_DIR=__ROOT__/auto/data/cloakbrowser
+Environment=XDG_RUNTIME_DIR=__ROOT__/auto/data/run
+
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=__ROOT__
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+LimitNOFILE=65535
+LimitNPROC=65535
+
+[Install]
+WantedBy=multi-user.target

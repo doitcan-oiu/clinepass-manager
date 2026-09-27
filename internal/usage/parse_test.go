@@ -1,7 +1,7 @@
 package usage
 
 import (
-	"os"
+	"math"
 	"strings"
 	"testing"
 
@@ -9,11 +9,16 @@ import (
 )
 
 func TestParseWindowsFromGoPage(t *testing.T) {
-	raw, err := os.ReadFile("../../相关操作/配额用量.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rolling, weekly, monthly, err := ParseWindows(string(raw))
+	// Representative serialized page data belongs with the test. Local captured
+	// pages in 相关操作 are ignored and may contain private account information.
+	const page = `<html><script>
+		window.data = {
+			rollingUsage: $R[12] = {status: "ok", resetInSec: 18000, usagePercent: 0},
+			weeklyUsage: {status: "rate-limited", resetInSec: 604800, usagePercent: 100},
+			monthlyUsage: $R[14] = {status: "ok", resetInSec: 2441872, usagePercent: 55}
+		};
+	</script></html>`
+	rolling, weekly, monthly, err := ParseWindows(page)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +31,7 @@ func TestParseWindowsFromGoPage(t *testing.T) {
 	if monthly.Status != "ok" || monthly.UsagePercent != 55 || monthly.ResetInSec != 2441872 {
 		t.Fatalf("monthly %+v", monthly)
 	}
-	if PageKind(string(raw)) != "subscribed" {
+	if PageKind(page) != "subscribed" {
 		t.Fatal("go page should be subscribed")
 	}
 }
@@ -41,11 +46,18 @@ func TestPageKindUnpaidAndAuth(t *testing.T) {
 }
 
 func TestParseModelDaysFromUsageDoc(t *testing.T) {
-	raw, err := os.ReadFile("../../相关操作/模型使用量.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	days := ParseModelDays(string(raw))
+	const page = `<html><script>
+		window.data = {days: [
+			{date: "2026-08-20", model: "glm-5.3", totalCost: 40000000},
+			{date: "2026-08-21", model: "glm-5.3", totalCost: 22642336},
+			{date: "2026-08-21", model: "kimi-k3", totalCost: 123456789},
+			{date: "2026-08-21", model: "qwen3.8-max", totalCost: 0}
+		]};
+		// Framework hydration can repeat the same daily record.
+		window.cache = {date: "2026-08-21", model: "glm-5.3", totalCost: 22642336};
+		window.invalid = {date: "2026-08-21", model: "unknown", totalCost: "invalid"};
+	</script></html>`
+	days := ParseModelDays(page)
 	if len(days) != 4 {
 		t.Fatalf("days=%d %+v", len(days), days)
 	}
@@ -56,8 +68,11 @@ func TestParseModelDaysFromUsageDoc(t *testing.T) {
 		}
 	}
 	want := 62642336 / CostUnitsPerUSD
-	if glm < want*0.99 || glm > want*1.01 {
+	if math.Abs(glm-want) > 1e-12 {
 		t.Fatalf("glm usd=%v want=%v", glm, want)
+	}
+	if days[2].Model != "kimi-k3" || math.Abs(days[2].USD-1.23456789) > 1e-12 || days[3].USD != 0 {
+		t.Fatalf("currency conversion or zero-cost row lost: %+v", days)
 	}
 	month := AggregateMonth(days, "2026-08")
 	if len(month) != 3 {

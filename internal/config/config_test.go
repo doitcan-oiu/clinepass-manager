@@ -7,6 +7,33 @@ import (
 	"testing"
 )
 
+func TestSeparateAutomationAddressConfiguration(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("ADDR", ":8081")
+	t.Setenv("AUTO_ADDR", "127.0.0.1:10098")
+	t.Setenv("AUTO_URL", "http://127.0.0.1:10098/")
+	if err := os.WriteFile("config.yaml", []byte("addr: ':9999'\nauto_addr: '127.0.0.1:9998'\nauto_url: 'http://127.0.0.1:9998'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Addr != ":8081" || cfg.AutoAddr != "127.0.0.1:10098" || cfg.AutomationURL() != "http://127.0.0.1:10098" {
+		t.Fatalf("main=%q auto=%q target=%q", cfg.Addr, cfg.AutoAddr, cfg.AutomationURL())
+	}
+	// Main startup only needs its data directory, without preparing a browser.
+	cfg.DataDir = "data"
+	prepared, err := cfg.PrepareDataDir()
+	if err != nil || !filepath.IsAbs(prepared.DataDir) {
+		t.Fatalf("data=%q err=%v", prepared.DataDir, err)
+	}
+	if _, err := os.Stat(prepared.ProfilesDir()); !os.IsNotExist(err) {
+		t.Fatalf("main prepared a browser profile directory: %v", err)
+	}
+}
+
 func TestDirWritable(t *testing.T) {
 	dir := t.TempDir()
 	if !DirWritable(dir) {
@@ -214,7 +241,7 @@ func TestManagerAPI(t *testing.T) {
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		"ADDR", "DATA_DIR", "INVITE_URL", "HEADLESS", "SLOW_MO", "PROXY",
+		"ADDR", "DATA_DIR", "AUTO_ADDR", "AUTO_DATA_DIR", "AUTO_URL", "AUTO_TOKEN", "INVITE_URL", "HEADLESS", "SLOW_MO", "PROXY",
 		"MAX_CONCURRENT", "MAX_RETRIES", "LOGIN_ENGINE", "LOGIN_PYTHON",
 		"CLOAKBROWSER_VERSION", "CLOAKBROWSER_CACHE_DIR", "CLOAKBROWSER_BINARY_PATH",
 		"CLOAKBROWSER_LICENSE_KEY", "CONFIG_FILE",

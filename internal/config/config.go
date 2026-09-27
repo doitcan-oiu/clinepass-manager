@@ -11,6 +11,10 @@ import (
 
 type Config struct {
 	Addr              string
+	AutoAddr          string
+	AutoURL           string
+	AutoToken         string
+	AutoDataDir       string
 	DataDir           string
 	InviteURL         string
 	Headless          bool
@@ -65,6 +69,9 @@ func Load() (Config, error) {
 func defaults() Config {
 	return Config{
 		Addr:          ":9999",
+		AutoAddr:      ":9998",
+		AutoURL:       "",
+		AutoDataDir:   "./auto/data",
 		DataDir:       "./data",
 		InviteURL:     "https://authkit.cline.bot",
 		Headless:      true,
@@ -223,6 +230,18 @@ func (c Config) prepareRuntimeDir() (string, error) {
 }
 
 func applyEnv(c *Config) {
+	if v := strings.TrimSpace(os.Getenv("AUTO_TOKEN")); v != "" {
+		c.AutoToken = v
+	}
+	if v := strings.TrimSpace(os.Getenv("AUTO_DATA_DIR")); v != "" {
+		c.AutoDataDir = v
+	}
+	if v := strings.TrimSpace(os.Getenv("AUTO_ADDR")); v != "" {
+		c.AutoAddr = v
+	}
+	if v := strings.TrimSpace(os.Getenv("AUTO_URL")); v != "" {
+		c.AutoURL = v
+	}
 	if v := strings.TrimSpace(os.Getenv("ADDR")); v != "" {
 		c.Addr = v
 	}

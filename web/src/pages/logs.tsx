@@ -117,7 +117,7 @@ export function LogsPage() {
       setItems([])
       setTotal(0)
       setStats(emptyStats)
-      toast.success("日志已清空")
+      toast.success("请求明细已清空，仪表盘历史汇总已保留")
       setClearOpen(false)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "清空失败")
@@ -185,7 +185,7 @@ export function LogsPage() {
           />
           <Button variant="outline" disabled={!total || clearing} onClick={() => setClearOpen(true)}>
             <Trash2 />
-            清空全部
+            清空请求明细
           </Button>
         </div>
       </div>
@@ -354,9 +354,9 @@ export function LogsPage() {
       <AlertDialog open={clearOpen} onOpenChange={setClearOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>清空全部日志</AlertDialogTitle>
+            <AlertDialogTitle>清空全部请求明细</AlertDialogTitle>
             <AlertDialogDescription>
-              将删除全部 {total} 条请求日志，不可恢复。
+              将删除全部请求明细，不可恢复。仪表盘历史汇总与已同步账单会保留。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

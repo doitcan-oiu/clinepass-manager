@@ -36,14 +36,6 @@ listen_url() {
 	echo "http://${host}:${port}"
 }
 
-ensure_browser_deps() {
-	if have Xvfb; then
-		echo "==> Xvfb 已安装"
-		return 0
-	fi
-	echo "==> 未找到 Xvfb，安装浏览器依赖"
-	(cd "$ROOT" && make browser-deps)
-}
 
 write_unit() {
 	if [[ ! -f "$UNIT_SRC" ]]; then
@@ -106,7 +98,6 @@ wait_http() {
 	return 1
 }
 
-ensure_browser_deps
 
 if [[ ! -x "$ROOT/bin/server" ]]; then
 	echo "缺少 $ROOT/bin/server，请先 make build"

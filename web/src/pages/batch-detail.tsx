@@ -5,6 +5,8 @@ import { api } from "@/lib/api"
 import type { Account, Batch, Job, JobEvent } from "@/lib/types"
 import { AccountTable } from "@/components/accounts/account-table"
 import { AutoPayDialog } from "@/components/accounts/auto-pay-dialog"
+import { AutoImport } from "@/components/accounts/auto-import"
+import { AutoVerificationStatus, useAutoVerification } from "@/components/accounts/auto-verification"
 import { DetailDialog } from "@/components/accounts/detail-dialog"
 import { JobLogPanel } from "@/components/accounts/job-log-panel"
 import { Button } from "@/components/ui/button"
@@ -35,15 +37,24 @@ export function BatchDetailPage() {
   const [logs, setLogs] = useState<JobEvent[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [logFilter, setLogFilter] = useState("")
+  const [loadError, setLoadError] = useState("")
   const esRef = useRef<{ close: () => void } | null>(null)
   const radarCount = radarDeniedCount(accounts)
   const emails = useMemo(() => emailByAccount(accounts, jobs), [accounts, jobs])
   const jobStatuses = useMemo(() => jobStatusByAccount(jobs), [jobs])
   const currentSteps = useMemo(() => latestStepByAccount(logs), [logs])
+  const verification = useAutoVerification(() => { void reload().catch(() => {}) })
 
   async function reload() {
     if (!id) return
-    const data = await api.batch(id)
+    let data
+    try {
+      data = await api.batch(id)
+      setLoadError("")
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "无法读取远程批次")
+      throw err
+    }
     setBatch(data.batch)
     setAccounts(data.accounts)
     setDetail((cur) => (cur ? data.accounts.find((a) => a.id === cur.id) || null : null))
@@ -162,10 +173,14 @@ export function BatchDetailPage() {
 
   async function confirmRemove() {
     if (!remove) return
-    await api.deleteAccount(remove.id)
-    setRemove(null)
-    toast.success("已删除")
-    await reload()
+    try {
+      await api.deleteAutoAccount(remove.id)
+      setRemove(null)
+      toast.success("已从 Auto 删除")
+      await reload()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "删除失败")
+    }
   }
 
   async function confirmRemoveRadar() {
@@ -202,8 +217,8 @@ export function BatchDetailPage() {
   async function markPaid() {
     if (!id) return
     try {
-      await api.markBatchPaid(id)
-      toast.success("开始扫描配额，有配额的会标成已支付")
+      await verification.start(id)
+      toast.success("Auto 正在检查订阅，确认已支付后可导入账号池")
       await reload()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "标记失败")
@@ -231,6 +246,10 @@ export function BatchDetailPage() {
         ) : null}
       </div>
 
+      {loadError ? <div role="alert" className="space-y-3 rounded-xl border border-destructive/25 bg-destructive/5 p-4"><p className="text-sm">{loadError}</p><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => void reload().catch(() => {})}>重新加载</Button><Button variant="outline" size="sm" asChild><Link to="/settings?tab=connection">配置 Auto 连接</Link></Button></div></div> : null}
+      <AutoImport key={id} batchId={id} disabled={!batch || !!loadError || verification.busy} />
+      <AutoVerificationStatus status={verification.status} error={verification.error} />
+
       <div className="flex flex-wrap gap-2">
         <Button
           variant={batch && batchStatus(batch).primary === "login" ? "default" : "outline"}
@@ -241,7 +260,7 @@ export function BatchDetailPage() {
         </Button>
         <Button
           variant={batch && batchStatus(batch).primary === "refresh" ? "default" : "outline"}
-          disabled={!batch?.unpaid_cookie_count}
+          disabled={!batch?.unpaid_cookie_count || verification.busy}
           onClick={() => setPayAsk({ mode: "refresh" })}
         >
           刷新过期的支付链接
@@ -257,9 +276,9 @@ export function BatchDetailPage() {
           className={batch && batchStatus(batch).primary === "paid" && batch.unpaid_cookie_count ? "bg-violet-600 text-white hover:bg-violet-700" : ""}
           variant={batch && batchStatus(batch).primary === "paid" && batch.unpaid_cookie_count ? "default" : "outline"}
           onClick={markPaid}
-          disabled={!batch?.unpaid_cookie_count}
+          disabled={!batch?.unpaid_cookie_count || verification.busy}
         >
-          {batch && batch.paid_count >= batch.total && batch.total ? "已付款" : "确认付款"}
+          {verification.busy ? "正在检查支付状态…" : batch && batch.paid_count >= batch.total && batch.total ? "已付款" : "检查支付状态"}
         </Button>
         <Button
           variant="destructive"
@@ -304,13 +323,13 @@ export function BatchDetailPage() {
         onConfirm={startWithAutoPay}
       />
 
-      <DetailDialog account={detail} open={!!detail} onOpenChange={(v) => !v && setDetail(null)} />
+      <DetailDialog account={detail} source="auto" open={!!detail} onOpenChange={(v) => !v && setDetail(null)} />
 
       <AlertDialog open={!!remove} onOpenChange={(v) => !v && setRemove(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>删除账号</AlertDialogTitle>
-            <AlertDialogDescription>删除 {remove?.email}？</AlertDialogDescription>
+            <AlertDialogDescription>从 Auto 删除 {remove?.email}？已经导入主程序的账号会保留。</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>

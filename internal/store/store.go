@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -26,12 +27,26 @@ func Open(dbPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(0)
 	db.SetMaxIdleConns(16)
+	// Switching a new database to WAL can return SQLITE_BUSY before SQLite's
+	// busy timeout takes effect when both processes open it simultaneously.
+	for attempt := 0; ; attempt++ {
+		err = db.Ping()
+		if err == nil {
+			break
+		}
+		var code interface{ Code() int }
+		if attempt >= 20 || !errors.As(err, &code) || code.Code()&0xff != 5 {
+			_ = db.Close()
+			return nil, err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()
@@ -45,6 +60,9 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
+	if err := s.migrateAutoConnection(); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS accounts (
 	id TEXT PRIMARY KEY,
@@ -209,25 +227,28 @@ CREATE TABLE IF NOT EXISTS account_usage (
 	if err := s.ensureRequestLogs(); err != nil {
 		return err
 	}
-	return s.purgeIncompatibleAccountData()
+	if err := s.purgeIncompatibleAccountData(); err != nil {
+		return err
+	}
+	return s.ensureDashboard()
 }
 
 func (s *Store) purgeIncompatibleAccountData() error {
 	if err := s.ensureColumn("settings", "provider", `ALTER TABLE settings ADD COLUMN provider TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
-	var provider string
-	if err := s.db.QueryRow(`SELECT IFNULL(provider, '') FROM settings WHERE id = 1`).Scan(&provider); err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	if provider == "clinepass" {
-		return nil
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var provider string
+	if err := tx.QueryRow(`SELECT IFNULL(provider, '') FROM settings WHERE id = 1`).Scan(&provider); err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if provider == "clinepass" {
+		return nil
+	}
 	for _, q := range []string{
 		`DELETE FROM request_logs`,
 		`DELETE FROM account_usage`,
@@ -254,6 +275,15 @@ func (s *Store) ensureColumn(table, name, ddl string) error {
 	}
 	if n == 0 {
 		_, err := s.db.Exec(ddl)
+		// Manager and automation may start together against the same database.
+		// Accept another process adding this exact column, but do not hide other
+		// migration failures (invalid DDL, permissions, or database errors).
+		if err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			var exists int
+			if checkErr := s.db.QueryRow(q, name).Scan(&exists); checkErr == nil && exists > 0 {
+				return nil
+			}
+		}
 		return err
 	}
 	return nil
@@ -265,28 +295,16 @@ func (s *Store) ensureBatchExportColumns() error {
 		{"exported_count", `ALTER TABLE batches ADD COLUMN exported_count INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, c := range cols {
-		var n int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('batches') WHERE name = ?`, c.name).Scan(&n); err != nil {
+		if err := s.ensureColumn("batches", c.name, c.ddl); err != nil {
 			return err
-		}
-		if n == 0 {
-			if _, err := s.db.Exec(c.ddl); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
 }
 
 func (s *Store) ensureAccountBatchColumn() error {
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name = 'batch_id'`).Scan(&n); err != nil {
+	if err := s.ensureColumn("accounts", "batch_id", `ALTER TABLE accounts ADD COLUMN batch_id TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
-	}
-	if n == 0 {
-		if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN batch_id TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_accounts_batch ON accounts(batch_id)`); err != nil {
 		return err
@@ -817,13 +835,13 @@ func (s *Store) SeedDefaults(cfg config.Config) error {
 		return nil
 	}
 	return s.SaveSettings(model.Settings{
-		Proxy:             cfg.Proxy,
-		Headless:          cfg.Headless,
-		InviteURL:         cfg.InviteURL,
-		MaxRetries:        3,
-		APIProxy:          true,
-		CloakVersion:      cfg.CloakVersion,
-		CloakLicenseKey:   cfg.LicenseKey,
+		Proxy:                 cfg.Proxy,
+		Headless:              cfg.Headless,
+		InviteURL:             cfg.InviteURL,
+		MaxRetries:            3,
+		APIProxy:              true,
+		CloakVersion:          cfg.CloakVersion,
+		CloakLicenseKey:       cfg.LicenseKey,
 		CookieKeepEnabled:     true,
 		CookieKeepHour:        4,
 		CookieKeepConcurrency: 4,

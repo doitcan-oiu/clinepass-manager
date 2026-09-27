@@ -129,7 +129,12 @@ func (s *Store) SaveAccountUsage(accountID string, u model.AccountUsage) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`
 INSERT INTO account_usage (account_id, usage_json, synced_at, error)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(account_id) DO UPDATE SET
@@ -137,7 +142,13 @@ ON CONFLICT(account_id) DO UPDATE SET
 	synced_at = excluded.synced_at,
 	error = excluded.error`,
 		accountID, string(raw), u.SyncedAt, u.Error)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := saveDashboardBilling(tx, accountID, u); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) GetAccountUsage(accountID string) (model.AccountUsage, error) {
@@ -215,6 +226,7 @@ func (s *Store) UpsertPaidAccount(in model.CreatePaidAccountInput) (model.Accoun
 		old.Status = "ready"
 		old.PaidAt = now
 		old.UpdatedAt = now
+		old.LastLoginAt = now
 		if old.BatchID == "" {
 			old.BatchID = b.ID
 			old.BatchName = b.Name
@@ -227,10 +239,10 @@ func (s *Store) UpsertPaidAccount(in model.CreatePaidAccountInput) (model.Accoun
 		_, err = s.db.Exec(`
 UPDATE accounts SET
 	password = ?, recovery_email = ?, status = ?, workspace_id = ?, api_key = ?, user_id = ?,
-	cookies_json = ?, cookie_header = ?, paid_at = ?, updated_at = ?, batch_id = ?, login_provider = ?
+	cookies_json = ?, cookie_header = ?, paid_at = ?, updated_at = ?, last_login_at = ?, batch_id = ?, login_provider = ?
 WHERE id = ?`,
 			old.Password, old.RecoveryEmail, old.Status, old.WorkspaceID, old.APIKey, old.UserID,
-			old.CookiesJSON, old.CookieHeader, now, now, old.BatchID, old.LoginProvider, old.ID)
+			old.CookiesJSON, old.CookieHeader, now, now, now, old.BatchID, old.LoginProvider, old.ID)
 		if err != nil {
 			return model.Account{}, false, err
 		}
@@ -256,16 +268,17 @@ WHERE id = ?`,
 		LoginProvider:   model.NormalizeLoginProvider(in.LoginProvider),
 		CreatedAt:       now,
 		UpdatedAt:       now,
+		LastLoginAt:     now,
 	}
 	_, err = s.db.Exec(`
 INSERT INTO accounts (
 	id, email, password, recovery_email, proxy, fingerprint_seed, status,
 	workspace_id, api_key, user_id, cookies_json, cookie_header, payment_url,
 	last_error, last_login_at, created_at, updated_at, batch_id, paid_at, login_provider
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 0, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.Email, a.Password, a.RecoveryEmail, a.Proxy, a.FingerprintSeed, a.Status,
 		a.WorkspaceID, a.APIKey, a.UserID, a.CookiesJSON, a.CookieHeader,
-		now, now, a.BatchID, now, a.LoginProvider)
+		now, now, now, a.BatchID, now, a.LoginProvider)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return model.Account{}, false, fmt.Errorf("账号已存在")

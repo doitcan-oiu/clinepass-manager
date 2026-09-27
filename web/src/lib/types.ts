@@ -88,6 +88,27 @@ export type UsageSyncStatus = {
   concurrency?: number
 }
 
+export type AutoConnection = {
+  url: string
+  token_configured: boolean
+  configured: boolean
+}
+
+export type AutoStatus = {
+  connected: boolean
+  url: string
+  error?: string
+  protocol_version?: number
+}
+
+export type AutoImportResult = {
+  imported: number
+  updated: number
+  skipped: number
+  sync?: UsageSyncStatus
+  warning?: string
+}
+
 export type AppConfig = {
   platform: string
   headless: boolean
@@ -129,6 +150,12 @@ export type AppConfig = {
   cookie_keep_concurrency: number
   cookie_keep_last_date: string
 }
+
+export type MainConfig = Pick<AppConfig,
+  "platform" | "proxy" | "max_retries" | "account_rpm" | "api_proxy" |
+  "usage_refresh_sec" | "model_usage_refresh_sec" | "usage_refresh_concurrency" |
+  "provider_mode" | "provider_value"
+>
 
 export type CloakUpdate = {
   current: string

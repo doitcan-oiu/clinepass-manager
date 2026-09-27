@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Link } from "react-router-dom"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
@@ -6,6 +7,8 @@ import type { Batch } from "@/lib/types"
 import { downloadBase64, xlsxMime } from "@/lib/download"
 import { AddBatchDialog } from "@/components/accounts/add-batch-dialog"
 import { AutoPayDialog } from "@/components/accounts/auto-pay-dialog"
+import { AutoImport } from "@/components/accounts/auto-import"
+import { AutoVerificationStatus, useAutoVerification } from "@/components/accounts/auto-verification"
 import { BatchCard } from "@/components/accounts/batch-card"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,27 +28,39 @@ export function AutomationPage() {
   const [batches, setBatches] = useState<Batch[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
   const [remove, setRemove] = useState<Batch | null>(null)
   const [payAsk, setPayAsk] = useState<null | { batch: Batch; mode: "login" | "refresh" }>(null)
   const [payPending, setPayPending] = useState(false)
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const verification = useAutoVerification(() => { void reload(page).catch(() => {}) })
 
   async function reload(next = page) {
-    const res = await api.batches(next, PAGE_SIZE)
-    const last = Math.max(1, Math.ceil(res.total / PAGE_SIZE))
-    if (next > last) {
-      setPage(last)
-      const again = await api.batches(last, PAGE_SIZE)
-      setBatches(again.items)
-      setTotal(again.total)
-      return
+    setLoading(true)
+    setLoadError("")
+    try {
+      const res = await api.batches(next, PAGE_SIZE)
+      const last = Math.max(1, Math.ceil(res.total / PAGE_SIZE))
+      if (next > last) {
+        setPage(last)
+        const again = await api.batches(last, PAGE_SIZE)
+        setBatches(again.items)
+        setTotal(again.total)
+        return
+      }
+      setBatches(res.items)
+      setTotal(res.total)
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "无法加载自动化批次")
+      throw err
+    } finally {
+      setLoading(false)
     }
-    setBatches(res.items)
-    setTotal(res.total)
   }
 
   useEffect(() => {
-    reload(page).catch((e) => toast.error(e.message))
+    reload(page).catch(() => {})
   }, [page])
 
   async function confirmRemove() {
@@ -88,8 +103,8 @@ export function AutomationPage() {
 
   async function markPaid(b: Batch) {
     try {
-      await api.markBatchPaid(b.id)
-      toast.success(`${b.name} 开始扫描配额`)
+      await verification.start(b.id)
+      toast.success(`${b.name} 已提交到 Auto 检查支付状态`)
       await reload(page)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "标记失败")
@@ -99,11 +114,27 @@ export function AutomationPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">支付链接</h1>
-        <AddBatchDialog onSaved={() => { setPage(1); reload(1).catch((e) => toast.error(e.message)) }} />
+        <div><h1 className="text-2xl font-semibold tracking-tight">支付链接</h1><p className="mt-1 text-sm text-muted-foreground">在远程 Auto 服务器执行提取与支付，成功后导入主程序账号池。</p></div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><Link to="/settings?tab=connection">Auto 连接设置</Link></Button><Button variant="outline" disabled={loading} onClick={() => void reload(page).catch(() => {})}>刷新批次</Button><AddBatchDialog onSaved={() => { setPage(1); reload(1).catch((e) => toast.error(e.message)) }} /></div>
       </div>
 
-      {batches.length === 0 ? (
+      <AutoImport disabled={loading || !!loadError || verification.busy} />
+      <AutoVerificationStatus status={verification.status} error={verification.error} />
+
+      {loadError ? (
+        <div role="alert" className="flex flex-col gap-4 rounded-xl border border-destructive/25 bg-destructive/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-2">
+            <p className="text-sm font-medium">无法加载自动化批次</p>
+            <p className="break-words text-sm text-muted-foreground">{loadError}</p>
+            <p className="text-sm text-muted-foreground">支付链接提取由独立的 Auto 服务执行，请确认服务已启动并可连接。主程序的账号池与 API 转发仍可使用。</p>
+          </div>
+          <Button type="button" variant="outline" disabled={loading} onClick={() => void reload(page).catch(() => {})} className="w-fit shrink-0">重新加载</Button>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div role="status" className="rounded-xl border bg-card px-4 py-16 text-center text-sm text-muted-foreground">正在加载自动化批次…</div>
+      ) : loadError ? null : batches.length === 0 ? (
         <div className="rounded-xl border bg-card px-4 py-16 text-center text-sm text-muted-foreground">
           还没有批次
         </div>
@@ -117,13 +148,14 @@ export function AutomationPage() {
               onRefresh={(b) => setPayAsk({ batch: b, mode: "refresh" })}
               onDownload={downloadForStaff}
               onPaid={markPaid}
+              paidPending={verification.busy}
               onRemove={setRemove}
             />
           ))}
         </div>
       )}
 
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
+      {!loading && !loadError ? <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>共 {total} 批</span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
@@ -138,7 +170,7 @@ export function AutomationPage() {
             <ChevronRight />
           </Button>
         </div>
-      </div>
+      </div> : null}
 
       <AutoPayDialog
         open={!!payAsk}

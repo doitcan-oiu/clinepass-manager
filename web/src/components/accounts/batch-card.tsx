@@ -48,6 +48,7 @@ export function BatchCard({
   onDownload,
   onPaid,
   onRemove,
+  paidPending = false,
 }: {
   batch: Batch
   onLogin: (batch: Batch) => void
@@ -55,6 +56,7 @@ export function BatchCard({
   onDownload: (batch: Batch) => void
   onPaid: (batch: Batch) => void
   onRemove: (batch: Batch) => void
+  paidPending?: boolean
 }) {
   const s = batchStatus(batch)
   const canLogin = waitingCount(batch) > 0 || batch.failed > 0
@@ -127,10 +129,10 @@ export function BatchCard({
           size="xs"
           className={s.primary === "paid" && batch.unpaid_cookie_count ? "bg-violet-600 text-white hover:bg-violet-700" : ""}
           variant={s.primary === "paid" && batch.unpaid_cookie_count ? "default" : "outline"}
-          disabled={!batch.unpaid_cookie_count}
+          disabled={!batch.unpaid_cookie_count || paidPending}
           onClick={() => onPaid(batch)}
         >
-          {batch.paid_count >= batch.total && batch.total ? "已付款" : "确认付款"}
+          {paidPending ? "检查中…" : batch.paid_count >= batch.total && batch.total ? "已付款" : "检查支付状态"}
         </Button>
       </div>
     </article>

@@ -14,12 +14,7 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=clinepass-manager
 
-# Cloak / Chrome 会写 $HOME 和 XDG_RUNTIME_DIR。
-# ProtectHome 会把 /root、/run/user 做成只读，必须指到项目 data 目录。
-Environment=HOME=__ROOT__/data/home
 Environment=DATA_DIR=__ROOT__/data
-Environment=CLOAKBROWSER_CACHE_DIR=__ROOT__/data/cloakbrowser
-Environment=XDG_RUNTIME_DIR=__ROOT__/data/run
 
 PrivateTmp=true
 NoNewPrivileges=true

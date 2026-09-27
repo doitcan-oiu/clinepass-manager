@@ -29,14 +29,22 @@ export function AutoPayDialog({
 }) {
   const [autoPay, setAutoPay] = useState(false)
   const [configured, setConfigured] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
 
   useEffect(() => {
     if (!open) return
+    let active = true
     setAutoPay(false)
+    setConfigured(false)
+    setLoading(true)
+    setError("")
     api
-      .config()
-      .then((cfg) => setConfigured(!!cfg.amzkeys_configured))
-      .catch(() => setConfigured(false))
+      .autoConfig()
+      .then((cfg) => { if (active) setConfigured(!!cfg.amzkeys_configured) })
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : "无法读取 Auto 配置") })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
   }, [open])
 
   return (
@@ -56,9 +64,9 @@ export function AutoPayDialog({
           <div className="grid gap-1">
             <Label htmlFor="auto-pay">自动用 AmzKeys 虚拟卡支付</Label>
             <p className="text-xs text-muted-foreground">
-              {configured
+              {loading ? "正在读取 Auto 服务器的支付设置…" : error ? `Auto 未连接：${error}` : configured
                 ? "勾选后立刻只开一张卡（已有或正在开则不再开），登录抽链接同时等待。被拒了才换新卡。"
-                : "先到设置 → amzkeys卡台 保存。测试环境不用填密钥；生产再填商务给的 AppID、AppKey 和 RSA2 私钥。"}
+                : "先在设置 → Auto 连接配置远程服务，再到支付卡台保存卡台设置。"}
             </p>
           </div>
         </div>
@@ -66,8 +74,8 @@ export function AutoPayDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button disabled={pending} onClick={() => onConfirm(autoPay)}>
-            开始
+          <Button disabled={pending || loading || !!error} onClick={() => onConfirm(autoPay)}>
+            {pending ? "正在提交…" : "开始"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,36 +1,19 @@
 .DEFAULT_GOAL := dev
 
-.PHONY: dev api web build start tidy install-web build-web install-pw browser-deps ensure-env worker-venv worker-test pay-tool
+.PHONY: dev dev-all api auto web build build-auto build-all start start-auto start-all tidy install-web build-web install-pw browser-deps ensure-env worker-venv worker-test pay-tool
 
-dev: ensure-env
-	@echo "==> 安装依赖"
-	go mod tidy
-	cd web && npm install
-	@echo "==> 启动后端 http://127.0.0.1:8081 （开发模式固定 8081，go run 编译期间请等待）"
-	@echo "==> Ctrl+C 会同时退出两边"
-	@bash -c 'set -u; \
-		cleanup() { kill 0 2>/dev/null || true; }; \
-		trap cleanup EXIT INT TERM; \
-		ADDR=:8081 go run ./cmd/server & \
-		echo "==> 等待后端 /api/health ..."; \
-		ready=0; \
-		for i in $$(seq 1 120); do \
-			if curl -sf http://127.0.0.1:8081/api/health >/dev/null 2>&1; then \
-				ready=1; \
-				break; \
-			fi; \
-			sleep 0.5; \
-		done; \
-		if [ "$$ready" != 1 ]; then \
-			echo "==> 后端启动超时"; \
-			exit 1; \
-		fi; \
-		echo "==> 后端已就绪，启动前端 http://127.0.0.1:5173"; \
-		(cd web && npm run dev) & \
-		wait'
+dev: install-web
+	@echo "==> 启动主服务 :8081 和前端 :5173（需要自动化时另开 make auto）"
+	@bash -c 'set -u; trap "kill 0 2>/dev/null || true" EXIT INT TERM; ADDR=:8081 go run ./cmd/server & (cd web && npm run dev) & wait'
+
+dev-all: ensure-env install-web
+	@bash -c 'set -u; trap "kill 0 2>/dev/null || true" EXIT INT TERM; ADDR=:8081 go run ./cmd/server & go run ./auto & (cd web && npm run dev) & wait'
 
 api:
 	ADDR=:8081 go run ./cmd/server
+
+auto:
+	go run ./auto
 
 web:
 	cd web && npm run dev
@@ -48,24 +31,30 @@ install-pw:
 	go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.0 install --with-deps
 
 browser-deps:
-	sudo apt-get install -y xvfb libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont libasound2t64 || \
-	sudo apt-get install -y xvfb libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont libasound2
+	$(MAKE) -C auto browser-deps
 
 ensure-env worker-venv:
-	@bash scripts/ensure-worker-env.sh
+	@bash auto/scripts/ensure-worker-env.sh
 
 worker-test:
-	cd worker && python3 -m unittest test_urls test_herosms test_cloak test_radar test_stripe_pay test_pageutil -v
+	$(MAKE) -C auto worker-test
 
-build: ensure-env build-web
+build: build-web
 	go build -o bin/server ./cmd/server
+
+build-auto:
+	go build -o bin/auto ./auto
+
+build-all: build build-auto
 
 start: build
 	@bash scripts/install-service.sh
 
+start-auto: ensure-env build-auto
+	@bash auto/scripts/install-service.sh
+
+start-all: ensure-env build-all
+	@bash -c 'if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then bash scripts/install-service.sh && bash auto/scripts/install-service.sh; else trap "kill 0 2>/dev/null || true" EXIT INT TERM; ./bin/server & ./bin/auto & wait; fi'
+
 pay-tool:
-	mkdir -p login-tool/dist
-	go build -ldflags="-s -w" -o login-tool/dist/pay-linux ./login-tool
-	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o login-tool/dist/pay.exe ./login-tool
-	@echo "==> Linux: login-tool/dist/pay-linux"
-	@echo "==> Windows: login-tool/dist/pay.exe"
+	$(MAKE) -C auto pay-tool
