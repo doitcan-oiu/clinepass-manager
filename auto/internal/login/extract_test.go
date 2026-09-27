@@ -216,24 +216,42 @@ func TestAuthkitCallbackError(t *testing.T) {
 	if authkitCallbackError("https://authkit.cline.bot/?authorization_session_id=01ABC") != "" {
 		t.Fatal("no error query")
 	}
-	if authkitBannedAfterWait(u) && authkitCallbackError(u) == "" {
-		t.Fatal("policy_denied must be classified before banned")
+	if authkitCallbackPending(u) && authkitCallbackError(u) == "" {
+		t.Fatal("policy_denied must be classified before a pending callback")
 	}
 }
 
-func TestAuthkitBannedAfterWait(t *testing.T) {
+func TestAuthkitCallbackErrorRequiresKnownHost(t *testing.T) {
+	for _, host := range []string{"authkit.cline.bot", "APP.CLINE.BOT", "api.cline.bot", "auth.workos.com"} {
+		if got := authkitCallbackError("https://" + host + "/callback?error=policy_denied"); got != "policy_denied" {
+			t.Fatalf("callback host %s returned %q", host, got)
+		}
+	}
+	for _, raw := range []string{
+		"https://login.live.com/?error=policy_denied",
+		"https://example.invalid/?error=policy_denied",
+		"https://authkit.cline.bot.example.invalid/?error=policy_denied",
+		"https://authkit.cline.bot/?redirect_uri=https%3A%2F%2Fexample.invalid%2F%3Ferror%3Dpolicy_denied",
+	} {
+		if got := authkitCallbackError(raw); got != "" {
+			t.Fatalf("unrelated error must not be an AuthKit denial: %q returned %q", raw, got)
+		}
+	}
+}
+
+func TestAuthkitCallbackPending(t *testing.T) {
 	login := "https://authkit.cline.bot/?redirect_uri=https%3A%2F%2Fapi.cline.bot%2Fapi%2Fv1%2Fauth%2Fcallback&authorization_session_id=01ABC"
-	if !authkitBannedAfterWait(login) {
-		t.Fatal("session id on AuthKit login is banned")
+	if !authkitCallbackPending(login) {
+		t.Fatal("session id on AuthKit login indicates an unfinished callback")
 	}
-	if authkitBannedAfterWait("https://authkit.cline.bot/radar-challenge/send?authorization_session_id=01ABC") {
-		t.Fatal("radar is not banned")
+	if authkitCallbackPending("https://authkit.cline.bot/radar-challenge/send?authorization_session_id=01ABC") {
+		t.Fatal("radar is not a pending callback")
 	}
-	if authkitBannedAfterWait("https://authkit.cline.bot/sign-up") {
-		t.Fatal("first login page without session is not banned")
+	if authkitCallbackPending("https://authkit.cline.bot/sign-up") {
+		t.Fatal("first login page without session is not a pending callback")
 	}
-	if authkitBannedAfterWait("https://app.cline.bot/dashboard") {
-		t.Fatal("app is not banned")
+	if authkitCallbackPending("https://app.cline.bot/dashboard") {
+		t.Fatal("app is not a pending callback")
 	}
 }
 

@@ -223,7 +223,7 @@ export function BatchDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-4">
       <div>
         <Button variant="ghost" size="sm" asChild className="-ml-2 mb-1">
           <Link to="/automation">← 返回批次列表</Link>
@@ -297,27 +297,29 @@ export function BatchDetailPage() {
         </Button>
       </div>
 
-      <AccountTable
-        accounts={accounts}
-        jobs={latestJobs}
-        now={now}
-        onLogin={(a) => setPayAsk({ mode: "login", account: a })}
-        onRefresh={(a) => setPayAsk({ mode: "refresh", account: a })}
-        onDetail={setDetail}
-        onRemove={setRemove}
-        selectedId={logFilter}
-        onSelect={(a) => setLogFilter(a.id)}
-      />
+      <div className="grid min-w-0 gap-4 lg:h-[clamp(36rem,calc(100dvh-20rem),44rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.08fr)]">
+        <AccountTable
+          accounts={accounts}
+          jobs={latestJobs}
+          now={now}
+          onLogin={(a) => setPayAsk({ mode: "login", account: a })}
+          onRefresh={(a) => setPayAsk({ mode: "refresh", account: a })}
+          onDetail={setDetail}
+          onRemove={setRemove}
+          selectedId={logFilter}
+          onSelect={(a) => setLogFilter(a.id)}
+        />
 
-      <JobLogPanel
-        logs={logs}
-        accounts={accounts}
-        jobs={latestJobs}
-        now={now}
-        filterId={logFilter}
-        onFilter={setLogFilter}
-        onRetry={(a) => setPayAsk({ mode: "login", account: a })}
-      />
+        <JobLogPanel
+          logs={logs}
+          accounts={accounts}
+          jobs={latestJobs}
+          now={now}
+          filterId={logFilter}
+          onFilter={setLogFilter}
+          onRetry={(a) => setPayAsk({ mode: "login", account: a })}
+        />
+      </div>
 
       <AutoPayDialog
         open={!!payAsk}

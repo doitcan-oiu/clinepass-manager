@@ -5,7 +5,7 @@ from pageutil import click_one_of, logged_in, on_radar_flow, page_title, sleep_m
 from protocol import log
 from urls import (
     AUTH_HOST,
-    authkit_banned_after_wait,
+    authkit_callback_pending,
     authkit_callback_error,
     authkit_session_id,
     on_cline,
@@ -36,13 +36,13 @@ def visible_auth_button(page, provider: str) -> bool:
 def raise_callback(code: str, raw: str) -> None:
     log("AuthKit 回调错误 error=%s，当前 URL=%s", code, raw)
     if code.lower() == "policy_denied":
-        raise WorkerError("AuthKit Radar 拦截（policy_denied），已跳过", "radar_denied")
+        raise WorkerError("AuthKit Radar 服务端拒绝（policy_denied），已停止自动重试；请联系 Cline 核查", "radar_denied")
     raise WorkerError(f"AuthKit 回调失败：{code}", "authkit_stuck")
 
 
 def wait_authkit_advance(page, timeout_ms: float) -> bool:
-    deadline = time.time() + timeout_ms / 1000.0
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
         if on_cline(page.url) or on_radar_flow(page):
             return True
         if url_host(page.url) != AUTH_HOST:
@@ -71,9 +71,9 @@ def handle_authkit_wait(page, last_click: list, provider: str) -> bool:
         auth_visible,
         provider,
     )
-    wait_ms = 2500 if sid else 1500
+    wait_ms = 30000 if sid else 1500
     if sid:
-        log("OAuth 已回到 AuthKit（有 authorization_session_id），先确认是否跳到接码页")
+        log("授权已返回 AuthKit，等待登录结果（最多 30 秒）")
     if wait_authkit_advance(page, wait_ms):
         return on_radar_flow(page) or on_cline(page.url)
     after = page.url
@@ -86,9 +86,15 @@ def handle_authkit_wait(page, last_click: list, provider: str) -> bool:
         page_title(page),
         visible_auth_button(page, provider),
     )
-    if authkit_banned_after_wait(after):
-        log("仍停在 AuthKit，账号已被封禁，跳过")
-        raise WorkerError("账号已被封禁，已跳过", "banned")
+    if authkit_callback_pending(after):
+        # The callback may have arrived during the short login-page wait. Give
+        # it the full callback wait on the next pass; never click login again.
+        if not sid:
+            return False
+        raise WorkerError(
+            "AuthKit 授权回调等待 30 秒后仍未完成，无法确认登录结果；请检查页面或联系服务方，已停止自动重试",
+            "authkit_callback_pending",
+        )
     if on_authkit_login(after) and visible_auth_button(page, provider) and time.time() - last_click[0] > 5:
         label = "再次选择 Microsoft 登录" if provider == "microsoft" else "再次选择 Google 登录"
         log("AuthKit 仍是登录页，%s", label)

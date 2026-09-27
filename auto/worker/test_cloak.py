@@ -1,8 +1,11 @@
 import os
+import sys
 import tempfile
+import types
 import unittest
+from unittest.mock import Mock, patch
 
-from cloak import apply_cloak_env, apply_geo_settings, chrome_args, geoip_db_ready, humanize_options
+from cloak import apply_cloak_env, apply_geo_settings, chrome_args, geoip_db_ready, humanize_options, launch_ctx
 
 
 class ApplyCloakEnvTest(unittest.TestCase):
@@ -73,6 +76,62 @@ class GeoSettingsTest(unittest.TestCase):
             self.assertTrue(kwargs["geoip"])
             self.assertNotIn("timezone", kwargs)
             self.assertNotIn("locale", kwargs)
+
+
+class LaunchContextTest(unittest.TestCase):
+    def test_launch_failure_is_preserved_without_retry_or_geoip_relabeling(self):
+        for message in (
+            "license invalid: exit code 77",
+            "profile is already in use",
+            "browser process crashed",
+            "GeoIP resolution timed out after 20.0s",
+        ):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as profile:
+                failure = RuntimeError(message)
+                launch = Mock(side_effect=failure)
+                sdk = types.ModuleType("cloakbrowser")
+                sdk.launch_persistent_context = launch
+                with patch.dict(sys.modules, cloakbrowser=sdk), patch.dict(os.environ), \
+                     patch("cloak.geoip_db_ready", return_value=True), \
+                     patch("cloak.package_version", return_value="test-sdk"), patch("cloak.log") as log:
+                    with self.assertRaises(RuntimeError) as raised:
+                        launch_ctx({"profile_dir": profile, "proxy": "http://127.0.0.1:1080"}, 0)
+                self.assertIs(raised.exception, failure)
+                launch.assert_called_once()
+                self.assertTrue(launch.call_args.kwargs["geoip"])
+                self.assertNotIn("timezone", launch.call_args.kwargs)
+                self.assertFalse(any("geoip 启动失败" in str(call) for call in log.call_args_list))
+
+    def test_environment_is_applied_before_sdk_import(self):
+        import builtins
+
+        original_import = builtins.__import__
+        launch = Mock(return_value=object())
+        sdk = types.ModuleType("cloakbrowser")
+        sdk.launch_persistent_context = launch
+
+        def checked_import(name, *args, **kwargs):
+            if name == "cloakbrowser":
+                self.assertEqual(os.environ.get("CLOAKBROWSER_CACHE_DIR"), "test-cache")
+                self.assertEqual(os.environ.get("CLOAKBROWSER_LICENSE_KEY"), "test-license")
+                return sdk
+            return original_import(name, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as profile, patch.dict(os.environ), \
+             patch("builtins.__import__", side_effect=checked_import), \
+             patch("cloak.package_version", return_value="test-sdk"), patch("cloak.log") as log:
+            ctx = launch_ctx({
+                "profile_dir": profile, "cloak_cache_dir": "test-cache",
+                "license_key": "test-license", "cloak_version": "152.0.test", "headless": False,
+            }, 0)
+        self.assertIs(ctx, launch.return_value)
+        launch.assert_called_once()
+        self.assertEqual(launch.call_args.kwargs["user_data_dir"], profile)
+        self.assertEqual(launch.call_args.kwargs["browser_version"], "152.0.test")
+        self.assertFalse(launch.call_args.kwargs["headless"])
+        output = "\n".join(call.args[0] % call.args[1:] if len(call.args) > 1 else call.args[0] for call in log.call_args_list)
+        self.assertIn("sdk=test-sdk humanize=default+custom", output)
+        self.assertNotIn("test-license", output)
 
 
 if __name__ == "__main__":

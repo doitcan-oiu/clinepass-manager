@@ -86,6 +86,18 @@ Auto 成功启动后，再回到主程序重试失败批次。已失败的任务
 
 这些进度字段需要更新 Auto 后生效；界面样式需要同时更新主程序前端。Windows Auto 停止旧进程后运行 `start.cmd`；主程序在仓库根目录运行 `docker compose up -d --build`。旧版 Auto 的日志也会在新界面中做兼容展示。任务日志保存在 Auto 进程内，单任务最多保留最近 300 条，重启后不保留。
 
+### AuthKit Radar 拒绝与 Cloak 启动诊断
+
+`policy_denied` 表示 AuthKit / WorkOS 服务端拒绝了本次登录，不是 Windows 缺少 GeoIP、Python 缺失或浏览器启动失败。[WorkOS 官方说明](https://workos.com/docs/authkit/radar-integration#block-errors)要求将其作为登录失败处理；客户端不能仅凭这个错误确定具体规则，也不能通过更换 SDK 参数解除拒绝。Auto 收到明确的 `policy_denied` 后立即结束当前任务，不自动重新登录。
+
+如果持续出现该错误，先暂停该批次，联系 Cline 支持核查账号、发生时间、所在地区和错误码，并确认服务支持的自动化使用方式。支持人员需要的服务端规则命中信息不在 Auto 中。不要把这个错误直接当成账号已封禁或需要购买更高档 Cloak 许可证。
+
+当前 Python 执行器已经使用 [Cloak 官方的 `launch_persistent_context`](https://github.com/CloakHQ/CloakBrowser/blob/main/README.md)，每个账号的会话保存在 Auto 数据目录的 `profiles/<账号ID>` 中。与文档基本示例的区别是：本程序保留了自定义交互速度；GeoIP 仅在配置代理且已有本地数据库时启用，避免在登录过程中临时下载大文件。这些差异不能证明是 `policy_denied` 的原因。没有本地库时，现有固定时区 / 语言回退会在技术日志中说明。
+
+打开批次的「显示技术日志」可查看 SDK 版本、请求的浏览器版本、是否启用 GeoIP、缓存目录和有头 / 无头模式。`humanize=default+custom` 表示使用默认预设加本程序的覆盖值，不表示原样采用 SDK 默认配置。请求的版本不等于已验证的浏览器运行版本；没有在任务中提供许可证时，SDK 本地配置和指定的浏览器路径仍可能影响版本选择。
+
+浏览器启动异常现在保留原始错误并停止，不再把许可证、配置目录占用或崩溃统一标为 GeoIP 失败后重新启动。OAuth 回调页等待超时也只表示登录结果未确认，不会据此判断账号被封禁或自动重复登录。Windows 更新代码后停止旧 Auto，再运行 `start.cmd` 生效。
+
 ## Linux / macOS
 
 ```bash

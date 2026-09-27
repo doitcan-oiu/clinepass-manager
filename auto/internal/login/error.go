@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	ErrSMSNeedRelogin = errors.New("两次未收到验证码，需要重新登录")
-	ErrPhoneTimeout   = errors.New("手机号超时")
-	ErrAuthkitStuck   = errors.New("AuthKit 页面异常")
-	ErrAccountBanned  = errors.New("账号已被封禁，已跳过")
-	ErrRadarDenied    = errors.New("AuthKit Radar 拦截（policy_denied），已跳过")
+	ErrSMSNeedRelogin         = errors.New("两次未收到验证码，需要重新登录")
+	ErrPhoneTimeout           = errors.New("手机号超时")
+	ErrAuthkitStuck           = errors.New("AuthKit 页面异常")
+	ErrAuthkitCallbackPending = errors.New("AuthKit 授权回调等待 30 秒后仍未完成，无法确认登录结果；请检查页面或联系服务方，已停止自动重试")
+	ErrAccountBanned          = errors.New("账号已被封禁，已跳过")
+	ErrRadarDenied            = errors.New("AuthKit Radar 服务端拒绝（policy_denied），已停止自动重试；请联系 Cline 核查")
 )
 
 func IsRadarDeniedMessage(msg string) bool {
@@ -25,7 +26,7 @@ func IsRadarDeniedMessage(msg string) bool {
 }
 
 func IsAuthkitFailure(err error) bool {
-	if err == nil || errors.Is(err, ErrAccountBanned) || errors.Is(err, ErrRadarDenied) {
+	if err == nil || errors.Is(err, ErrAccountBanned) || errors.Is(err, ErrRadarDenied) || errors.Is(err, ErrAuthkitCallbackPending) {
 		return false
 	}
 	if errors.Is(err, ErrAuthkitStuck) {

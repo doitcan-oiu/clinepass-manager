@@ -1,4 +1,5 @@
 import os
+from importlib.metadata import PackageNotFoundError, version as package_version
 
 from protocol import log
 
@@ -61,11 +62,7 @@ def geoip_db_ready(root: str | None = None) -> bool:
 
 
 def humanize_options() -> dict:
-    """Keep Cloak mouse curves, but do not use the slow careful preset.
-
-    careful + idle_between_actions made every click/key wait 350–900ms, so a
-    single Google email took ~20s. Paid Cloak fingerprints no longer need that.
-    """
+    """Existing interaction timing overrides, not the unmodified SDK preset."""
     return {
         "humanize": True,
         "human_preset": "default",
@@ -99,9 +96,11 @@ def apply_geo_settings(kwargs: dict, proxy: str | None, root: str | None = None)
 
 
 def launch_ctx(settings: dict, seed: int):
+    # Apply settings before importing the SDK, which may read environment
+    # defaults while initializing its modules.
+    apply_cloak_env(settings)
     from cloakbrowser import launch_persistent_context
 
-    apply_cloak_env(settings)
     profile = (settings.get("profile_dir") or "").strip()
     if not profile:
         raise RuntimeError("缺少浏览器配置目录")
@@ -112,7 +111,11 @@ def launch_ctx(settings: dict, seed: int):
     version = (settings.get("cloak_version") or "").strip()
     args = chrome_args(settings, seed)
     if not license_key and not os.environ.get("CLOAKBROWSER_LICENSE_KEY"):
-        log("没有 Cloak license，官方包装只会下免费 146；151 需要 cloakbrowser.dev/free 的 key，否则 AuthKit Radar 更容易拦截")
+        log("Cloak 官方包装：任务未提供许可证，浏览器版本由 SDK 本地配置或指定程序决定")
+    try:
+        sdk_version = package_version("cloakbrowser")
+    except PackageNotFoundError:
+        sdk_version = "unknown"
     kwargs = {
         "user_data_dir": profile,
         "headless": headless,
@@ -123,20 +126,21 @@ def launch_ctx(settings: dict, seed: int):
     if proxy:
         kwargs["proxy"] = proxy
         if kwargs.get("geoip"):
-            log("使用全局代理，geoip 跟已有本地库解析出口")
+            log("使用全局代理，已发现本地 GeoIP 库，将由 SDK 解析地区信息")
         else:
             log("使用全局代理，但没有本地 GeoIP 库，跳过 70MB 下载，时区固定 %s", DEFAULT_TIMEZONE)
     else:
-        log("未设代理，不下载 GeoIP，时区固定 %s / %s，避免默认 UTC/en-US", DEFAULT_TIMEZONE, DEFAULT_LOCALE)
+        log("未设代理，不下载 GeoIP，使用固定时区 %s / %s", DEFAULT_TIMEZONE, DEFAULT_LOCALE)
     log(
-        "Cloak 官方包装启动 humanize=default geoip=%s tz=%s locale=%s headless=%s seed=%s version=%s cache=%s runtime=%s",
+        "Cloak 官方包装启动 sdk=%s humanize=default+custom geoip=%s tz=%s locale=%s headless=%s seed=%s requested_version=%s cache=%s runtime=%s",
+        sdk_version,
         kwargs.get("geoip"),
         kwargs.get("timezone") or "",
         kwargs.get("locale") or "",
         headless,
         seed,
-        version or "latest",
-        os.environ.get("CLOAKBROWSER_CACHE_DIR") or "",
+        version if version and license_key else "SDK默认",
+        cloak_cache_dir(),
         os.environ.get("XDG_RUNTIME_DIR") or "",
     )
     if license_key:
@@ -144,16 +148,9 @@ def launch_ctx(settings: dict, seed: int):
     if version and (license_key or os.environ.get("CLOAKBROWSER_LICENSE_KEY")):
         kwargs["browser_version"] = version
     log("正在启动浏览器")
-    try:
-        ctx = launch_persistent_context(**kwargs)
-    except Exception as exc:
-        if kwargs.get("geoip"):
-            log("geoip 启动失败，改为固定时区 %s: %s", DEFAULT_TIMEZONE, exc)
-            kwargs["geoip"] = False
-            kwargs["timezone"] = DEFAULT_TIMEZONE
-            kwargs["locale"] = DEFAULT_LOCALE
-            ctx = launch_persistent_context(**kwargs)
-        else:
-            raise
+    # Preserve the actual failure. A license error, locked profile or crashed
+    # browser must not be relabeled as GeoIP failure and launched a second time.
+    # GeoIP errors also need to be surfaced instead of silently changing settings.
+    ctx = launch_persistent_context(**kwargs)
     log("浏览器已启动")
     return ctx

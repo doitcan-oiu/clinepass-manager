@@ -1,7 +1,7 @@
 import unittest
 
 from urls import (
-    authkit_banned_after_wait,
+    authkit_callback_pending,
     authkit_callback_error,
     classify_google,
     google_ready_url,
@@ -23,12 +23,25 @@ class URLTests(unittest.TestCase):
         self.assertEqual(authkit_callback_error(u), "policy_denied")
         self.assertEqual(authkit_callback_error("https://authkit.cline.bot/?authorization_session_id=01ABC"), "")
 
-    def test_banned_after_wait(self):
+    def test_callback_error_requires_known_callback_host(self):
+        for host in ("authkit.cline.bot", "APP.CLINE.BOT", "api.cline.bot", "auth.workos.com"):
+            with self.subTest(host=host):
+                self.assertEqual(authkit_callback_error(f"https://{host}/callback?error=policy_denied"), "policy_denied")
+        for raw in (
+            "https://login.live.com/?error=policy_denied",
+            "https://example.invalid/?error=policy_denied",
+            "https://authkit.cline.bot.example.invalid/?error=policy_denied",
+            "https://authkit.cline.bot/?redirect_uri=https%3A%2F%2Fexample.invalid%2F%3Ferror%3Dpolicy_denied",
+        ):
+            with self.subTest(url=raw):
+                self.assertEqual(authkit_callback_error(raw), "")
+
+    def test_callback_pending(self):
         login = "https://authkit.cline.bot/?redirect_uri=https%3A%2F%2Fapi.cline.bot%2Fapi%2Fv1%2Fauth%2Fcallback&authorization_session_id=01ABC"
-        self.assertTrue(authkit_banned_after_wait(login))
-        self.assertFalse(authkit_banned_after_wait("https://authkit.cline.bot/radar-challenge/send?authorization_session_id=01ABC"))
-        self.assertFalse(authkit_banned_after_wait("https://authkit.cline.bot/sign-up"))
-        self.assertFalse(authkit_banned_after_wait("https://app.cline.bot/dashboard"))
+        self.assertTrue(authkit_callback_pending(login))
+        self.assertFalse(authkit_callback_pending("https://authkit.cline.bot/radar-challenge/send?authorization_session_id=01ABC"))
+        self.assertFalse(authkit_callback_pending("https://authkit.cline.bot/sign-up"))
+        self.assertFalse(authkit_callback_pending("https://app.cline.bot/dashboard"))
 
     def test_microsoft_host(self):
         self.assertTrue(on_microsoft_url("https://login.live.com/oauth20_authorize.srf"))

@@ -833,8 +833,8 @@ func handleAuthkitWait(page playwright.Page, log Logger, lastClick *time.Time, p
 	log("到达 AuthKit，当前 URL=%s title=%q session=%s 登录按钮=%v 方式=%s", rawURL, pageTitle(page), sid, authVisible, provider)
 	waitMS := 1500.0
 	if sid != "" {
-		waitMS = 2500
-		log("OAuth 已回到 AuthKit（有 authorization_session_id），先确认是否跳到接码页")
+		waitMS = 30000
+		log("授权已返回 AuthKit，等待登录结果（最多 30 秒）")
 	}
 	if waitAuthkitAdvance(page, waitMS) {
 		return onRadarFlow(page) || onCline(page.URL()), nil
@@ -848,9 +848,13 @@ func handleAuthkitWait(page playwright.Page, log Logger, lastClick *time.Time, p
 		return false, fmt.Errorf("AuthKit 回调失败：%s", code)
 	}
 	log("AuthKit 等待后仍未进入接码，当前 URL=%s title=%q 登录按钮=%v", after, pageTitle(page), visibleAuthButton(page, provider))
-	if authkitBannedAfterWait(after) {
-		log("仍停在 AuthKit，账号已被封禁，跳过")
-		return false, ErrAccountBanned
+	if authkitCallbackPending(after) {
+		// A callback that arrived during the short login-page wait gets a full
+		// callback wait on the next pass, without clicking the login link again.
+		if sid == "" {
+			return false, nil
+		}
+		return false, ErrAuthkitCallbackPending
 	}
 	if onAuthkitLogin(after) && visibleAuthButton(page, provider) && time.Since(*lastClick) > 5*time.Second {
 		label := "再次选择 Google 登录"
@@ -867,7 +871,8 @@ func handleAuthkitWait(page playwright.Page, log Logger, lastClick *time.Time, p
 	return false, nil
 }
 
-func authkitBannedAfterWait(u string) bool {
+func authkitCallbackPending(u string) bool {
+	// An OAuth session ID does not establish that the account was banned.
 	return authkitSessionID(u) != "" && urlHost(u) == "authkit.cline.bot" && !onRadarURL(u) && !onCline(u)
 }
 
@@ -891,6 +896,11 @@ func authkitSessionID(u string) string {
 }
 
 func authkitCallbackError(u string) string {
+	switch urlHost(u) {
+	case "authkit.cline.bot", "app.cline.bot", "api.cline.bot", "auth.workos.com":
+	default:
+		return ""
+	}
 	return authkitQuery(u, "error")
 }
 
@@ -935,7 +945,7 @@ func wrapIfAuthkit(err error, pageURL string) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, ErrAccountBanned) || errors.Is(err, ErrRadarDenied) {
+	if errors.Is(err, ErrAccountBanned) || errors.Is(err, ErrRadarDenied) || errors.Is(err, ErrAuthkitCallbackPending) {
 		return err
 	}
 	if strings.EqualFold(authkitCallbackError(pageURL), "policy_denied") {

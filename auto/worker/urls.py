@@ -33,6 +33,8 @@ def authkit_session_id(raw: str) -> str:
 
 
 def authkit_callback_error(raw: str) -> str:
+    if url_host(raw) not in (AUTH_HOST, APP_HOST, API_HOST, "auth.workos.com"):
+        return ""
     return authkit_query(raw, "error")
 
 
@@ -96,7 +98,8 @@ def on_authkit_login(raw: str) -> bool:
     return True
 
 
-def authkit_banned_after_wait(raw: str) -> bool:
+def authkit_callback_pending(raw: str) -> bool:
+    # A session ID only says OAuth returned to AuthKit; it is not a ban signal.
     return (
         bool(authkit_session_id(raw))
         and url_host(raw) == AUTH_HOST

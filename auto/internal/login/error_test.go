@@ -38,6 +38,33 @@ func TestCompactErrorPreservesSentinel(t *testing.T) {
 	}
 }
 
+func TestCallbackPendingIsPreservedWithoutRetry(t *testing.T) {
+	pageURL := "https://authkit.cline.bot/?authorization_session_id=example"
+	err := wrapIfAuthkit(CompactError(ErrAuthkitCallbackPending), pageURL)
+	if !errors.Is(err, ErrAuthkitCallbackPending) || errors.Is(err, ErrAccountBanned) || errors.Is(err, ErrAuthkitStuck) {
+		t.Fatalf("pending callback misclassified: %v", err)
+	}
+	if IsAuthkitFailure(err) {
+		t.Fatal("pending callback should stop without automatically restarting login")
+	}
+}
+
+func TestRadarDenialRequiresKnownCallbackAndDoesNotRetry(t *testing.T) {
+	for _, raw := range []string{
+		"https://authkit.cline.bot/?error=policy_denied",
+		"https://api.cline.bot/api/v1/auth/callback?error=policy_denied",
+	} {
+		err := wrapIfAuthkit(errors.New("login incomplete"), raw)
+		if !errors.Is(err, ErrRadarDenied) || IsAuthkitFailure(err) {
+			t.Fatalf("known denial should stop without retry: %v", err)
+		}
+	}
+	err := wrapIfAuthkit(errors.New("login incomplete"), "https://login.live.com/?error=policy_denied")
+	if errors.Is(err, ErrRadarDenied) || IsAuthkitFailure(err) {
+		t.Fatalf("unrelated OAuth failure should not become Radar or be retried: %v", err)
+	}
+}
+
 func TestAuthkitRetryUsesActualURLHost(t *testing.T) {
 	tests := []struct {
 		message string

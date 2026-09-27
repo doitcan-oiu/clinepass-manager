@@ -214,6 +214,8 @@ func mapWorkerCode(code, msg string) error {
 		return ErrRadarDenied
 	case "banned":
 		return ErrAccountBanned
+	case "authkit_callback_pending":
+		return ErrAuthkitCallbackPending
 	case "sms_relogin":
 		return ErrSMSNeedRelogin
 	case "sms_timeout":

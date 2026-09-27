@@ -46,6 +46,10 @@ func TestMapWorkerCode(t *testing.T) {
 	if IsAuthkitFailure(mapWorkerCode("radar_denied", "x")) {
 		t.Fatal("radar should not retry")
 	}
+	pending := mapWorkerCode("authkit_callback_pending", "x")
+	if !errors.Is(pending, ErrAuthkitCallbackPending) || IsAuthkitFailure(pending) {
+		t.Fatal("an unfinished callback must not cause another automatic login")
+	}
 }
 
 func TestFindWorker(t *testing.T) {

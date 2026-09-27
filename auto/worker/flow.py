@@ -59,7 +59,7 @@ def wrap_authkit(err: Exception, page_url: str) -> None:
     if isinstance(err, WorkerError):
         raise err
     if authkit_callback_error(page_url).lower() == "policy_denied":
-        raise WorkerError("AuthKit Radar 拦截（policy_denied），已跳过", "radar_denied")
+        raise WorkerError("AuthKit Radar 服务端拒绝（policy_denied），已停止自动重试；请联系 Cline 核查", "radar_denied")
     host = url_host(page_url)
     if page_url.startswith("chrome-error") or page_url.startswith("chrome://") or (
         host == AUTH_HOST and not on_radar_url(page_url)
