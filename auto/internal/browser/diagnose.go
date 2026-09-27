@@ -1,7 +1,6 @@
 package browser
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -21,9 +20,9 @@ func hasDisplay() bool {
 
 func cachedChromePath(cfg config.Config) string {
 	if p := strings.TrimSpace(cfg.CloakBinaryPath); p != "" {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
-		}
+		// Report a broken explicit path rather than silently inspecting a
+		// different cached browser than the one the worker will launch.
+		return p
 	}
 	dir, err := CacheDir(cfg.CloakCacheDir)
 	if err != nil {
@@ -71,37 +70,17 @@ func missingLibs(bin string) []string {
 	return parseLddMissing(string(out))
 }
 
-func probeChrome(bin string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin,
-		"--headless=new", "--no-sandbox", "--disable-setuid-sandbox",
-		"--disable-gpu", "--disable-dev-shm-usage", "--dump-dom", "about:blank")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	cmd.Stdout = &bytes.Buffer{}
-	env := browserLaunchEnv("")
-	list := make([]string, 0, len(env))
-	for k, v := range env {
-		list = append(list, k+"="+v)
-	}
-	cmd.Env = list
-	err := cmd.Run()
-	msg := strings.TrimSpace(stderr.String())
-	if err == nil {
-		return ""
-	}
-	if msg == "" {
-		msg = err.Error()
-	}
-	if len(msg) > 400 {
-		msg = msg[:400]
-	}
-	return msg
-}
-
+// Diagnose checks local prerequisites without launching another browser. A
+// raw launch does not use the worker's configuration and can fail Pro license
+// validation or consume an extra session while the real task is starting.
 func Diagnose(bin string) string {
 	var parts []string
+	info, statErr := os.Stat(bin)
+	if statErr != nil {
+		parts = append(parts, "浏览器文件不可用："+statErr.Error())
+	} else if info.IsDir() {
+		parts = append(parts, "浏览器路径指向目录而非可执行文件："+bin)
+	}
 	if runtime.GOOS == "linux" {
 		if !hasDisplay() {
 			if _, err := exec.LookPath("Xvfb"); err != nil {
@@ -110,12 +89,11 @@ func Diagnose(bin string) string {
 				parts = append(parts, "服务器没有 DISPLAY，启动登录时会自动拉起 Xvfb 虚拟显示")
 			}
 		}
-		if miss := missingLibs(bin); len(miss) > 0 {
-			parts = append(parts, "缺少动态库 "+strings.Join(miss, ", ")+"。Debian/Ubuntu 执行：sudo apt-get install -y "+linuxBrowserDeps)
+		if statErr == nil && !info.IsDir() {
+			if miss := missingLibs(bin); len(miss) > 0 {
+				parts = append(parts, "缺少动态库 "+strings.Join(miss, ", ")+"。Debian/Ubuntu 执行：sudo apt-get install -y "+linuxBrowserDeps)
+			}
 		}
-	}
-	if msg := probeChrome(bin); msg != "" {
-		parts = append(parts, "直接启动 chrome 失败："+msg)
 	}
 	if len(parts) == 0 {
 		return ""
@@ -135,7 +113,7 @@ func StartupHint(cfg config.Config) string {
 	if hint := Diagnose(bin); hint != "" {
 		return strings.TrimPrefix(hint, "；")
 	}
-	return "CloakBrowser 运行环境检查通过：" + bin
+	return "CloakBrowser 文件已就绪：" + bin + "；浏览器将在批次中按设置启动"
 }
 
 func launchError(bin string, err error) error {

@@ -68,6 +68,14 @@ Auto 成功启动后，再回到主程序重试失败批次。已失败的任务
 
 若旧版本提示 `sudo apt-get install -y xvfb`，更新代码后先停止旧 Auto，再执行 `start.cmd`；一键启动会自动重新编译已修复的代码。
 
+### 启动日志出现 `exit status 77`
+
+旧版本启动时会额外运行一次 `chrome --headless --dump-dom` 自检；这次启动没有直接使用设置中的许可证，并可能早于后台许可证环境准备。即使选择有头模式，自检仍会使用无头模式，因此它的结果不能代表实际批次。
+
+当前版本启动时只检查浏览器文件和本机依赖，由批次按设置启动浏览器并验证许可证；「文件已就绪」不表示已经验证浏览器运行或许可证有效。更新后停止旧 Auto，重新运行 `start.cmd` 即可。
+
+如果实际批次仍报 `77`，请在主程序的 Auto 浏览器设置中检查并保存有效的 CloakBrowser License。官方定义 `77` 为许可证缺失、无效或过期；浏览器已下载或缓存存在不代表许可证仍然有效（[官方退出码说明](https://github.com/CloakHQ/CloakBrowser/blob/main/cloakbrowser/license.py)）。批次中的真实启动错误会继续保留，不会被启动检查的结果覆盖。
+
 ## Linux / macOS
 
 ```bash
