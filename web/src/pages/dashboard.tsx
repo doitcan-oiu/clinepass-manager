@@ -94,19 +94,20 @@ function ActivityHeatmap({ data }: { data: DashboardData }) {
   const [focusedDay, setFocusedDay] = useState(179)
   const dayRefs = useRef<Array<HTMLButtonElement | null>>([])
   const total = cells.reduce((sum, day) => sum + day.requests, 0)
-  const max = Math.max(1, ...cells.map((day) => day.requests))
   const firstDay = cells[0] ? new Date(`${cells[0].date}T00:00:00Z`).getUTCDay() : 0
   const leading = (firstDay + 6) % 7
   const heatColors = ["bg-emerald-500/10", "bg-emerald-500/25", "bg-emerald-500/45", "bg-emerald-500/70", "bg-emerald-500"]
+  const bandSize = 5000
+  const bandLabel = (level: number) => level === heatColors.length - 1 ? `${fmt(level * bandSize)} 次及以上` : `${fmt(level * bandSize)}–${fmt((level + 1) * bandSize - 1)} 次`
   const dateLabel = (date: string) => date.slice(5).replace("-", "/")
   return <section className={panel}>
     <div className="flex items-center justify-between"><h2 className="font-medium">请求活跃度</h2><span className="text-xs text-muted-foreground">近 180 天</span></div>
     <div className="mt-6 flex items-baseline justify-between gap-3"><p className="text-2xl font-medium tracking-tight tabular-nums">{fmt(total)}<span className="ml-2 text-xs font-normal text-muted-foreground">次请求</span></p><span className="text-xs text-muted-foreground">{cells[0] && dateLabel(cells[0].date)} – {cells.at(-1) && dateLabel(cells.at(-1)!.date)}</span></div>
     <div className="mt-5 overflow-x-auto pb-1"><div className="grid min-w-72 grid-flow-col grid-rows-7 gap-1" aria-label="过去 180 天每日请求次数">{Array.from({ length: leading }, (_, i) => <span key={`pad-${i}`} />)}{cells.map((day, index) => {
-      const level = day.requests === 0 ? 0 : Math.min(4, Math.ceil(day.requests / max * 4))
-      return <Tooltip key={day.date}><TooltipTrigger asChild><button ref={(element) => { dayRefs.current[index] = element }} tabIndex={index === focusedDay ? 0 : -1} onFocus={() => setFocusedDay(index)} onKeyDown={(event) => { const offset = ({ ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 } as Record<string, number>)[event.key]; if (offset !== undefined) { event.preventDefault(); dayRefs.current[Math.max(0, Math.min(cells.length - 1, index + offset))]?.focus() } }} className={cn("aspect-square min-w-1 rounded-[3px] transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none", heatColors[level])} aria-label={`${day.date}：${fmt(day.requests)} 次请求`} /></TooltipTrigger><TooltipContent>{day.date} · {fmt(day.requests)} 次请求</TooltipContent></Tooltip>
+      const level = Math.min(heatColors.length - 1, Math.floor(Math.max(0, day.requests) / bandSize))
+      return <Tooltip key={day.date}><TooltipTrigger asChild><button ref={(element) => { dayRefs.current[index] = element }} tabIndex={index === focusedDay ? 0 : -1} onFocus={() => setFocusedDay(index)} onKeyDown={(event) => { const offset = ({ ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 } as Record<string, number>)[event.key]; if (offset !== undefined) { event.preventDefault(); dayRefs.current[Math.max(0, Math.min(cells.length - 1, index + offset))]?.focus() } }} className={cn("aspect-square min-w-1 rounded-[3px] transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none", heatColors[level])} aria-label={`${day.date}：${fmt(day.requests)} 次请求，档位 ${bandLabel(level)}`} /></TooltipTrigger><TooltipContent><p>{day.date} · {fmt(day.requests)} 次请求</p><p className="mt-1 opacity-75">档位：{bandLabel(level)}</p></TooltipContent></Tooltip>
     })}</div></div>
-    <div className="mt-3 flex items-center justify-end gap-1 text-[10px] text-muted-foreground"><span className="mr-1">少</span>{heatColors.map((color) => <span key={color} className={cn("size-2.5 rounded-xs", color)} />)}<span className="ml-1">多</span></div>
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-[10px] text-muted-foreground"><span className="whitespace-nowrap">每日每 {fmt(bandSize)} 次一档</span><div className="flex items-center gap-1" aria-label="每日请求颜色档位"><span className="mr-1">少</span>{heatColors.map((color, level) => <span key={color} title={bandLabel(level)} aria-label={bandLabel(level)} className={cn("size-2.5 rounded-xs", color)} />)}<span className="ml-1">多</span></div></div>
   </section>
 }
 
