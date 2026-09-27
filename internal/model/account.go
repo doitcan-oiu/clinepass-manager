@@ -101,22 +101,29 @@ type CreateAccountInput struct {
 type JobEvent struct {
 	JobID     string `json:"job_id"`
 	AccountID string `json:"account_id"`
+	Sequence  int64  `json:"sequence"`
 	Level     string `json:"level"`
+	Stage     string `json:"stage"`
 	Message   string `json:"message"`
+	Detail    string `json:"detail,omitempty"`
+	Repeat    int    `json:"repeat"`
 	Time      int64  `json:"time"`
 }
 
 type Job struct {
-	ID        string     `json:"id"`
-	AccountID string     `json:"account_id"`
-	Email     string     `json:"email"`
-	Kind      string     `json:"kind,omitempty"`
-	AutoPay   bool       `json:"auto_pay,omitempty"`
-	Status    string     `json:"status"`
-	Error     string     `json:"error,omitempty"`
-	Logs      []JobEvent `json:"logs"`
-	StartedAt int64      `json:"started_at"`
-	EndedAt   int64      `json:"ended_at,omitempty"`
+	ID             string     `json:"id"`
+	AccountID      string     `json:"account_id"`
+	Email          string     `json:"email"`
+	Kind           string     `json:"kind,omitempty"`
+	AutoPay        bool       `json:"auto_pay,omitempty"`
+	Status         string     `json:"status"`
+	Stage          string     `json:"stage"`
+	StageLabel     string     `json:"stage_label"`
+	StageStartedAt int64      `json:"stage_started_at"`
+	Error          string     `json:"error,omitempty"`
+	Logs           []JobEvent `json:"logs"`
+	StartedAt      int64      `json:"started_at"`
+	EndedAt        int64      `json:"ended_at,omitempty"`
 }
 
 type Settings struct {

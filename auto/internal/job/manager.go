@@ -48,7 +48,7 @@ func (m *Manager) List() []model.Job {
 	defer m.mu.Unlock()
 	out := make([]model.Job, 0, len(m.jobs))
 	for _, j := range m.jobs {
-		cp := *j
+		cp := cloneJob(j)
 		out = append(out, cp)
 	}
 	return out
@@ -61,8 +61,14 @@ func (m *Manager) Get(id string) (*model.Job, bool) {
 	if !ok {
 		return nil, false
 	}
-	cp := *j
+	cp := cloneJob(j)
 	return &cp, true
+}
+
+func cloneJob(j *model.Job) model.Job {
+	cp := *j
+	cp.Logs = append([]model.JobEvent{}, j.Logs...)
+	return cp
 }
 
 func (m *Manager) Subscribe(jobID string) (chan model.JobEvent, func()) {
@@ -70,7 +76,11 @@ func (m *Manager) Subscribe(jobID string) (chan model.JobEvent, func()) {
 	m.mu.Lock()
 	m.subs[jobID] = append(m.subs[jobID], ch)
 	if j, ok := m.jobs[jobID]; ok {
-		for _, ev := range j.Logs {
+		start := len(j.Logs) - cap(ch)
+		if start < 0 {
+			start = 0
+		}
+		for _, ev := range j.Logs[start:] {
 			select {
 			case ch <- ev:
 			default:
@@ -78,18 +88,21 @@ func (m *Manager) Subscribe(jobID string) (chan model.JobEvent, func()) {
 		}
 	}
 	m.mu.Unlock()
+	var once sync.Once
 	return ch, func() {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		list := m.subs[jobID]
-		n := list[:0]
-		for _, c := range list {
-			if c != ch {
-				n = append(n, c)
+		once.Do(func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			list := m.subs[jobID]
+			n := list[:0]
+			for _, c := range list {
+				if c != ch {
+					n = append(n, c)
+				}
 			}
-		}
-		m.subs[jobID] = n
-		close(ch)
+			m.subs[jobID] = n
+			close(ch)
+		})
 	}
 }
 
@@ -159,13 +172,15 @@ func (m *Manager) enqueue(accountID, kind string, autoPay bool) (*model.Job, err
 		return nil, fmt.Errorf("已经支付，跳过提取")
 	}
 	job := &model.Job{
-		ID:        newID(),
-		AccountID: acc.ID,
-		Email:     acc.Email,
-		Kind:      kind,
-		AutoPay:   autoPay,
-		Status:    "queued",
-		StartedAt: time.Now().Unix(),
+		ID:             newID(),
+		AccountID:      acc.ID,
+		Email:          acc.Email,
+		Kind:           kind,
+		AutoPay:        autoPay,
+		Status:         "queued",
+		Stage:          StageQueued,
+		StageLabel:     stageLabel(StageQueued),
+		StageStartedAt: time.Now().Unix(),
 	}
 	m.mu.Lock()
 	if m.accountBusy(accountID) {
@@ -187,7 +202,9 @@ func (m *Manager) enqueue(accountID, kind string, autoPay bool) (*model.Job, err
 		}
 	}
 	m.pump()
-	return job, nil
+	// A worker can already be writing progress by now; never expose its pointer.
+	snapshot, _ := m.Get(job.ID)
+	return snapshot, nil
 }
 
 func (m *Manager) Pump() {
@@ -358,6 +375,7 @@ func (m *Manager) run(job *model.Job) {
 		return
 	}
 	if job.Kind == KindCookie {
+		m.logf(job, "info", "正在保存 Cookie")
 		if err := m.store.SaveCookies(acc.ID, res.CookiesJSON, res.CookieHeader); err != nil {
 			m.fail(job, err.Error())
 			return
@@ -367,6 +385,7 @@ func (m *Manager) run(job *model.Job) {
 		return
 	}
 	acc.Status = "ready"
+	m.logf(job, "info", "正在保存账号和支付结果")
 	acc.LastError = ""
 	acc.WorkspaceID = res.WorkspaceID
 	acc.APIKey = res.APIKey
@@ -389,10 +408,13 @@ func (m *Manager) run(job *model.Job) {
 		}
 		m.logf(job, "info", "自动支付成功")
 	} else if job.AutoPay {
-		msg := strings.TrimSpace(res.PayError)
+		msg := login.CompactMessage(res.PayError)
 		if msg == "" {
 			msg = "自动支付未完成"
 		}
+		m.mu.Lock()
+		setStageLocked(job, StagePayment, time.Now().Unix())
+		m.mu.Unlock()
 		m.logf(job, "error", "%s", msg)
 		_ = m.store.UpdateStatus(acc.ID, "ready", msg)
 		m.setStatus(job, "failed", msg)
@@ -429,6 +451,7 @@ func (m *Manager) runLoginWithAuthkitRetry(cfg config.Config, acc model.Account,
 }
 
 func (m *Manager) fail(job *model.Job, msg string) {
+	msg = login.CompactMessage(msg)
 	m.logf(job, "error", "%s", msg)
 	m.setStatus(job, "failed", msg)
 	if job.Kind != KindCookie {
@@ -439,26 +462,63 @@ func (m *Manager) fail(job *model.Job, msg string) {
 func (m *Manager) setStatus(job *model.Job, status, errMsg string) {
 	m.mu.Lock()
 	job.Status = status
-	job.Error = errMsg
+	job.Error = login.CompactMessage(errMsg)
+	now := time.Now().Unix()
+	if status == "running" && job.StartedAt == 0 {
+		job.StartedAt = now
+		setStageLocked(job, StageBrowser, now)
+	}
 	if status == "success" || status == "failed" {
-		job.EndedAt = time.Now().Unix()
+		job.EndedAt = now
+	}
+	if status == "success" {
+		setStageLocked(job, StageDone, now)
 	}
 	m.mu.Unlock()
 }
 
 func (m *Manager) logf(job *model.Job, level, format string, args ...any) {
+	message, detail, level, stage := presentLog(fmt.Sprintf(format, args...), level)
+	if message == "" {
+		return
+	}
+	now := time.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if stage != "" && job.Status != "success" && job.Status != "failed" {
+		setStageLocked(job, stage, now.Unix())
+	}
 	ev := model.JobEvent{
 		JobID:     job.ID,
 		AccountID: job.AccountID,
 		Level:     level,
-		Message:   fmt.Sprintf(format, args...),
-		Time:      time.Now().UnixMilli(),
+		Stage:     job.Stage,
+		Message:   message,
+		Detail:    detail,
+		Repeat:    1,
+		Sequence:  1,
+		Time:      now.UnixMilli(),
 	}
-	m.mu.Lock()
-	job.Logs = append(job.Logs, ev)
-	subs := append([]chan model.JobEvent{}, m.subs[job.ID]...)
-	m.mu.Unlock()
-	for _, ch := range subs {
+	merged := false
+	if n := len(job.Logs); n > 0 {
+		last := &job.Logs[n-1]
+		ev.Sequence = last.Sequence + 1
+		if last.Level == ev.Level && last.Stage == ev.Stage && last.Message == ev.Message && last.Detail == ev.Detail {
+			last.Repeat++
+			last.Time = ev.Time
+			ev = *last
+			merged = true
+		}
+	}
+	if !merged {
+		job.Logs = append(job.Logs, ev)
+		if len(job.Logs) > maxJobLogs {
+			copy(job.Logs, job.Logs[len(job.Logs)-maxJobLogs:])
+			job.Logs = job.Logs[:maxJobLogs]
+		}
+	}
+	// Cancellation closes channels under this same lock, preventing send/close races.
+	for _, ch := range m.subs[job.ID] {
 		select {
 		case ch <- ev:
 		default:

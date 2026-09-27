@@ -2,6 +2,8 @@ package login
 
 import (
 	"errors"
+	"net/url"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -30,13 +32,42 @@ func IsAuthkitFailure(err error) bool {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "chrome-error") || strings.Contains(msg, "chromewebdata") {
-		return true
+	for _, raw := range messageURL.FindAllString(msg, -1) {
+		u, parseErr := url.Parse(raw)
+		if parseErr != nil {
+			continue
+		}
+		if u.Scheme == "chrome-error" || u.Hostname() == "chromewebdata" {
+			return true
+		}
+		if strings.EqualFold(u.Hostname(), "authkit.cline.bot") && !strings.Contains(u.Path, "radar-challenge") {
+			return true
+		}
 	}
-	if strings.Contains(msg, "authkit.cline.bot") && !strings.Contains(msg, "radar-challenge") {
-		return true
-	}
-	return false
+	// Keep textual AuthKit failures, but never interpret an OAuth redirect in a
+	// query string (or an unrelated host's path) as the page we actually reached.
+	text := messageURL.ReplaceAllString(msg, "")
+	return strings.Contains(text, "authkit 页面异常") || strings.Contains(text, "authkit 回调错误") ||
+		strings.Contains(text, "authkit.cline.bot") || strings.Contains(text, "chromewebdata")
+}
+
+var messageURL = regexp.MustCompile(`(?i)(?:https?|socks5h?|chrome-error)://[^\s<>"'，；）\)\]]+`)
+var messageSecret = regexp.MustCompile(`(?i)\b(authorization_session_id|access_token|refresh_token|id_token|api_key|apikey|license_key|password|session|token|secret|cvv)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;，；]+)`)
+
+func sanitizeMessage(msg string) string {
+	msg = messageURL.ReplaceAllStringFunc(msg, func(raw string) string {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return "[链接已隐藏]"
+		}
+		u.User = nil
+		u.RawQuery = ""
+		u.ForceQuery = false
+		u.Fragment = ""
+		u.RawFragment = ""
+		return u.String()
+	})
+	return messageSecret.ReplaceAllString(msg, "$1=[已隐藏]")
 }
 
 func CompactMessage(msg string) string {
@@ -56,10 +87,11 @@ func CompactMessage(msg string) string {
 	if extra != "" && !strings.Contains(msg, extra) {
 		msg = strings.TrimSpace(msg + " " + extra)
 	}
+	msg = sanitizeMessage(msg)
 	limit := 200
 	if utf8.RuneCountInString(msg) > limit {
 		r := []rune(msg)
-		msg = string(r[:limit]) + "…"
+		msg = string(r[:limit-1]) + "…"
 	}
 	return msg
 }

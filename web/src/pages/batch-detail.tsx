@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
-import type { Account, Batch, Job, JobEvent } from "@/lib/types"
+import type { Account, Batch, Job } from "@/lib/types"
+import { Check, CircleAlert, Clock3, LoaderCircle } from "lucide-react"
 import { AccountTable } from "@/components/accounts/account-table"
 import { AutoPayDialog } from "@/components/accounts/auto-pay-dialog"
 import { AutoImport } from "@/components/accounts/auto-import"
@@ -11,7 +12,7 @@ import { DetailDialog } from "@/components/accounts/detail-dialog"
 import { JobLogPanel } from "@/components/accounts/job-log-panel"
 import { Button } from "@/components/ui/button"
 import { batchStatus, radarDeniedCount, waitingCount } from "@/lib/batch-ui"
-import { emailByAccount, jobStatusByAccount, latestStepByAccount } from "@/lib/job-log"
+import { batchRunCounts, latestJobsByAccount, logsFromJobs } from "@/lib/job-log"
 import { downloadBase64, xlsxMime } from "@/lib/download"
 import {
   AlertDialog,
@@ -34,24 +35,31 @@ export function BatchDetailPage() {
   const [removingRadar, setRemovingRadar] = useState(false)
   const [payAsk, setPayAsk] = useState<null | { mode: "login" | "refresh"; account?: Account }>(null)
   const [payPending, setPayPending] = useState(false)
-  const [logs, setLogs] = useState<JobEvent[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
+  const [now, setNow] = useState(Date.now())
   const [logFilter, setLogFilter] = useState("")
   const [loadError, setLoadError] = useState("")
-  const esRef = useRef<{ close: () => void } | null>(null)
+  const routeRef = useRef(id)
+  routeRef.current = id
+  const revisionRef = useRef(0)
+  const reloadRef = useRef(0)
   const radarCount = radarDeniedCount(accounts)
-  const emails = useMemo(() => emailByAccount(accounts, jobs), [accounts, jobs])
-  const jobStatuses = useMemo(() => jobStatusByAccount(jobs), [jobs])
-  const currentSteps = useMemo(() => latestStepByAccount(logs), [logs])
+  const latestJobs = useMemo(() => latestJobsByAccount(jobs), [jobs])
+  const logs = useMemo(() => logsFromJobs(jobs), [jobs])
+  const counts = useMemo(() => batchRunCounts(accounts, latestJobs), [accounts, latestJobs])
   const verification = useAutoVerification(() => { void reload().catch(() => {}) })
 
   async function reload() {
     if (!id) return
+    const request = ++reloadRef.current
+    const revision = revisionRef.current
     let data
     try {
       data = await api.batch(id)
+      if (routeRef.current !== id || request !== reloadRef.current || revision !== revisionRef.current) return
       setLoadError("")
     } catch (err) {
+      if (routeRef.current !== id || request !== reloadRef.current || revision !== revisionRef.current) return
       setLoadError(err instanceof Error ? err.message : "无法读取远程批次")
       throw err
     }
@@ -64,81 +72,67 @@ export function BatchDetailPage() {
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
+    let timer = 0
+    let initialized = false
+    setBatch(null)
+    setAccounts([])
+    setJobs([])
+    setLogFilter("")
+    setDetail(null)
+    setPayAsk(null)
+    setPayPending(false)
+    setRemove(null)
+    setLoadError("")
+    revisionRef.current++
+    const tick = async () => {
+      const revision = revisionRef.current
+      const request = ++reloadRef.current
       try {
-        const data = await reload()
-        if (cancelled || !data) return
-        const jobs = await api.jobs()
-        if (cancelled) return
+        const [data, allJobs] = await Promise.all([api.batch(id!), api.jobs()])
+        if (cancelled || routeRef.current !== id || revision !== revisionRef.current || request !== reloadRef.current) return
         const ids = new Set(data.accounts.map((a) => a.id))
-        const mine = jobs.filter((j) => ids.has(j.account_id))
-        if (mine.length) followJobs(mine, false)
+        const mine = allJobs.filter((j) => ids.has(j.account_id))
+        // Each response is a full snapshot. Replacing it retains repeat-count updates.
+        setJobs(mine)
+        setBatch(data.batch)
+        setAccounts(data.accounts)
+        setLoadError("")
+        setDetail((current) => current ? data.accounts.find((a) => a.id === current.id) || null : null)
+        const firstLoad = !initialized
+        setLogFilter((current) => {
+          if (current && ids.has(current)) return current
+          if (firstLoad) return mine.find((j) => j.status === "running")?.account_id || data.accounts.find((a) => a.status === "failed")?.id || data.accounts[0]?.id || ""
+          return ""
+        })
+        initialized = true
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "加载失败")
+        if (!cancelled && routeRef.current === id && revision === revisionRef.current && request === reloadRef.current) setLoadError(e instanceof Error ? e.message : "加载失败")
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => void tick(), 1500)
       }
-    })()
+    }
+    if (id) void tick()
+    const clock = window.setInterval(() => setNow(Date.now()), 1000)
     return () => {
       cancelled = true
-      esRef.current?.close()
+      window.clearTimeout(timer)
+      window.clearInterval(clock)
+      revisionRef.current++
     }
   }, [id])
 
-  function followJobs(nextJobs: Job[], reset = true) {
-    esRef.current?.close()
-    if (reset) setLogs([])
-    setJobs(nextJobs)
-    if (!nextJobs.length) return
-    const ids = new Set(nextJobs.map((j) => j.id))
-    const seen = new Set<string>()
-    let reloadTimer = 0
-    const scheduleReload = () => {
-      if (reloadTimer) return
-      reloadTimer = window.setTimeout(() => {
-        reloadTimer = 0
-        reload().catch(() => {})
-      }, 800)
-    }
-    const tick = async () => {
-      try {
-        const all = await api.jobs()
-        const mine = all.filter((j) => ids.has(j.id))
-        setJobs(mine)
-        const next: JobEvent[] = []
-        for (const j of mine) {
-          for (const ev of j.logs || []) {
-            const key = `${ev.job_id}:${ev.time}:${ev.message}`
-            if (seen.has(key)) continue
-            seen.add(key)
-            next.push(ev)
-          }
-        }
-        if (next.length) {
-          setLogs((cur) => [...cur, ...next].sort((a, b) => a.time - b.time))
-          scheduleReload()
-        }
-        if (mine.length && mine.every((j) => j.status === "success" || j.status === "failed")) {
-          window.clearInterval(poll)
-          reload().catch(() => {})
-        }
-      } catch {
-        /* 登录进行中接口偶发失败时下一秒再拉 */
-      }
-    }
-    const poll = window.setInterval(() => {
-      tick().catch(() => {})
-    }, 1000)
-    esRef.current = {
-      close: () => {
-        window.clearInterval(poll)
-        if (reloadTimer) window.clearTimeout(reloadTimer)
-      },
-    }
-    tick().catch(() => {})
-    scheduleReload()
+  function followJobs(nextJobs: Job[]) {
+    revisionRef.current++
+    const accountIDs = new Set(nextJobs.map((job) => job.account_id))
+    setJobs((current) => [...current.filter((job) => !accountIDs.has(job.account_id)), ...nextJobs])
+    setAccounts((current) => current.map((account) => accountIDs.has(account.id) ? { ...account, status: "queued", last_error: "" } : account))
+    setLogFilter((current) => current || nextJobs[0]?.account_id || "")
   }
 
   async function startWithAutoPay(autoPay: boolean) {
     if (!id || !payAsk) return
+    const requestBatch = id
+    revisionRef.current++
     setPayPending(true)
     try {
       if (payAsk.account) {
@@ -147,9 +141,11 @@ export function BatchDetailPage() {
           payAsk.mode === "refresh"
             ? await api.refreshAccount(payAsk.account.id, autoPay)
             : await api.loginAccount(payAsk.account.id, autoPay)
+        if (routeRef.current !== requestBatch) return
         followJobs([job])
       } else if (payAsk.mode === "refresh") {
         const jobs = await api.refreshBatch(id, autoPay)
+        if (routeRef.current !== requestBatch) return
         if (!jobs?.length) toast.message("这批还没有登录成功的账号，请先生成支付链接")
         else {
           toast.success(`开始刷新支付链接，共 ${jobs.length} 个账号${autoPay ? "，并自动支付" : ""}`)
@@ -157,6 +153,7 @@ export function BatchDetailPage() {
         }
       } else {
         const jobs = await api.loginBatch(id, autoPay)
+        if (routeRef.current !== requestBatch) return
         if (!jobs?.length) toast.message("这批账号都已经登录过了")
         else {
           toast.success(`开始登录并生成支付链接，共 ${jobs.length} 个账号${autoPay ? "，并自动支付" : ""}`)
@@ -165,9 +162,9 @@ export function BatchDetailPage() {
       }
       setPayAsk(null)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "启动失败")
+      if (routeRef.current === requestBatch) toast.error(e instanceof Error ? e.message : "启动失败")
     } finally {
-      setPayPending(false)
+      if (routeRef.current === requestBatch) setPayPending(false)
     }
   }
 
@@ -246,6 +243,15 @@ export function BatchDetailPage() {
         ) : null}
       </div>
 
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="批次执行概览">
+        {[
+          { label: "待处理", value: counts.queued, icon: Clock3, color: "text-muted-foreground", background: "bg-muted" },
+          { label: "进行中", value: counts.running, icon: LoaderCircle, color: "text-sky-600 dark:text-sky-400", background: "bg-sky-500/10" },
+          { label: "已完成", value: counts.success, icon: Check, color: "text-emerald-600 dark:text-emerald-400", background: "bg-emerald-500/10" },
+          { label: "需处理", value: counts.failed, icon: CircleAlert, color: "text-amber-600 dark:text-amber-400", background: "bg-amber-500/10" },
+        ].map((item) => <div key={item.label} className="flex items-center justify-between rounded-xl border bg-card px-4 py-4 shadow-sm"><div><p className="text-xs text-muted-foreground">{item.label}</p><p className="mt-1.5 text-2xl font-semibold tabular-nums tracking-tight">{item.value}</p></div><span className={`rounded-lg p-2.5 ${item.background} ${item.color}`}><item.icon className="size-4" /></span></div>)}
+      </div>
+
       {loadError ? <div role="alert" className="space-y-3 rounded-xl border border-destructive/25 bg-destructive/5 p-4"><p className="text-sm">{loadError}</p><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => void reload().catch(() => {})}>重新加载</Button><Button variant="outline" size="sm" asChild><Link to="/settings?tab=connection">配置 Auto 连接</Link></Button></div></div> : null}
       <AutoImport key={id} batchId={id} disabled={!batch || !!loadError || verification.busy} />
       <AutoVerificationStatus status={verification.status} error={verification.error} />
@@ -293,21 +299,24 @@ export function BatchDetailPage() {
 
       <AccountTable
         accounts={accounts}
+        jobs={latestJobs}
+        now={now}
         onLogin={(a) => setPayAsk({ mode: "login", account: a })}
         onRefresh={(a) => setPayAsk({ mode: "refresh", account: a })}
         onDetail={setDetail}
         onRemove={setRemove}
-        currentSteps={currentSteps}
         selectedId={logFilter}
-        onSelect={(a) => setLogFilter((cur) => (cur === a.id ? "" : a.id))}
+        onSelect={(a) => setLogFilter(a.id)}
       />
 
       <JobLogPanel
         logs={logs}
-        emails={emails}
-        statuses={jobStatuses}
+        accounts={accounts}
+        jobs={latestJobs}
+        now={now}
         filterId={logFilter}
         onFilter={setLogFilter}
+        onRetry={(a) => setPayAsk({ mode: "login", account: a })}
       />
 
       <AutoPayDialog

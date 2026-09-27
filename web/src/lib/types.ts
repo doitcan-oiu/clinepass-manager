@@ -180,12 +180,18 @@ export type Job = {
   account_id: string
   email?: string
   kind?: string
+  auto_pay?: boolean
   status: string
   error?: string
   logs?: JobEvent[]
   started_at?: number
   ended_at?: number
+  stage?: JobStage
+  stage_label?: string
+  stage_started_at?: number
 }
+
+export type JobStage = "queued" | "browser" | "login" | "verification" | "payment" | "saving" | "done"
 
 export type Batch = {
   id: string
@@ -264,4 +270,8 @@ export type JobEvent = {
   level: string
   message: string
   time: number
+  sequence?: number
+  stage?: JobStage
+  repeat?: number
+  detail?: string
 }
