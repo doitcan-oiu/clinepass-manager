@@ -1,4 +1,4 @@
-import type { Account, AppConfig, AutoConnection, AutoImportResult, AutoStatus, Batch, BatchPage, CloakUpdate, Job, MainConfig, PoolAccount, PoolPage, RequestLogPage, UsageSyncStatus } from "@/lib/types"
+import type { Account, AppConfig, AutoConnection, AutoImportResult, AutoStatus, Batch, BatchPage, CloakUpdate, Job, MainConfig, ModelCatalogSyncStatus, PoolAccount, PoolPage, RequestLogPage, UsageSyncStatus } from "@/lib/types"
 
 export type AccountBackup = {
   version: number
@@ -159,6 +159,8 @@ export const api = {
   refreshAccountUsage: (id: string) =>
     fetch(`/api/accounts/${id}/usage`, { method: "POST" }).then((r) => json<PoolAccount>(r)),
   models: () => fetch("/api/models").then((r) => json<{ models: { id: string; name: string }[] }>(r)),
+  modelsSync: () => fetch("/api/models/sync").then((r) => json<ModelCatalogSyncStatus>(r)),
+  startModelsSync: () => fetch("/api/models/sync", { method: "POST" }).then((r) => json<ModelCatalogSyncStatus>(r)),
   testAccount: (id: string, model: string) =>
     fetch(`/api/accounts/${id}/test`, {
       method: "POST",

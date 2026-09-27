@@ -156,6 +156,7 @@ func (s *Server) markCookieExpired(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	type item struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`

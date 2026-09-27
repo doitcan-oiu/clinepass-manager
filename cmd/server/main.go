@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"opencode-go-manager/internal/api"
@@ -38,6 +39,7 @@ func main() {
 		cfg = store.ApplySettings(cfg, settings)
 	}
 	srv := api.New(cfg, st, filepath.Join(root, "web", "dist"))
+	go srv.RunModelCatalog(context.Background())
 	log.Printf("ClinePass Manager 监听 %s；数据库 %s；Auto 连接由网页设置管理", cfg.Addr, cfg.DBPath())
 	if err := http.ListenAndServe(cfg.Addr, srv.Handler()); err != nil {
 		log.Fatal(err)

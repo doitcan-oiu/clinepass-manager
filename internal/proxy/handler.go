@@ -345,6 +345,7 @@ func (h *Handler) Probe(ctx context.Context, acc model.Account, modelID string) 
 }
 
 func (h *Handler) models(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
 	type item struct {
 		ID      string  `json:"id"`
 		Object  string  `json:"object"`

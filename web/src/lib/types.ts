@@ -88,6 +88,17 @@ export type UsageSyncStatus = {
   concurrency?: number
 }
 
+export type ModelCatalogSyncStatus = {
+  source: string
+  interval_sec: number
+  syncing: boolean
+  origin: "builtin" | "cache" | "remote"
+  last_success_at: number
+  last_attempt_at: number
+  last_error: string
+  model_count: number
+}
+
 export type AutoConnection = {
   url: string
   token_configured: boolean

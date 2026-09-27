@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"opencode-go-manager/internal/config"
+	"opencode-go-manager/internal/gomodel"
 	"opencode-go-manager/internal/proxy"
 	"opencode-go-manager/internal/store"
 	"opencode-go-manager/internal/usage"
@@ -22,6 +23,7 @@ type Server struct {
 	usage   *usage.Syncer
 	proxy   *proxy.Handler
 	webRoot string
+	catalog *gomodel.Syncer
 }
 
 func New(cfg config.Config, st *store.Store, webRoot string) *Server {
@@ -31,6 +33,7 @@ func New(cfg config.Config, st *store.Store, webRoot string) *Server {
 		usage:   usage.NewSyncer(st),
 		proxy:   proxy.New(st),
 		webRoot: webRoot,
+		catalog: newModelCatalogSyncer(st),
 	}
 
 	s.proxy.SetUsageRefresher(s.usage)
@@ -72,6 +75,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/accounts/{id}/cookie-expired", s.markCookieExpired)
 	mux.HandleFunc("POST /api/accounts/{id}/test", s.testAccount)
 	mux.HandleFunc("GET /api/models", s.listModels)
+	mux.HandleFunc("GET /api/models/sync", s.getModelCatalogSync)
+	mux.HandleFunc("POST /api/models/sync", s.refreshModelCatalog)
 	mux.HandleFunc("GET /api/batches", s.forwardAuto)
 	mux.HandleFunc("POST /api/batches", s.forwardAuto)
 	mux.HandleFunc("GET /api/batches/{id}", s.forwardAuto)

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { api, type AmzKeysStatus, type HeroSMSCatalog, type HeroSMSCountry } from "@/lib/api"
-import type { AppConfig, AutoStatus } from "@/lib/types"
+import type { AppConfig, AutoStatus, ModelCatalogSyncStatus } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -15,7 +15,7 @@ const selectClass = "h-9 w-full rounded-md border border-input bg-transparent px
 
 const settingsTabs = [
   { value: "forwarding", label: "转发与负载均衡", description: "请求调度、网络代理与响应格式", owner: "主程序" },
-  { value: "usage", label: "用量同步", description: "账号配额与模型用量的刷新频率", owner: "主程序" },
+  { value: "usage", label: "用量同步", description: "账号配额、模型用量与官方模型目录", owner: "主程序" },
   { value: "connection", label: "Auto 连接", description: "连接部署在另一台服务器上的 Auto 服务", owner: "主程序" },
   { value: "automation", label: "提取与续期", description: "支付链接提取与 Cookie 续期任务", owner: "Auto 自动化" },
   { value: "browser", label: "浏览器环境", description: "登录浏览器、运行方式与授权", owner: "Auto 自动化" },
@@ -41,6 +41,77 @@ function countryOptionLabel(c: HeroSMSCountry) {
   const quote = lowestQuote(c)
   if (quote) parts.push(`最低 ${formatQuotePrice(quote.price)}`)
   return parts.join(" ")
+}
+
+function ModelCatalogSyncCard() {
+  const [status, setStatus] = useState<ModelCatalogSyncStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [error, setError] = useState("")
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    const load = () => api.modelsSync().then((next) => {
+      if (!active) return
+      setStatus(next)
+      setError("")
+    }).catch((err: unknown) => {
+      if (active) setError(err instanceof Error ? err.message : "无法读取模型目录同步状态")
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+    void load()
+    const timer = window.setInterval(() => { void load() }, 10000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [attempt])
+
+  async function refresh() {
+    setRefreshing(true)
+    setError("")
+    try {
+      const next = await api.startModelsSync()
+      setStatus(next)
+      if (!next.syncing) toast.success(`模型目录已更新，共 ${next.model_count} 个模型`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "模型目录同步失败")
+      try { setStatus(await api.modelsSync()) } catch { /* Keep the last known catalog status. */ }
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const syncing = refreshing || status?.syncing
+  const source = status?.source || "https://docs.cline.bot/getting-started/clinepass#models"
+  const origin = status?.origin === "remote" ? "官方文档" : status?.origin === "cache" ? "本地缓存" : "内置备用目录"
+  const message = error || status?.last_error
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>模型目录同步</CardTitle>
+        <CardDescription>启动时和每小时从官方文档更新可用模型，供 /v1/models 和模型选择列表使用。同步失败时保留已有目录。</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <a href={source} target="_blank" rel="noreferrer" className="inline-block break-all text-sm underline underline-offset-4">查看 ClinePass 官方模型文档</a>
+        {loading && !status ? <p role="status" className="text-sm text-muted-foreground">正在读取模型目录状态…</p> : null}
+        {status ? (
+          <dl className="grid gap-4 rounded-lg border bg-muted/20 p-4 text-sm sm:grid-cols-2">
+            <div className="space-y-1"><dt className="text-muted-foreground">模型数量</dt><dd className="font-medium">{status.model_count} 个</dd></div>
+            <div className="space-y-1"><dt className="text-muted-foreground">当前目录来源</dt><dd>{origin}</dd></div>
+            <div className="space-y-1"><dt className="text-muted-foreground">最近成功同步</dt><dd>{status.last_success_at ? new Date(status.last_success_at * 1000).toLocaleString("zh-CN", { hour12: false }) : "尚未成功同步"}</dd></div>
+            <div className="space-y-1"><dt className="text-muted-foreground">同步状态</dt><dd role="status">{syncing ? "正在同步…" : status.last_error ? "同步失败，继续使用已有目录" : "每小时自动同步"}</dd></div>
+          </dl>
+        ) : null}
+        {message ? <p role="alert" className="break-words rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive">{message}</p> : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" disabled={loading || !!syncing} onClick={() => void refresh()}>{syncing ? "同步中…" : "立即同步模型目录"}</Button>
+          {error ? <Button type="button" variant="ghost" disabled={loading || !!syncing} onClick={() => setAttempt((value) => value + 1)}>重新读取状态</Button> : null}
+        </div>
+      </CardContent>
+    </Card>
+  )
 }
 
 export function SettingsPage() {
@@ -796,7 +867,8 @@ export function SettingsPage() {
           </Card>
         </fieldset>
         </TabsContent>
-        <TabsContent value="usage" className="mt-3">
+        <TabsContent value="usage" className="mt-3 space-y-4">
+          <ModelCatalogSyncCard />
           <fieldset disabled={!configLoaded || loadingConfig} hidden={!configLoaded} aria-busy={loadingConfig} className="min-w-0">
           <Card>
             <CardHeader>
