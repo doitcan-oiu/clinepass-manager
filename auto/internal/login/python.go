@@ -256,6 +256,9 @@ func findWorker() (python, script string, err error) {
 	if p, e := exec.LookPath("python"); e == nil {
 		return p, script, nil
 	}
+	if runtime.GOOS == "windows" {
+		return "", "", fmt.Errorf("未找到 Python：请安装 Python 3.10 或更高版本并重新打开终端，再使用 auto/start.cmd 安装执行器依赖并启动 Auto")
+	}
 	return "", "", fmt.Errorf("未找到 Python，请按 auto/README.md 的对应系统步骤创建 auto/worker/.venv 并安装执行器依赖")
 }
 
@@ -296,6 +299,9 @@ func workerEnv(cfg config.Config, freeCloak bool) []string {
 		if !ok || browser.IsProxyEnv(k) {
 			continue
 		}
+		if strings.EqualFold(k, "PYTHONIOENCODING") || strings.EqualFold(k, "PYTHONUTF8") || strings.EqualFold(k, "PYTHONUNBUFFERED") {
+			continue
+		}
 		if strings.EqualFold(k, "CLOAKBROWSER_CACHE_DIR") {
 			continue
 		}
@@ -307,7 +313,9 @@ func workerEnv(cfg config.Config, freeCloak bool) []string {
 		}
 		env = append(env, kv)
 	}
-	env = append(env, "PYTHONUNBUFFERED=1")
+	// The JSON pipe is UTF-8 in both directions. Windows redirected Python
+	// streams otherwise use the system code page even when the console is UTF-8.
+	env = append(env, "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1", "PYTHONUNBUFFERED=1")
 	// Local payment/card callbacks use the same authenticated Auto API as the
 	// manager. Keep this secret in the child environment, never in process args.
 	env = append(env, "AUTO_API_TOKEN="+cfg.AutoToken)

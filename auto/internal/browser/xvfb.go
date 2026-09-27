@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -24,6 +25,9 @@ func VirtualDisplay() string {
 }
 
 func EnsureVirtualDisplay(logf func(string, ...any)) error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
@@ -37,6 +41,11 @@ func EnsureVirtualDisplay(logf func(string, ...any)) error {
 }
 
 func PrepareDisplay(wantedHeadless bool, logf func(string, ...any)) bool {
+	// DISPLAY describes an X11 session, not the native Windows/RDP or macOS
+	// desktop. Its absence on those systems must not override the chosen mode.
+	if runtime.GOOS != "linux" {
+		return wantedHeadless
+	}
 	headless := wantedHeadless
 	if err := EnsureVirtualDisplay(logf); err != nil && !hasDisplay() {
 		if logf != nil {

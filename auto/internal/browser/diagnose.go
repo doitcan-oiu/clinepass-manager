@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -101,15 +102,17 @@ func probeChrome(bin string) string {
 
 func Diagnose(bin string) string {
 	var parts []string
-	if !hasDisplay() {
-		if _, err := exec.LookPath("Xvfb"); err != nil {
-			parts = append(parts, "服务器没有 DISPLAY，也没有 Xvfb。本机无头能过是因为本机有显示器。请执行：sudo apt-get install -y xvfb")
-		} else {
-			parts = append(parts, "服务器没有 DISPLAY，启动登录时会自动拉起 Xvfb 虚拟显示")
+	if runtime.GOOS == "linux" {
+		if !hasDisplay() {
+			if _, err := exec.LookPath("Xvfb"); err != nil {
+				parts = append(parts, "服务器没有 DISPLAY，也没有 Xvfb。本机无头能过是因为本机有显示器。请执行：sudo apt-get install -y xvfb")
+			} else {
+				parts = append(parts, "服务器没有 DISPLAY，启动登录时会自动拉起 Xvfb 虚拟显示")
+			}
 		}
-	}
-	if miss := missingLibs(bin); len(miss) > 0 {
-		parts = append(parts, "缺少动态库 "+strings.Join(miss, ", ")+"。Debian/Ubuntu 执行：sudo apt-get install -y "+linuxBrowserDeps)
+		if miss := missingLibs(bin); len(miss) > 0 {
+			parts = append(parts, "缺少动态库 "+strings.Join(miss, ", ")+"。Debian/Ubuntu 执行：sudo apt-get install -y "+linuxBrowserDeps)
+		}
 	}
 	if msg := probeChrome(bin); msg != "" {
 		parts = append(parts, "直接启动 chrome 失败："+msg)
@@ -123,7 +126,11 @@ func Diagnose(bin string) string {
 func StartupHint(cfg config.Config) string {
 	bin := cachedChromePath(cfg)
 	if bin == "" {
-		return "首次提取支付链接会下载 CloakBrowser。Linux 服务器需先安装浏览器依赖：sudo apt-get install -y " + linuxBrowserDeps
+		hint := "首次提取支付链接会下载 CloakBrowser。"
+		if runtime.GOOS == "linux" {
+			hint += "Linux 服务器需先安装浏览器依赖：sudo apt-get install -y " + linuxBrowserDeps
+		}
+		return hint
 	}
 	if hint := Diagnose(bin); hint != "" {
 		return strings.TrimPrefix(hint, "；")

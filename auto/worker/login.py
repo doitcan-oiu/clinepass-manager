@@ -10,11 +10,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+from protocol import configure_stdio, log, result  # noqa: E402
+
+# Configure redirected streams before reading jobs or loading browser modules.
+# Windows otherwise uses the system code page for these pipes (often GBK).
+configure_stdio()
+
 from cloak import launch_ctx  # noqa: E402
 from errors import WorkerError  # noqa: E402
 from flow import run_keepalive, run_login, run_refresh  # noqa: E402
 from pageutil import screenshot  # noqa: E402
-from protocol import log, result  # noqa: E402
 
 
 def read_job() -> dict:

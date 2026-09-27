@@ -44,7 +44,7 @@ npm install
 npm run dev
 ```
 
-Windows 的 Vite 默认代理仍指向 `:8081`，开发时可先设置 `$env:ADDR=":8081"`；生产 `web/dist` 由主程序托管，无需 Vite。Windows Auto 不需要 `make`，在 `auto` 目录运行 `build.cmd`、`start.cmd` 即可构建并启动（PowerShell 加 `./`）。首次使用还需安装 Python 执行器，完整命令见 [Auto 的 Windows 启动说明](auto/README.md)。
+Windows 的 Vite 默认代理仍指向 `:8081`，开发时可先设置 `$env:ADDR=":8081"`；生产 `web/dist` 由主程序托管，无需 Vite。Windows Auto 不需要 `make`。首次使用先安装 Go 1.26+ 和 Python 3.10+，重新打开终端，然后在 `auto` 目录只运行 `start.cmd`（PowerShell 使用 `./start.cmd`）：它会创建或复用 Python 虚拟环境、安装并验证执行器依赖、构建最新 Go 程序，然后启动 Auto，任一步失败都会停止。更新后停止旧 Auto，再运行同一个文件即可。脚本统一使用独立虚拟环境，并启用 UTF-8 中文日志。单独安装、构建、手工操作及排障步骤见 [Auto 的 Windows 启动说明](auto/README.md)。
 
 ## 构建与部署
 
@@ -92,7 +92,7 @@ make start-all
 
 生产默认主服务 `:9999`，Auto 监听 `:9998`。没有 systemd 时，上述 `start` 命令前台运行对应进程；需在不同终端启动两个服务。只想直接运行二进制可执行 `./bin/server` 和 `./bin/auto`。
 
-两台服务器分别部署：主服务器执行 `docker compose up -d --build`（也可直接运行 `make start`），自动化服务器执行 `make start-auto`。在主程序的设置 → Auto 连接中填写 Auto 地址（如 `https://auto.example.com`）及连接密钥，测试并保存后立即生效。Auto 首次启动会生成密钥，写入自己的数据目录下的 `auto-token` 文件，并在首次启动日志显示一次；也可通过 `AUTO_TOKEN` 预先指定。跨公网连接使用 HTTPS 反向代理，Auto 端口可仅允许主服务器访问。
+两台服务器分别部署：主服务器执行 `docker compose up -d --build`（也可直接运行 `make start`），Linux 自动化服务器执行 `make start-auto`，Windows 自动化服务器在 `auto` 目录执行 `start.cmd`。在主程序的设置 → Auto 连接中填写 Auto 地址（如 `https://auto.example.com`）及连接密钥，测试并保存后立即生效。Auto 首次启动会生成密钥，写入自己的数据目录下的 `auto-token` 文件，并在首次启动日志显示一次；也可通过 `AUTO_TOKEN` 预先指定。跨公网连接使用 HTTPS 反向代理，Auto 端口可仅允许主服务器访问。
 
 浏览器只访问主程序，主程序携带保存的密钥调用 Auto，包括任务日志流。Auto 的全部接口均要求 Bearer 认证。自动化设置保存在远程 Auto，连接信息和转发设置保存在主程序。停止 Auto 后，负载均衡、账号池、用量统计和仪表盘继续运行；`GET /api/auto/status` 可查看连接状态。
 

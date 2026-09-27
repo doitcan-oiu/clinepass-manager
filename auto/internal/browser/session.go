@@ -3,6 +3,7 @@ package browser
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/mxschmitt/playwright-go"
@@ -57,15 +58,18 @@ func Launch(cfg config.Config, opt LaunchOptions, logf func(string, ...any)) (*S
 	if wantedHeadless && !opt.Headless && virtualDisplay() != "" {
 		logf("本机无头能过是因为本机有 DISPLAY；服务器改用 Xvfb %s 有界面模式，避免 AuthKit 把无头会话卡住", virtualDisplay())
 	}
-	if wantedHeadless && opt.Headless && !hasDisplay() {
+	if runtime.GOOS == "linux" && wantedHeadless && opt.Headless && !hasDisplay() {
 		logf("服务器没有图形界面且没有 Xvfb，只能继续无头")
 	}
 	args := DefaultStealthArgs(opt.Seed)
 	args = append(args, "--disable-setuid-sandbox", "--disable-dev-shm-usage")
 	logf("CloakBrowser 走二进制指纹，不用 Playwright 改时区/语言；点击和输入按真人轨迹")
 	if opt.Headless {
-		args = append(args, "--ozone-platform=headless", "--disable-gpu")
-	} else if strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != "" {
+		args = append(args, "--disable-gpu")
+		if runtime.GOOS == "linux" {
+			args = append(args, "--ozone-platform=headless")
+		}
+	} else if runtime.GOOS == "linux" && strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != "" {
 		args = append(args, "--ozone-platform=x11")
 		logf("有界面模式遇到 Wayland，改走 X11，避免 Chrome 启动即退出")
 	}

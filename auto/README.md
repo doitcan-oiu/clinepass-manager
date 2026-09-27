@@ -4,32 +4,69 @@
 
 ## Windows（CMD / PowerShell）
 
-Windows 不需要安装 `make`。先安装 Go 1.26 或更高版本并重新打开终端；`go version` 应能显示版本。在 `auto` 目录下执行：
+Windows 不需要安装 `make`。首次使用先安装 Go 1.26+ 和 Python 3.10+，安装 Python 时启用加入 PATH 的选项，然后重新打开终端。确认 `go version` 和 `py -3 --version` 能显示版本；没有 `py` 启动器时可以使用 `python --version`。
+
+在 `auto` 目录只运行一个文件：
 
 ```bat
-build.cmd
 start.cmd
 ```
 
-PowerShell 使用 `./build.cmd` 和 `./start.cmd`。脚本会自动定位仓库根目录，生成 `bin/auto.exe` 并前台运行，按 Ctrl+C 停止。`start.cmd` 仅在程序尚未构建时自动构建；更新代码后先运行 `build.cmd`。
+PowerShell 使用 `./start.cmd`，也可以双击 `start.cmd`。脚本会自动定位仓库目录，无需安装 `make` 或手动激活 Python 环境。
 
-也可以在 `auto` 目录直接执行等价命令：
+`start.cmd` 会按顺序完成以下步骤，任何一步失败都会停止，并显示需要处理的错误：
 
-```bat
-go build -o ..\bin\auto.exe .
-..\bin\auto.exe
-```
+1. 检查 Go 是否可用；Go 版本要求由构建时的 `go.mod` 校验。
+2. 创建或复用 `auto/worker/.venv`，检查 Python 3.10+，安装 `requirements.txt` 中的执行器依赖，并验证 CloakBrowser、Playwright 可以导入。
+3. 重新编译当前代码，生成仓库根目录下的 `bin/auto.exe`，避免更新代码后继续运行旧程序。
+4. 前台启动 Auto，按 Ctrl+C 停止。第一次启动还会按浏览器设置准备 CloakBrowser。
 
-临时运行可用 `go run .`。保留完整仓库目录，Auto 需要读取根目录配置及 `auto/worker` 执行器。
+已有虚拟环境会复用，已满足版本要求的依赖不会重复安装。更新后先停止旧 Auto，再运行 `start.cmd` 即可；默认每次都会检查依赖并构建，因此服务器需要可以访问缺少的依赖和 Go 模块下载源。保留完整仓库，Auto 需要读取根目录配置及 `auto/worker` 执行器。
 
-默认的浏览器执行器还需要 Python 3.10 或更高版本。首次使用时，在 `auto` 目录安装其独立环境（`py -3 --version` 应正常显示版本）：
+一键启动统一使用本机的 `auto/worker/.venv/Scripts/python.exe`：脚本为本次 Auto 进程设置 `LOGIN_PYTHON`，覆盖终端及 `config.yaml` 中的旧 Python 路径，不改写全局环境变量或配置文件。首次创建环境时，会尝试有效的 `LOGIN_PYTHON`，然后查找 `py -3`、`python`、`python3`。脚本同时将终端代码页和 Python 输入输出设为 UTF-8，保证中文日志正常显示。
+
+保留两个可选的单独操作入口，它们也调用 `start.cmd` 中的同一份逻辑：
+
+- `setup-worker.cmd`（或 `start.cmd --setup-only`）：只准备并验证 Python 执行器，不启动 Auto。
+- `build.cmd`（或 `start.cmd --build-only`）：只构建 Go 服务，不安装 Python 依赖或启动 Auto。
+
+`start.cmd --health-check URL` 仅使用已构建的程序进行健康检查，不安装依赖、不构建、不启动服务。
+
+也可以手动完成安装、构建和启动，在 `auto` 目录依次执行：
 
 ```bat
 py -3 -m venv worker\.venv
 worker\.venv\Scripts\python.exe -m pip install -r worker\requirements.txt
+go build -o ..\bin\auto.exe .
+..\bin\auto.exe
 ```
 
-如果没有 `py` 启动器但 `python --version` 正常，将第一条命令的 `py -3` 换为 `python`。无需手动激活虚拟环境，Auto 会自动寻找 `worker/.venv/Scripts/python.exe`。若配置过 `LOGIN_PYTHON` 或 `login_python`，它们会优先于自动查找，请勿保留另一台 Linux 服务器的 Python 路径。服务启动后，在主程序填写 Auto 服务器地址、默认端口 `9998` 及首次启动显示的连接密钥。
+如果没有 `py` 启动器但 `python --version` 正常，将第一条命令的 `py -3` 换为 `python`。无需手动激活虚拟环境，Auto 会自动寻找 `worker/.venv/Scripts/python.exe`。完成依赖安装后，临时运行也可用 `go run .`。
+
+服务启动后，在主程序填写 Auto 服务器地址、默认端口 `9998` 及首次启动显示的连接密钥。
+
+### 提示「未找到 Python」
+
+这表示正在运行的 Go 服务没有找到可用 Python。更新到支持一键启动的版本后，`start.cmd` 会在启动前准备并验证执行器，避免带着缺失的 Python 依赖启动。
+
+1. 在 Auto 服务器安装 Python 3.10+，重新打开终端，确认 `py -3 --version` 或 `python --version` 正常。
+2. 等待正在执行的任务结束，停止旧 Auto，在 `auto` 目录运行 `start.cmd`。若环境创建、依赖安装或构建失败，先处理输出的错误，然后再次运行同一个文件。
+3. 若直接运行 `auto.exe` 或 `go run .`，检查显式设置的 `LOGIN_PYTHON` 环境变量、根目录 `config.yaml` 中的 `login_python`。它们优先于自动查找，不应指向不存在的文件、另一台服务器的路径或未安装依赖的 Python。通常留空即可；需要指定时，使用本机完整路径，例如 `C:\project\clinepass-manager\auto\worker\.venv\Scripts\python.exe`。一键启动已自动使用准备好的虚拟环境。
+4. 在 `auto` 目录验证执行器依赖：
+
+```bat
+worker\.venv\Scripts\python.exe -c "import cloakbrowser; import playwright.sync_api; print('Worker dependencies OK')"
+```
+
+Auto 成功启动后，再回到主程序重试失败批次。已失败的任务不会因为安装了 Python 自动继续。以上依赖验证只检查模块导入，不执行登录或支付任务。
+
+### Windows 远程桌面有头模式
+
+通过 `mstsc` 登录 Auto 服务器后，在该桌面会话的终端运行 `start.cmd`，并在主程序的 Auto 浏览器设置中选择有头模式。Windows 使用自己的桌面，不需要设置 `DISPLAY` 或安装 Xvfb；Auto 保留所选的有头/无头模式。
+
+浏览器窗口属于启动 Auto 的用户会话。先保持远程桌面连接，确认批次能正常弹出浏览器；不要将需要可见窗口的 Auto 改为 Windows 后台服务运行，服务与交互桌面会话隔离（[Microsoft 说明](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services)）。
+
+若旧版本提示 `sudo apt-get install -y xvfb`，更新代码后先停止旧 Auto，再执行 `start.cmd`；一键启动会自动重新编译已修复的代码。
 
 ## Linux / macOS
 
